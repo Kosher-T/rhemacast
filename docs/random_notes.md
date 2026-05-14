@@ -2,6 +2,13 @@
 
 These are some random features and thoughts I have for this app. I'll add more notes as time goes on and I think of them.
 
+> [!NOTE]
+> **All features below have been formally integrated into the documentation suite.** See:
+> - Features 1, 2, 3, 5 → [display_and_broadcast.md](display_and_broadcast.md)
+> - Feature 4 → [search_engine.md](search_engine.md)
+> - Feature 6 → [architecture.md](architecture.md), [threading_and_lifecycle.md](threading_and_lifecycle.md)
+> - Feature 7 → [architecture.md](architecture.md), [gpu_and_hardware.md](gpu_and_hardware.md), and cross-platform notes across all docs
+
 ---
 
 ### 1. Version Interaction

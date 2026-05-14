@@ -294,8 +294,15 @@ Sermon transcripts are sent to enterprise-grade cloud providers via API. Because
 
 ---
 
+## Cross-Platform Compatibility
+
+The entire cloud pipeline is fully platform-agnostic. All network I/O (`aiohttp`, `asyncio`), JSON serialization, and file-based offline queuing work identically on Windows and Linux. No platform-specific code exists in this layer.
+
+---
+
 ## Cross-References
 
 - **Phase 3 lifecycle (service conclusion):** [architecture.md](architecture.md)
 - **Transcript reconstruction from database:** [database_and_storage.md](database_and_storage.md)
 - **Cloud LLM model specifications:** [ai_models.md](ai_models.md)
+- **Cross-platform development strategy:** [architecture.md](architecture.md)

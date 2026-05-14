@@ -266,6 +266,19 @@ Visual themes are implemented as CSS classes. Switching themes requires zero Jav
 > [!TIP]
 > New themes are created by adding CSS classes — no code changes required. The system admin can add custom themes by editing `themes.css` and referencing the theme ID in the application settings.
 
+### Theme Designer (Extension)
+
+Not all operators know HTML and CSS. The **Theme Designer** is a drag-and-drop WYSIWYG interface — think Elementor — that allows non-technical users to visually compose broadcast themes without writing code.
+
+| Property | Value |
+|----------|-------|
+| **Location** | Lives under the **Extensions** tab in the main application |
+| **Output** | Generates CSS class definitions consumed by the Browser Source renderer |
+| **Input model** | Drag-and-drop visual editor with live preview |
+| **No-code guarantee** | Users position text elements, select fonts, adjust colors/shadows/animations, and export — zero manual CSS editing required |
+
+**Why this works architecturally:** The WebSocket/HTML pivot means themes are pure code (HTML/CSS/JS) transmitted to the broadcast system's Chromium engine. The Theme Designer can therefore produce arbitrarily complex visual effects — gradients, particle overlays, animated lower thirds — because all rendering compute is offloaded to the remote system's GPU. The Python application never touches the pixels.
+
 ---
 
 ## Component 3: Display & Broadcast Routing
@@ -294,6 +307,16 @@ For direct HDMI connection to a TV without OBS, the Main Thread launches an unco
 > [!CAUTION]
 > **VRAM Protection:** The execution strictly passes `--disable-gpu` and `--disable-software-rasterizer`, forcing the Chrome renderer onto standard RAM and CPU to protect the 4 GB GPU boundary for the Faster-Whisper model.
 
+**Cross-platform kiosk launch:**
+
+| OS | Browser | Executable Path | Kiosk Flag |
+|----|---------|-----------------|------------|
+| **Windows** | Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe` | `--kiosk --app=file:///path/to/display.html` |
+| **Windows** | Edge | `msedge.exe` (system PATH) | `--kiosk --app=file:///path/to/display.html` |
+| **Linux** | Chromium | `chromium-browser` or `chromium` | `--kiosk --app=file:///path/to/display.html` |
+
+On both platforms, `--disable-gpu` and `--disable-software-rasterizer` are appended to protect VRAM.
+
 ### Video Backgrounds
 
 > [!IMPORTANT]
@@ -305,6 +328,92 @@ The correct approach:
 2. **Top layer (OBS):** The transparent **Browser Source** displaying the scripture text via the WebSocket/HTML pipeline.
 
 OBS composites these two layers using its internal, hardware-accelerated rendering engine. The Python application has zero awareness of or interaction with the video background.
+
+> [!NOTE]
+> **Platform Agnosticism:** The entire WebSocket/HTML display pipeline is fully platform-agnostic. The Python WebSocket server (`websockets`), the HTML/CSS/JS renderer, and the OBS Browser Source all function identically on Windows and Linux. No platform-specific code exists in this layer.
+
+---
+
+## Operator Version Interaction
+
+The translation bar in the Manual panel (bottom-left of the Presentation tab) supports two distinct click interactions:
+
+| Interaction | Behavior |
+|-------------|----------|
+| **Single-click** a translation | **Switch to and browse** that Bible version in the Manual panel. The browse view updates to show the current book/chapter in the clicked translation. No broadcast action is taken. |
+| **Double-click** a translation | **Display the currently-selected verse** in the double-clicked translation on the broadcast output. This fires an immediate `display` WebSocket payload with the selected verse text in the target translation, regardless of whether a verse is currently visible on-screen. The operator can use the clear/show hotkey to toggle visibility separately. |
+
+### Double-Click Display Payload
+
+When the operator double-clicks a translation, the system constructs and broadcasts the display payload using the currently-selected verse:
+
+```json
+{
+  "action": "display",
+  "ref": "John 3:16",
+  "text": "For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.",
+  "translation": "NIV",
+  "theme": "default"
+}
+```
+
+The `translation` field reflects the double-clicked version, and the `text` is pulled from the local Bible database for that specific verse-translation combination.
+
+---
+
+## Hotkeys & Operator Shortcuts
+
+RhemaCast supports fully configurable hotkeys to accelerate operator workflow during a live service. Default bindings use **function keys** (F1–F12), which are rarely used by other applications.
+
+### Hotkey Actions
+
+| Action | Default Key | Behavior |
+|--------|-------------|----------|
+| **Display (Double-Click Equivalent)** | Configurable | Maps the double-click display action to a single key press. Displays the currently-selected verse on the broadcast output. |
+| **Clear / Recall** | Configurable | **First press:** Clears the current display (sends `{"action": "clear"}`). **Second press (when already clear):** Recalls and re-displays the last cleared verse. |
+| **Theme Cycle Forward** | Configurable | Cycles forward through the operator's ordered theme list. |
+| **Theme Cycle Backward** | Configurable | Cycles backward through the operator's ordered theme list. |
+| **Theme Reset** | Configurable | Instantly resets to the first theme in the list. |
+
+The three-key theme cycling system allows the operator to memorize positional theme access — e.g., "the lower-third theme is five presses forward after a reset."
+
+### Configuration
+
+Hotkey bindings are loaded during **Phase 1 (Initialization)**. Default bindings are defined in `config.json`; operator-customized bindings persist in the SQLite `settings` table and override the defaults. See [database_and_storage.md](database_and_storage.md) for the configuration storage architecture.
+
+### Key Interception
+
+Function keys are intercepted at the application level to prevent them from triggering OS-level actions. The interception layer captures `keydown` events and suppresses default behavior for all mapped keys.
+
+---
+
+## Schedule Panel & Drag-and-Drop Workflow
+
+The Schedule panel (left side of the Presentation tab) maintains an ordered list of verses queued for sequential display during the service. Verses are added via **drag-and-drop**, mirroring the EasyWorship workflow.
+
+### Drag Sources
+
+| Source | Drag Action |
+|--------|-------------|
+| **Bible Browser** (Manual panel) | Drag any verse from the browsing view to the Schedule panel |
+| **Operator Review Queue** | Drag a queued search result to the Schedule panel |
+
+### Drop Behavior
+
+1. **Drop into the Schedule panel** — The verse is appended to the end of the schedule list.
+2. **Drop between existing items** — The verse is inserted at the indicated position (a visual insertion indicator shows the drop target).
+3. **Reordering** — Existing schedule items can be dragged within the panel to reorder them.
+
+### Schedule Item Data
+
+Each schedule item stores:
+
+| Field | Description |
+|-------|-------------|
+| `ref` | Scripture reference (e.g., "John 3:16") |
+| `translation` | The translation active at the time of the drag |
+| `text` | The full verse text |
+| `theme` | The active theme at the time of the drag (can be overridden per-item) |
 
 ---
 
@@ -339,3 +448,5 @@ The WebSocket/HTML pivot eliminates all three problems by shifting graphical com
 - **Search pipeline display decision:** [search_engine.md](search_engine.md)
 - **Thread architecture and WebSocket server:** [architecture.md](architecture.md)
 - **Operator controls:** [README.md](README.md)
+- **Hotkey configuration storage:** [database_and_storage.md](database_and_storage.md)
+- **Manual scripture navigation:** [search_engine.md](search_engine.md)

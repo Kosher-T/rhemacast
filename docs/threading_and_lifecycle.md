@@ -45,6 +45,9 @@ graph TD
 2. **Thread 5 (Hardware Monitor) starts before GPU threads** — ensures thermal monitoring is active before the GPU begins processing inference workloads.
 3. **Thread 1 → Thread 2 → Thread 3** — each thread in the audio pipeline starts in producer-before-consumer order to prevent consumers from polling empty queues.
 
+> [!NOTE]
+> **Lazy Tab Loading:** UI tabs beyond the Presentation tab are NOT part of the critical startup path. They are deferred and initialized lazily — their assets and logic load only when the operator clicks on them for the first time. This reduces Phase 1 initialization time by skipping non-essential UI rendering. See [architecture.md](architecture.md) for details.
+
 ---
 
 ## Queue Acknowledgment Receipt Protocol
@@ -248,6 +251,16 @@ while True:
 
 ---
 
+## Cross-Platform Threading Notes
+
+The threading architecture is fully portable between Windows and Linux:
+
+- **Python `threading` module** behaves identically on both platforms (same GIL semantics, same `Thread` API, same `queue.Queue` implementation).
+- **No POSIX signals used.** The architecture deliberately avoids `os.kill()` and POSIX signal handling (which differ significantly on Windows). Instead, the **poison pill pattern** provides clean, cross-platform thread teardown via queue-based sentinel objects. This is an architectural win for portability.
+- **`time.sleep()` precision** differs slightly between Windows (~15ms granularity) and Linux (~1ms granularity), but this has no functional impact — the polling intervals (2–5 seconds for Thread 5) and queue timeouts are orders of magnitude larger.
+
+---
+
 ## Cross-References
 
 - **Thread roles in the architecture:** [architecture.md](architecture.md)
@@ -256,3 +269,4 @@ while True:
 - **Vosk failover model specs:** [ai_models.md](ai_models.md)
 - **Database Write Queue and teardown:** [database_and_storage.md](database_and_storage.md)
 - **Poison pill timeline in service lifecycle:** [architecture.md](architecture.md)
+- **Cross-platform development strategy:** [architecture.md](architecture.md)

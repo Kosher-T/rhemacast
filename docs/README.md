@@ -18,7 +18,7 @@
 | **GPU** | NVIDIA, 4 GB VRAM (dedicated solely to STT inference) |
 | **RAM** | 16 GB |
 | **CPU** | Modern multi-core (Intel i5/Ryzen 5 or better) |
-| **OS** | Linux (Windows and macOS support planned) |
+| **OS** | Windows (primary target), Linux (development & secondary target) |
 | **Privileges** | Root / Administrator (required for NVML power state modification) |
 | **Audio** | Wireless transmitter from FOH console (preferred) or room mic + DFN 3 |
 

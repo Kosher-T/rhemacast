@@ -50,6 +50,17 @@ Vosk is the **final fail-safe**. It runs entirely on the CPU, producing lower-qu
 > [!IMPORTANT]
 > Standalone Voice Activity Detection (VAD) chunking has been **deprecated** in favor of the fixed-word sliding window architecture. This reduces system complexity and conserves GPU compute.
 
+### Cross-Platform CUDA Packaging
+
+The Faster-Whisper model requires CUDA runtime libraries (cuBLAS, cuDNN). These are handled differently per platform:
+
+| Platform | CUDA Strategy |
+|----------|---------------|
+| **Windows (.exe)** | CUDA DLLs are **NOT bundled** in the PyInstaller package. The target system must have the NVIDIA CUDA Toolkit installed. This prevents DLL version conflicts. |
+| **Linux (.deb)** | CUDA libraries are installed via the system package manager as a dependency. |
+
+ONNX Runtime (CPU execution provider) and Vosk are fully cross-platform and require no platform-specific handling.
+
 ---
 
 ## 2. Semantic Embedding Model — The Search Brain
@@ -138,3 +149,5 @@ Open-source models (Llama 3.1, Qwen 2.5) can be queried at zero cost via serverl
 - **Intent classification details:** [intent_classification.md](intent_classification.md)
 - **Cloud extraction pipeline:** [cloud_pipeline.md](cloud_pipeline.md)
 - **Vosk failover protocol:** [threading_and_lifecycle.md](threading_and_lifecycle.md)
+- **Cross-platform development and packaging:** [architecture.md](architecture.md)
+- **Cross-platform GPU considerations:** [gpu_and_hardware.md](gpu_and_hardware.md)

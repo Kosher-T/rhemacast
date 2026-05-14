@@ -18,6 +18,43 @@ The architecture strictly partitions GPU and CPU workloads to prevent VRAM conte
 
 ---
 
+## Cross-Platform Development Strategy
+
+> [!IMPORTANT]
+> **RhemaCast is developed on Linux but targets Windows as its primary deployment platform.** The development/testing workflow uses VFIO GPU passthrough to eliminate cross-compilation entirely.
+
+| Dimension | Details |
+|-----------|----------|
+| **Development OS** | Linux (developer's primary workstation) |
+| **Primary target** | Windows `.exe` |
+| **Secondary target** | Linux `.deb` |
+| **Windows testing** | KVM/QEMU VM with NVIDIA GPU dynamically passed through via VFIO |
+| **Windows packaging** | PyInstaller with a `.spec` file, built natively inside the Windows VM |
+| **Linux packaging** | Standard `dpkg` / `.deb` built natively on Linux |
+
+### The VFIO GPU Passthrough Workflow
+
+The developer's NVIDIA GTX 1650 sits in a clean IOMMU group. A **libvirt hook script** automates the GPU handoff:
+
+1. **VM start:** The hook unbinds the GPU from the Linux `nvidia` driver, attaches it to `vfio-pci`, and launches the Windows VM.
+2. **Inside the VM:** Windows has bare-metal GPU access (zero virtualization overhead for CUDA). Faster-Whisper benchmarks match real Windows hardware exactly.
+3. **VM shutdown:** The hook re-attaches the GPU to the Linux `nvidia` driver. No reboot required.
+
+This workflow aligns with the architecture's GPU isolation mandate — VFIO makes it physically impossible for Linux and the Windows VM to contend for the GPU simultaneously.
+
+### Windows Packaging: PyInstaller
+
+The Windows `.exe` is built natively inside the Windows VM using PyInstaller with a `.spec` file:
+
+- The `.spec` file explicitly includes `intent_triggers.json`, Faster-Whisper dependencies, and hidden imports (`pynvml`, `sounddevice`).
+- **CUDA DLLs are NOT bundled** inside the `.exe`. The target Windows system must have the NVIDIA CUDA Toolkit installed separately. This keeps the binary lean and prevents DLL version conflicts between the bundled CUDA and the installed driver.
+- `collect_data_files('faster_whisper')` ensures CTranslate2 model assets are included.
+
+> [!CAUTION]
+> **DLL Hell Prevention:** Never bundle `cublas` and `cudnn` DLLs inside the `.exe`. If the bundled CUDA version differs from the driver's expected version, inference will silently fail or crash. Assume the CUDA Toolkit is installed on the target system.
+
+---
+
 ## Threading Model
 
 RhemaCast operates on a multi-threaded, queue-decoupled architecture. No thread directly calls another thread's functions. All inter-thread communication flows through thread-safe FIFO queues.
@@ -92,10 +129,14 @@ graph LR
    - Custom fine-tuned Faster-Whisper STT model loaded into GPU VRAM
    - Vosk failover model (`vosk-model-small-en-us`) loaded completely dormant into standard RAM (Warm Standby)
    - `pynvml` initialized, GPU handle acquired
+   - **Hotkey configuration loaded** from `config.json` defaults, overridden by operator-customized bindings from the SQLite `settings` table
    - Session UUID generated (e.g., `2026-04-16_AM`) for sequence ID scoping
    - SQLite WAL database connection opened
    - Append-only flat file opened with ISO 8601 naming convention
 3. **Operator clicks "Start Transcription."** Background threads spawn. Audio capture begins.
+
+> [!NOTE]
+> **Lazy Tab Loading:** Only the **Presentation tab** is rendered during Phase 1. All other tabs (Settings, Profile, Extensions, Theme Designer, etc.) are initialized lazily — their assets and logic load only when the operator clicks on the tab for the first time. This mirrors browser tab behavior and ensures the critical live-service interface is ready as fast as possible.
 
 ### Phase 2: Live Processing
 

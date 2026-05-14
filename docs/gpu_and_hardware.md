@@ -11,8 +11,8 @@ This document specifies RhemaCast's hardware requirements, VRAM budget, GPU ther
 | **GPU** | NVIDIA, 4 GB dedicated VRAM | Must be exclusively available for the STT model; no other GPU-accelerated applications should run simultaneously |
 | **RAM** | 16 GB | Hosts FAISS index, BM25 index, ONNX embedding model, DistilBERT, all queues, SQLite, and the Python runtime |
 | **CPU** | Modern multi-core (Intel i5 / AMD Ryzen 5 or better) | Drives semantic search, BM25, intent classification, database writes, and the Vosk failover model |
-| **OS** | Linux (Windows and macOS support planned) | |
-| **Privileges** | Root / Administrator | **Required** — NVML power state modification commands are rejected without elevated privileges |
+| **OS** | Windows (primary target), Linux (development & secondary target) | See [architecture.md](architecture.md) for the VFIO GPU passthrough development workflow |
+| **Privileges** | Root (Linux) / Run as Administrator (Windows) | **Required** — NVML power state modification commands are rejected without elevated privileges |
 | **Storage** | SSD recommended | For SQLite WAL writes and append-only flat file; HDD introduces latency risk on micro-writes |
 
 ---
@@ -114,6 +114,20 @@ pynvml.nvmlDeviceSetPowerManagementLimit(handle, DEFAULT_POWER)
 > [!CAUTION]
 > **Root or administrator privileges are mandatory.** The `nvmlDeviceSetPowerManagementLimit()` command will be **silently rejected** by the driver if the application is not running with elevated privileges. The application must enforce a privilege check at startup and warn the operator if running unprivileged.
 
+**Cross-platform privilege detection:**
+
+```python
+import sys
+import os
+
+def check_admin_privileges() -> bool:
+    if sys.platform == 'win32':
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    else:
+        return os.geteuid() == 0
+```
+
 ### Relationship to Vosk Failover
 
 GPU power throttling is **not** the same as the Vosk failover. The hierarchy is:
@@ -144,9 +158,45 @@ Thread 5 should expose the following telemetry to the operator UI:
 
 ---
 
+## Cross-Platform GPU Considerations
+
+RhemaCast is developed on Linux and targets Windows as its primary deployment platform. The GPU subsystem is largely platform-agnostic, but several areas require attention:
+
+### NVML / pynvml
+
+`pynvml` wraps the NVIDIA Management Library (NVML), which provides an identical API on both Windows and Linux. The same Python code for temperature polling, power throttling, and VRAM monitoring works on both platforms without modification. The underlying NVML shared library is bundled with the NVIDIA display driver on both OSes.
+
+### CUDA Runtime
+
+The CTranslate2 backend (used by Faster-Whisper) requires CUDA runtime libraries:
+
+| Platform | CUDA Libraries | Installation |
+|----------|---------------|--------------|
+| **Windows** | `cublas64_*.dll`, `cudnn*.dll` | Installed via the NVIDIA CUDA Toolkit. **NOT bundled** in the PyInstaller `.exe` to prevent DLL version conflicts. |
+| **Linux** | `libcublas.so`, `libcudnn.so` | Installed via the system package manager or NVIDIA's `.run` installer. |
+
+> [!CAUTION]
+> **DLL Hell Prevention (Windows):** Never bundle CUDA DLLs inside the PyInstaller `.exe`. If the bundled version differs from the driver's expected version, inference will silently fail. Assume the CUDA Toolkit is installed on the target system. See [architecture.md](architecture.md) for the full PyInstaller packaging strategy.
+
+### VFIO Development Workflow
+
+During development, the NVIDIA GPU is dynamically passed through to a Windows VM via VFIO for testing. A libvirt hook script handles the GPU binding/unbinding automatically. This enforces the architecture's exclusive GPU isolation mandate at the hypervisor level — it is physically impossible for Linux and the Windows VM to contend for VRAM simultaneously. See [architecture.md](architecture.md) for the full workflow.
+
+### Driver Differences
+
+| Aspect | Windows | Linux |
+|--------|---------|-------|
+| **Driver installation** | NVIDIA GeForce Experience / standalone `.exe` | Package manager (`nvidia-driver-*`) or `.run` installer |
+| **NVML library path** | System PATH (auto-included with driver) | `/usr/lib/x86_64-linux-gnu/libnvidia-ml.so` |
+| **Privilege model** | Run as Administrator / UAC elevation | `sudo` / root |
+
+---
+
 ## Cross-References
 
 - **VRAM allocation per model:** [ai_models.md](ai_models.md)
 - **Audio hardware requirements:** [audio_ingestion.md](audio_ingestion.md)
 - **Vosk failover protocol:** [threading_and_lifecycle.md](threading_and_lifecycle.md)
 - **Thread 5 in the threading model:** [architecture.md](architecture.md)
+- **Cross-platform development strategy:** [architecture.md](architecture.md)
+- **PyInstaller packaging:** [architecture.md](architecture.md)

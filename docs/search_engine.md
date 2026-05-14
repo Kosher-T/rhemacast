@@ -223,9 +223,68 @@ Because the 6-word trailing overlap can cause the exact same verse to be identif
 
 ---
 
+## Manual Navigation: Predictive Scripture Input
+
+Separate from the automated search pipeline, the operator can manually navigate to any scripture using a **predictive input system** inspired by EasyWorship. This system provides instant, keyboard-driven scripture lookup with zero visual clutter.
+
+### The Three Logical Sections
+
+The navigation input box (visible in the Presentation tab toolbar) is logically divided into three sequential sections:
+
+| Section | Content | Example |
+|---------|---------|---------|
+| **1. Book** | The book of the Bible | `Genesis`, `1 Samuel`, `Revelation` |
+| **2. Chapter** | The chapter number | `3` |
+| **3. Verse** | The verse number | `16` |
+
+Focus starts on the **Book** section. The **spacebar** strictly advances focus from Book → Chapter → Verse.
+
+### Predictive Typing Algorithm
+
+The system does NOT present a dropdown list of results. Instead, it produces the **single closest match** directly in the input field, using strict character-by-character validation:
+
+1. **Valid character typed:** The input is accepted. The matching book name is displayed in the field, with the characters the operator has typed appearing **unhighlighted** and the remaining characters of the predicted book name appearing **highlighted** (selected).
+2. **Invalid character typed:** The keystroke is **silently ignored**. The input field does not change. This means if the operator has typed `Ex` (matching "Exodus") and types `b`, the `b` is discarded — only `o` (the next valid character) would be accepted.
+3. **No match exists:** If the typed character doesn't correspond to any book at the current position, nothing happens. The field retains its current state.
+
+### Numeric Prefix Handling
+
+When the operator types a number as the first character:
+
+- Typing `1` immediately displays the first Bible book with a numeric prefix (e.g., **1 Samuel**).
+- After typing the number, the operator continues typing letters immediately — no spacebar needed between the number and the book name. E.g., `1sam` → `1 Samuel`, `1chr` → `1 Chronicles`.
+
+### Section Transitions
+
+| Key | Action |
+|-----|--------|
+| **Spacebar** | Advances focus to the next section (Book → Chapter → Verse). The current section locks its value. |
+| **Backspace** | Deletes the last typed character in the current section. If the section is empty, focus returns to the previous section. |
+| **Enter** | Confirms the full reference and navigates the Bible browser to the specified verse. |
+
+### Example Interaction
+
+| Keystrokes | Field State | Notes |
+|------------|-------------|-------|
+| `e` | `E̲x̲o̲d̲u̲s̲` (highlighted except `E`) | Exodus is the first book starting with 'E' |
+| `x` | `E̲x̲o̲d̲u̲s̲` (highlighted except `Ex`) | Confirms Exodus match |
+| `b` | *(ignored)* | 'b' is not valid at position 3 of "Exodus" |
+| `o` | `E̲x̲o̲d̲u̲s̲` (highlighted except `Exo`) | Valid character accepted |
+| `Space` | `Exodus ▸ _` | Focus shifts to Chapter section |
+| `3` | `Exodus 3 ▸ _` | Chapter selected |
+| `Space` | `Exodus 3: _` | Focus shifts to Verse section |
+| `1` `6` | `Exodus 3:16` | Verse entered |
+| `Enter` | *(navigates)* | Bible browser jumps to Exodus 3:16 |
+
+> [!TIP]
+> This system makes scripture navigation extremely fast for experienced operators who have memorized book names. There is no mouse interaction required — the entire workflow is keyboard-driven.
+
+---
+
 ## Cross-References
 
 - **Sliding window and thread model:** [architecture.md](architecture.md)
 - **Intent classification details:** [intent_classification.md](intent_classification.md)
 - **Display pipeline after auto-display:** [display_and_broadcast.md](display_and_broadcast.md)
 - **Database persistence of search metrics:** [database_and_storage.md](database_and_storage.md)
+- **Operator version interaction and display:** [display_and_broadcast.md](display_and_broadcast.md)

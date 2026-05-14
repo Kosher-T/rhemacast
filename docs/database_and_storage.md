@@ -79,8 +79,8 @@ Every critical action in the pipeline is treated as an independent event payload
 
 Application settings and states are strictly segregated to prevent database bloat, state conflicts, and security risks:
 
-1. **JSON Config (`config.json`)**: Stores static application state (e.g., UI defaults, theme CSS definitions). Edited by the system admin. Read exactly once at boot.
-2. **SQLite `settings` table**: Stores user-toggled, active settings managed through the Operator UI (e.g., current active theme, current RRF confidence threshold). Read at boot, and updated safely via the single-writer Database Write Queue.
+1. **JSON Config (`config.json`)**: Stores static application state (e.g., UI defaults, theme CSS definitions, **default hotkey bindings**). Edited by the system admin. Read exactly once at boot.
+2. **SQLite `settings` table**: Stores user-toggled, active settings managed through the Operator UI (e.g., current active theme, current RRF confidence threshold, **operator-customized hotkey bindings** that override `config.json` defaults). Read at boot, and updated safely via the single-writer Database Write Queue.
 3. **`.env` File**: Strictly reserved for API keys (e.g., Gemini, Claude, Groq). Injected dynamically at runtime and never persisted to any table.
 
 ---
@@ -316,3 +316,4 @@ ORDER BY confidence_pct ASC;
 - **Thread 4 teardown protocol:** [threading_and_lifecycle.md](threading_and_lifecycle.md)
 - **Sequence ID assignment by the STT thread:** [architecture.md](architecture.md)
 - **Cloud extraction of reconstructed transcript:** [cloud_pipeline.md](cloud_pipeline.md)
+- **Hotkey configuration and operator shortcuts:** [display_and_broadcast.md](display_and_broadcast.md)

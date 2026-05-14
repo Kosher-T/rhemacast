@@ -142,9 +142,25 @@ The selected device index is passed as the `device` parameter to `sd.InputStream
 
 ---
 
+## Cross-Platform Audio Compatibility
+
+The `sounddevice` library wraps PortAudio, which provides a fully cross-platform audio API. The same Python code works identically on Windows and Linux with one caveat:
+
+| Aspect | Windows | Linux |
+|--------|---------|-------|
+| **Audio backend** | WASAPI (default), DirectSound, MME | ALSA (default), PulseAudio, JACK |
+| **Device names** | Human-readable names (e.g., "Microphone (Rode Wireless)") | Backend-prefixed names (e.g., "hw:1,0" for ALSA, or PulseAudio sink names) |
+| **Device enumeration** | `sd.query_devices()` — identical API, different name formats | `sd.query_devices()` — identical API, different name formats |
+
+> [!NOTE]
+> Because device names differ between platforms, the device selection UI should store the **device index** or allow the operator to re-select the device when switching between Windows and Linux environments. Device names are not portable across operating systems.
+
+---
+
 ## Cross-References
 
 - **Audio format consumed by the STT model:** [ai_models.md](ai_models.md)
 - **Queue A acknowledgment protocol:** [threading_and_lifecycle.md](threading_and_lifecycle.md)
 - **Thread 1 in the threading model:** [architecture.md](architecture.md)
 - **System hardware requirements:** [gpu_and_hardware.md](gpu_and_hardware.md)
+- **Cross-platform development strategy:** [architecture.md](architecture.md)
