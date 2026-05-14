@@ -1,4 +1,4 @@
-# RhemaCast — Phased Development Plan
+# RhemaCast — Phased Development Plan (Revised)
 
 **Target:** Windows .exe (primary) · Linux .deb (secondary)
 **Dev machine:** Linux workstation with NVIDIA GTX 1650 · 16 GB RAM
@@ -91,11 +91,12 @@ rhemacast/
 │   ├── display.html
 │   ├── display.js
 │   └── themes.css
-├── ui/                         # Operator UI (tkinter or PyQt)
+├── ui/                         # Operator UI (PyQt6)
 ├── cloud/
 │   └── extraction.py
 ├── packaging/
 │   ├── rhemacast.spec          # PyInstaller spec (Windows)
+│   ├── rhemacast.iss           # Inno Setup script (Windows installer)
 │   └── build_deb.sh            # Debian packaging script
 ├── config.json
 ├── .env.example
@@ -124,9 +125,12 @@ This phase builds the searchable Bible database and vector index. It runs once a
 - [ ] Obtain Bible texts in structured format (JSON or CSV):
       KJV, NKJV, ESV, NIV, NLT, AMP — exactly these 6 versions
       Format: `{ "book": "John", "chapter": 3, "verse": 16, "text": "..." }`
+- [ ] For public domain versions (KJV), download from a reliable source like `raw.githubusercontent.com/scrollmapper/bible_databases/`
+- [ ] For copyrighted versions (NKJV, NIV, etc.), document that the user must supply their own files; include a converter script for OSIS/USFM/JSON
 - [ ] Load into SQLite Bible database
       Table: `verses(id, version, book, chapter, verse_num, text)`
       Total rows: ~31,000 verses × 6 versions = ~186,000 rows
+- [ ] **Version fingerprinting** – Store a hash of each source file used to build indexes. At runtime, verify loaded index matches current Bible database; if mismatched, rebuild automatically or warn.
 
 ### 1.2 Build the BM25 Inverted Index
 
@@ -196,14 +200,15 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       - Connect in WAL mode
       - `PRAGMA journal_mode=WAL`
       - `PRAGMA synchronous=NORMAL`
-      - Create all tables: `transcripts`, `search_results`, `display_events`, `sessions`, `settings`
+      - Create all tables: `transcripts`, `search_results`, `display_events`, `sessions`, `settings`, `metadata` (for schema version)
 - [ ] Implement the Database Write Queue pattern
       ```python
       db_write_queue = queue.Queue()
       # Single-writer Thread 4 pulls and executes all inserts
       ```
+- [ ] **Database migration strategy** – On startup, compare `user_version` with current version; apply migrations (add columns, new tables) using a simple Python script. Never drop columns – only add.
 - [ ] Implement session management:
-      - Generate session UUID (e.g., `2026-04-16_AM`)
+      - Generate session ID with start time: `YYYY-MM-DD_HH-MM` (e.g., `2026-04-16_09-30`)
       - Phase 1 interruption gate: query for open sessions on boot
       - Blocking UI prompt: Resume / Start New
       - Sequence counter resume: `MAX(sequence_id) + 1`
@@ -240,6 +245,7 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       - On new client connect: instantly push `current_display_state`
       - `broadcast_display(payload)` function
       - OBS connection telemetry: expose `len(connected_clients)` to UI thread
+- [ ] **Optional health endpoint** – HTTP GET on port 8766 returning `{"status": "ok", "queue_depths": {...}}` for remote monitoring.
 
 ### 2.4 Threading Harness
 
@@ -252,6 +258,8 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       service_active = threading.Event()
       compute_failure = threading.Event()   # Triggers Vosk failover
       ```
+- [ ] **Structured logging** – Use `logging.handlers.RotatingFileHandler` to write to `%ProgramData%\RhemaCast\Logs\rhemacast.log` (Windows) or `/var/log/rhemacast/` (Linux). Rotate at 10 MB, keep 5 backups. Include thread names and timestamps.
+- [ ] **Crash report generation** – On any unhandled exception in a thread, capture stack trace, dump recent log lines, and write a `.crash` file to the logs directory. Notify operator with a non‑blocking alert.
 
 ---
 
@@ -266,11 +274,13 @@ Capture audio from the wireless receiver, push to Queue A with the acknowledgmen
       - 16kHz / Mono / float32 / 100ms blocks (`BLOCK_SIZE = 1600`)
       - Callback: `indata.copy() → queue_a.put()`
       - Device enumeration: `sd.query_devices()` → populate UI dropdown
+- [ ] **Pre‑flight device check** – Before enabling “Start Transcription”, test the selected input device with `sd.check_input_settings()`. If unavailable, show error and disable start button.
 - [ ] Implement FATAL_AUDIO_LOSS handler:
       - Catch `PortAudioError`
       - Push FATAL_AUDIO_LOSS payload to DB Write Queue
       - Push UI lockout alert to Main Thread
       - Halt transcription — no automated fallback
+- [ ] **Silence detection for TTL override** – In callback, compute RMS energy over each block. If energy < threshold (e.g., -50 dB) for 3 seconds, set `silence_detected` event. Thread 2 monitors this to flush buffer.
 - [ ] Test: capture 5 seconds of audio → verify PCM shape `(N, 1)` float32 range `[-1, 1]`
 
 ### 3.2 Queue A Ack Protocol
@@ -278,7 +288,8 @@ Capture audio from the wireless receiver, push to Queue A with the acknowledgmen
 - [ ] Attach unique IDs to each PCM chunk as it enters Queue A
 - [ ] Thread 2 moves chunk to pending on pull, acks on successful Queue B push
 - [ ] Compute Failure path: pending chunks → Vosk replay queue
-- [ ] Queue depth monitor: > 150 items = declare Compute Failure
+- [ ] **Refined Compute Failure detection** – Add a heartbeat: Thread 2 increments a counter each time it processes a chunk. A watchdog thread checks the counter; if stalled for > 2 seconds while audio is incoming, declare Compute Failure (instead of only queue depth).
+- [ ] **When Compute Failure occurs** – Pause audio capture (set flag in Thread 1 to stop pushing new chunks), replay pending unacknowledged chunks to Vosk, then resume capture. This prevents unbounded backlog.
 
 ---
 
@@ -293,6 +304,7 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       from faster_whisper import WhisperModel
       model = WhisperModel("tiny.en", device="cuda", compute_type="int8")
       ```
+- [ ] **CUDA Toolkit verification** – At startup, attempt a tiny dummy inference. If CUDA missing, fall back to Vosk as primary (not just failover) and show error dialog: “CUDA Toolkit not found. Running in CPU‑only mode (Vosk).”
 - [ ] Implement 15-word sliding window:
       ```python
       word_buffer = []
@@ -306,7 +318,7 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       #     drop oldest 9 words
       ```
 - [ ] TTL Override (slow speech deadlock prevention):
-      - 3–5 second silence timer
+      - 3–5 second silence timer (uses energy detection from Phase 3)
       - On TTL fire: flush partial buffer, mark `word_count < 15` for Dynamic RRF Scaling
 - [ ] Wait State (trigger-driven snap):
       - Preceding: extract prior 15 words from `trigger_buffer`
@@ -337,12 +349,12 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       os.environ["OPENBLAS_NUM_THREADS"] = "2"
       ```
 - [ ] Failover activation sequence:
-      1. Compute Failure declared (Queue A depth > 150)
+      1. Compute Failure declared (heartbeat stall or queue depth)
       2. Thread 2 (GPU) halted
       3. OS event flag flipped — Vosk thread unblocks instantly
       4. Pending unacknowledged chunks replayed from Queue A
       5. Drain loop yields: `time.sleep(0.01)` between chunks
-      6. Thread 1 continues pushing new audio — no audio loss
+      6. Thread 1 continues pushing new audio (after pause/resume logic) — no audio loss
 
 ---
 
@@ -389,12 +401,19 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
         rrf = 1/(k + bm25_rank) + 1/(k + faiss_rank)
         # If absent from a lane: that lane contributes 0
 
-      RRF_max ≈ 0.0327  (ranked #1 in both lanes)
-      RRF_min ≈ 0.0153  (ranked #5 in one lane)
+      RRF_max_full = 0.0327  (ranked #1 in both lanes, 15 words)
+      RRF_min = 0.0153       (ranked #5 in one lane)
+
+      # Dynamic RRF Scaling based on word_count
+      scale_factor = min(1.0, word_count / 15.0)
+      RRF_max = RRF_max_full * scale_factor
+      # For word_count < 8: use more aggressive scaling
+      if word_count < 8:
+          scale_factor = 0.4 + (word_count - 1) * 0.1
+          RRF_max = RRF_max_full * scale_factor
 
       confidence = (rrf - RRF_min) / (RRF_max - RRF_min) * 100
-
-      Dynamic RRF Scaling: if word_count < 15, lower RRF_max proportionally
+      confidence = max(0, min(100, confidence))   # clamp
       ```
 - [ ] Push Stage 2 payload to DB Write Queue (search metrics)
 
@@ -474,6 +493,7 @@ Routing logic, WebSocket payloads, HTML renderer, OBS integration.
 - [ ] Create `display/themes.css` — default, communion, prophetic themes
 - [ ] Test in browser: open `display.html` → verify WebSocket connects
 - [ ] Test clear/display payloads manually from Python
+- [ ] **Tooltips** – Add hover explanations for every UI control (e.g., “Confidence threshold: verses above this and with trigger intent go to top of queue”).
 
 ### 7.3 OBS Integration Test
 
@@ -526,6 +546,12 @@ pynvml polling, hardware-level power throttling, operator dashboard.
 - [ ] Telemetry pushed to UI: temp, power draw, VRAM usage, utilization %, throttle state
 - [ ] Log VRAM usage to DB Write Queue for post-service leak detection
 
+### 8.2 CPU & RAM Monitoring (Extension)
+
+- [ ] Extend Thread 5 to also poll `psutil.virtual_memory()` every 30 seconds.
+- [ ] If available RAM drops below 500 MB, push a critical alert to operator and force service shutdown (to prevent crash).
+- [ ] Log top 10 memory‑consuming Python objects using `tracemalloc` when threshold crossed.
+
 ---
 
 ## Phase 9 — Operator UI
@@ -543,7 +569,7 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
       - Center panel: Auto-detected verse feed + operator review queue
       - Right panel:  Manual navigation + translation bar
       - Bottom bar:   Predictive scripture input, start/stop controls
-      - Status bar:   OBS connection indicator (green/red), GPU telemetry strip
+      - Status bar:   OBS connection indicator (green/red), GPU telemetry strip, RAM warning
 - [ ] Operator review queue:
       - Show/Reject buttons per item
       - Show → fires `broadcast_display()` + Stage 3 DB log
@@ -560,6 +586,7 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
 - [ ] Intercept key events at application level (suppress default OS behavior)
 - [ ] Configurable actions: Display, Clear/Recall, Theme Cycle Forward/Back/Reset
 - [ ] Settings UI for operator to remap bindings → saved via DB Write Queue
+- [ ] **Default bindings use function keys (F1–F12)** – rarely used by other applications.
 
 ### 9.3 Predictive Scripture Input
 
@@ -585,6 +612,13 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
       - Drop appends to end or inserts at position (visual indicator)
       - Reorder within panel
       - Each item stores: ref, translation, text, theme
+
+### 9.5 Theme Designer (Extension)
+
+- [ ] Minimal viable version: standalone PyQt6 window that loads `themes.css` into a `QTextEdit`.
+- [ ] Provide live preview using embedded `QWebEngineView` pointed to `display.html` with a local server.
+- [ ] Simple property panel (font, colour, shadow) to generate CSS rules.
+- [ ] Export saves back to `themes.css`. Keep feature self-contained.
 
 ---
 
@@ -613,7 +647,8 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
 - [ ] Retry loop (`MAX_RETRIES = 3`):
       - On JSON parse failure: append error to prompt for self-correction
       - After 3 failures: failover to next model in chain
-- [ ] API keys loaded from `.env` file only — never persisted to any table
+- [ ] **Pre‑truncation safety** – If transcript tokens > model context window minus 5000, truncate from the **middle** (preserve first 10% and last 10% of sermon). Log warning.
+- [ ] API keys loaded from `.env` file only – never persisted to any table. Optionally use system keyring (Windows Credential Manager / libsecret) via `keyring` library.
 
 ### 10.3 Offline Queue & Reconnection
 
@@ -646,10 +681,15 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
       - DO NOT bundle CUDA DLLs — target system must have CUDA Toolkit
 - [ ] Build:
       `pyinstaller rhemacast.spec --onefile --windowed`
+- [ ] **Inno Setup script** (`rhemacast.iss`) – creates installer that:
+      - Checks for CUDA Toolkit and prompts to download if missing.
+      - Installs `.exe`, `data/`, `display/` folders in `%ProgramFiles%\RhemaCast`.
+      - Creates Start Menu shortcuts and optionally desktop icon.
+      - Writes registry entries for uninstallation.
+- [ ] **Automatic update check** – On startup, ping a public version manifest URL (e.g., GitHub release). If newer version available, show notification with “Download” button.
 - [ ] Installer note:
       Document that users must install NVIDIA CUDA Toolkit separately.
-      Test on a clean Windows VM (no pre-installed CUDA) to confirm the
-      exe fails with a clear error message rather than a silent crash.
+      Test on a clean Windows VM (no pre-installed CUDA) to confirm the exe fails with a clear error message rather than a silent crash.
 
 ### 11.2 Linux .deb
 
@@ -679,11 +719,22 @@ End-to-end stress tests simulating real 2-hour services.
 
 - [ ] OBS connection indicator: disconnect/reconnect OBS → verify green/red toggle
 - [ ] Wireless receiver unplug → FATAL_AUDIO_LOSS lockout triggers correctly
-- [ ] CUDA unavailable (VM without GPU passthrough) → Vosk fallback activates
+- [ ] CUDA unavailable (VM without GPU passthrough) → Vosk fallback activates with clear error dialog
 - [ ] Admin check: run without elevated privileges → throttling disabled with clear warning
 - [ ] Offline queue consent gate: create fake offline queue → verify boot prompt
 
-### 12.2 Stress Tests
+### 12.2 Unit Tests & Regression
+
+- [ ] Write unit tests with `pytest` for each module (search_engine, intent_classification, db_writer, etc.). Mock out heavy dependencies (FAISS, GPU).
+- [ ] **Automated regression test of BM25/FAISS** – After rebuilding indexes, run a script that compares search results for 100 known phrases against a saved “golden” answer set. Alert on any significant rank change.
+
+### 12.3 Rehearsal Mode
+
+- [ ] Add a UI toggle that reads a pre‑recorded 16kHz WAV file and pushes it into Queue A as if from the microphone.
+- [ ] Operator can run a full service mock, verify display decisions, and export a test report.
+- [ ] Use rehearsal mode to calibrate confidence thresholds without live congregation.
+
+### 12.4 Stress Tests
 
 - [ ] 2-hour simulated service (audio loop):
       - VRAM usage must stay under 3 GB throughout (log with Thread 5)
@@ -705,7 +756,7 @@ End-to-end stress tests simulating real 2-hour services.
       - Verify all payloads committed before Thread 4 exits
       - Verify WAL checkpoint completes cleanly
 
-### 12.3 Search Quality Calibration
+### 12.5 Search Quality Calibration
 
 - [ ] Collect 50 real sermon audio clips (with known scripture references)
 - [ ] Run each through the full pipeline
@@ -714,6 +765,14 @@ End-to-end stress tests simulating real 2-hour services.
 - [ ] Adjust RRF_min, auto-display threshold (85%), and discard threshold (40%)
       based on empirical false-positive/false-negative rates
 - [ ] Re-test intent classification: tune trigger phrases in `intent_triggers.json`
+
+---
+
+## Phase 13 — Documentation for Users
+
+- [ ] **Operator quick start** – One page covering: connecting wireless receiver, starting transcription, using review queue, hotkeys, clear/recall, handling GPU throttle warning.
+- [ ] **Admin guide** – Installing CUDA Toolkit, editing `intent_triggers.json`, adding custom CSS themes, configuring offline queue consent gate, troubleshooting FATAL_AUDIO_LOSS.
+- [ ] **Tooltips** – Hover explanations for every UI control (as noted in Phase 7.2).
 
 ---
 
@@ -733,6 +792,7 @@ Phase 0 (VM + Environment)
                                                     └── Phase 10 (Cloud Pipeline)
                                                             └── Phase 11 (Packaging)
                                                                     └── Phase 12 (Testing)
+                                                                            └── Phase 13 (Documentation)
 ```
 
 ---
