@@ -82,7 +82,13 @@ rhemacast/
 │   ├── search_engine.py        # Thread 3
 │   ├── db_writer.py            # Thread 4
 │   ├── hardware_monitor.py     # Thread 5
-│   └── websocket_server.py
+│   ├── websocket_server.py
+│   ├── constants.py            # NEW: central timing/threshold constants
+│   ├── config_schema.py        # NEW: config validation & versioning
+│   ├── service_manager.py      # NEW: thread lifecycle & health
+│   ├── events.py               # NEW: explicit event dataclasses
+│   ├── errors.py               # NEW: error taxonomy
+│   └── startup_checks.py       # NEW: pre-flight checklist
 ├── data/
 │   ├── bible/                  # Raw Bible JSON/CSV sources
 │   ├── indexes/                # FAISS .index + BM25 .pkl files (built offline)
@@ -98,6 +104,10 @@ rhemacast/
 │   ├── rhemacast.spec          # PyInstaller spec (Windows)
 │   ├── rhemacast.iss           # Inno Setup script (Windows installer)
 │   └── build_deb.sh            # Debian packaging script
+├── tests/                      # NEW: unit & replay tests
+│   ├── test_search.py
+│   ├── test_intent.py
+│   └── replay_session.py
 ├── config.json
 ├── .env.example
 ├── requirements.txt
@@ -221,9 +231,10 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
 
 - [ ] Define all queues with thread-safe `queue.Queue()`:
       ```python
-      queue_a = queue.Queue()          # PCM audio chunks (with ack)
-      queue_b = queue.Queue()          # 15-word text blocks
-      db_write_queue = queue.Queue()   # All database event payloads
+      queue_a = queue.Queue(maxsize=500)          # PCM audio chunks (with ack)
+      queue_b = queue.Queue(maxsize=200)          # 15-word text blocks
+      db_write_queue = queue.Queue(maxsize=1000)  # All database event payloads
+      operator_queue = queue.Queue(maxsize=100)   # NEW: for UI review
       ```
 - [ ] Implement Queue A acknowledgment protocol:
       ```python
@@ -235,6 +246,11 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       ```python
       POISON_PILL = object()
       ```
+- [ ] **NEW: Backpressure & overflow policies**
+      - Queue A: never drop audio chunks; trigger failover if depth > 400
+      - Operator queue: drop oldest low‑confidence items if full
+      - DB queue: emergency disk spool fallback if overloaded (write to flat file)
+      - WebSocket broadcast queue: coalesce repeated “display same verse” events
 
 ### 2.3 WebSocket Server Skeleton
 
@@ -246,20 +262,78 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       - `broadcast_display(payload)` function
       - OBS connection telemetry: expose `len(connected_clients)` to UI thread
 - [ ] **Optional health endpoint** – HTTP GET on port 8766 returning `{"status": "ok", "queue_depths": {...}}` for remote monitoring.
+- [ ] **Security** – Bind only to localhost; reject remote connections. Sanitize all HTML payloads; escape scripture text before rendering.
 
-### 2.4 Threading Harness
+### 2.4 Threading Harness → Replaced by Service Manager
 
-- [ ] Create threading skeleton with all 5 threads stubbed:
-      - Each thread: `while True: item = queue.get(); if item is POISON_PILL: break`
-      - Startup sequence: T4 → T5 → T1 → T2 → T3 (strict order)
-      - Teardown: sequential poison pills with 3-second timeout joins
-- [ ] Implement service state machine (flags):
+**NEW:** Create `core/service_manager.py` as central authority.
+
+- [ ] Define explicit service states: `BOOTING`, `READY`, `RUNNING`, `DEGRADED`, `FAILOVER`, `SHUTTING_DOWN`, `CRASHED`
+- [ ] Boot sequencing: T4 → T5 → T1 → T2 → T3 (strict order)
+- [ ] Thread registration and health monitoring (heartbeats)
+- [ ] Graceful shutdown: sequential poison pills with timeouts
+- [ ] Crash escalation: if a critical thread dies, transition to appropriate state
+- [ ] Restart policies: e.g., restart Thread 2 up to 3 times before permanent failover
+- [ ] Global events (e.g., `service_active`, `compute_failure`) managed here
+- [ ] Teardown: ensure all queues drained before exit
+
+### 2.5 Explicit Event Bus & Error Taxonomy
+
+**NEW:** `core/events.py` – dataclasses for all inter‑thread payloads.
+
+- [ ] Define `TranscriptChunk`, `SearchQuery`, `SearchResult`, `DisplayCommand`, `TelemetrySample`, etc.
+- [ ] Version each event type to prevent schema drift.
+
+**NEW:** `core/errors.py` – formal error hierarchy.
+
+- [ ] `ComputeFailure`, `AudioDeviceLost`, `GPUOverheat`, `DatabaseWriteFailure`, `IndexMismatch`, `DisplayDisconnected`, `CloudExtractionFailure`
+- [ ] Each error has attributes: `retryable`, `fatal`, `operator_visible`, `auto_recoverable`.
+
+### 2.6 Startup Validation Pipeline
+
+**NEW:** `core/startup_checks.py` – pre‑flight checklist run before enabling “Start Service”.
+
+- [ ] Verify CUDA availability (Faster‑Whisper)
+- [ ] Verify FAISS index exists and fingerprint matches Bible DB
+- [ ] Verify BM25 index exists and fingerprint matches
+- [ ] Verify SQLite writable and `integrity_check` passes
+- [ ] Verify microphone accessible (test open stream)
+- [ ] Verify WebSocket port free
+- [ ] Verify sufficient RAM (at least 2 GB free)
+- [ ] Verify Vosk model exists (for failover)
+- [ ] Verify `display.html` reachable via file://
+- [ ] Verify OBS browser source connectivity (optional ping)
+- [ ] Verify write permissions for logs and offline queue directory
+- [ ] Verify GPU temperature below 85°C
+- [ ] Verify required environment variables present (API keys not needed for startup, but keys for cloud extraction must be present if enabled)
+- [ ] Produce PASS / WARNING / FAIL report; block “Start Service” if critical checks fail.
+
+### 2.7 Central Configuration & Constants
+
+**NEW:** `core/constants.py` – single source of truth for all magic numbers.
+
+- [ ] Define:
       ```python
-      service_active = threading.Event()
-      compute_failure = threading.Event()   # Triggers Vosk failover
+      SAMPLE_RATE = 16000
+      BLOCK_SIZE = 1600
+      WORD_WINDOW = 15
+      WORD_OVERLAP = 6
+      AUTO_DISPLAY_THRESHOLD = 85      # confidence %
+      DISCARD_THRESHOLD = 40
+      GPU_CRITICAL_TEMP = 82
+      GPU_SAFE_TEMP = 70
+      QUEUE_A_MAXSIZE = 500
+      QUEUE_B_MAXSIZE = 200
+      DB_QUEUE_MAXSIZE = 1000
+      OPERATOR_QUEUE_MAXSIZE = 100
       ```
-- [ ] **Structured logging** – Use `logging.handlers.RotatingFileHandler` to write to `%ProgramData%\RhemaCast\Logs\rhemacast.log` (Windows) or `/var/log/rhemacast/` (Linux). Rotate at 10 MB, keep 5 backups. Include thread names and timestamps.
-- [ ] **Crash report generation** – On any unhandled exception in a thread, capture stack trace, dump recent log lines, and write a `.crash` file to the logs directory. Notify operator with a non‑blocking alert.
+- [ ] Add comments explaining the rationale for each constant.
+
+**NEW:** `core/config_schema.py` – validate `config.json` on startup.
+
+- [ ] Define required fields and defaults.
+- [ ] Add `config_version` field; auto‑migrate old configs to latest schema.
+- [ ] Fail boot if required fields missing.
 
 ---
 
@@ -416,6 +490,11 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
       confidence = max(0, min(100, confidence))   # clamp
       ```
 - [ ] Push Stage 2 payload to DB Write Queue (search metrics)
+- [ ] **NEW: Search observability** – In addition to results, log:
+      - BM25 rank, FAISS rank, RRF score, confidence
+      - Query tokens, embedding latency, search latency
+      - Trigger phrase matched (if any)
+      - Normalized inputs
 
 ---
 
@@ -620,6 +699,13 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
 - [ ] Simple property panel (font, colour, shadow) to generate CSS rules.
 - [ ] Export saves back to `themes.css`. Keep feature self-contained.
 
+### 9.6 UI Performance Constraints
+
+- [ ] No blocking operations on UI thread (all DB access, network calls, heavy processing offloaded)
+- [ ] Max UI refresh rate: 30 FPS (debounce telemetry updates)
+- [ ] Operator queue renders at most 50 items at once (virtual scrolling)
+- [ ] Use `QThread` for any background work that could take >50 ms
+
 ---
 
 ## Phase 10 — Cloud Extraction Pipeline
@@ -728,11 +814,13 @@ End-to-end stress tests simulating real 2-hour services.
 - [ ] Write unit tests with `pytest` for each module (search_engine, intent_classification, db_writer, etc.). Mock out heavy dependencies (FAISS, GPU).
 - [ ] **Automated regression test of BM25/FAISS** – After rebuilding indexes, run a script that compares search results for 100 known phrases against a saved “golden” answer set. Alert on any significant rank change.
 
-### 12.3 Rehearsal Mode
+### 12.3 Rehearsal Mode → Extended to Deterministic Replay
 
 - [ ] Add a UI toggle that reads a pre‑recorded 16kHz WAV file and pushes it into Queue A as if from the microphone.
 - [ ] Operator can run a full service mock, verify display decisions, and export a test report.
 - [ ] Use rehearsal mode to calibrate confidence thresholds without live congregation.
+- [ ] **NEW: Record raw Queue A audio stream to `.pcm` with timestamps** during live services.
+- [ ] **NEW: Replay Session System** – Feed the recorded `.pcm` back into the pipeline offline, capture all thread outputs, compare against a golden baseline. Detect regressions automatically.
 
 ### 12.4 Stress Tests
 
@@ -766,6 +854,15 @@ End-to-end stress tests simulating real 2-hour services.
       based on empirical false-positive/false-negative rates
 - [ ] Re-test intent classification: tune trigger phrases in `intent_triggers.json`
 
+### 12.6 Data Integrity Tests
+
+- [ ] Run `PRAGMA integrity_check` on SQLite at startup and after each service
+- [ ] Auto-backup database daily (keep 7 days)
+- [ ] Schedule WAL checkpoint every 1000 transactions or on shutdown
+- [ ] Verify FAISS vector count matches number of verses
+- [ ] Verify BM25 document count matches
+- [ ] SHA256 hash transcript exports and verify chunk continuity
+
 ---
 
 ## Phase 13 — Documentation for Users
@@ -773,31 +870,155 @@ End-to-end stress tests simulating real 2-hour services.
 - [ ] **Operator quick start** – One page covering: connecting wireless receiver, starting transcription, using review queue, hotkeys, clear/recall, handling GPU throttle warning.
 - [ ] **Admin guide** – Installing CUDA Toolkit, editing `intent_triggers.json`, adding custom CSS themes, configuring offline queue consent gate, troubleshooting FATAL_AUDIO_LOSS.
 - [ ] **Tooltips** – Hover explanations for every UI control (as noted in Phase 7.2).
+- [ ] **NEW: Operator Recovery Procedures** – A dedicated section with drills:
+      - GPU failure during sermon → automatic Vosk failover, operator action: none
+      - Audio receiver unplugged → FATAL_AUDIO_LOSS lockout, operator action: restart app
+      - OBS disconnected → check browser source, restart OBS
+      - Windows update popup → postpone updates, or set active hours
+      - Full disk → clear old logs, move offline queue to another drive
+      - Internet outage → cloud extraction queues offline, no disruption to live service
+      - Corrupt index → rebuild from Bible source using offline script
+      - App freeze → force‑quit and restart; session resumes automatically
+  Symptoms, automatic response, operator action, recovery confirmation.
 
 ---
 
-## Dependency & Phase Map
+## Phase 14 — Production Survivability & Architectural Hardening
+
+This phase adds operational resilience, architectural boundaries, and non‑functional guarantees.
+
+### 14.1 Operational Modes
+
+- [ ] Implement modes in `core/service_manager.py`:
+      - `NORMAL` – full GPU, FAISS, cloud extraction, throttling
+      - `SAFE_MODE` – disable FAISS, disable cloud, disable throttling, use BM25+Vosk only
+      - `CPU_ONLY` – Faster‑Whisper on CPU, Vosk as fallback, no GPU monitoring
+      - `REHEARSAL` – read from WAV file, disable live broadcast
+      - `HEADLESS` – no UI, for remote monitoring or automated testing
+      - `DEBUG` – verbose logging, extra checks
+      - `BENCHMARK` – measure latencies, no real broadcast
+- [ ] Allow mode override via command line flag or config file.
+
+### 14.2 Explicit Memory Budgets & Cold Boot Targets
+
+**VRAM Budget (GTX 1650, 4 GB)**
+- [ ] Faster-Whisper: max 3 GB
+- [ ] CUDA overhead: 500 MB
+- [ ] Safety margin: 500 MB
+- [ ] Reject model upgrades that exceed budget.
+
+**RAM Budget (16 GB system)**
+- [ ] FAISS: 300 MB
+- [ ] BM25: 100 MB
+- [ ] SQLite cache: 256 MB
+- [ ] Embedding model (ONNX): 200 MB
+- [ ] UI (PyQt): 150 MB
+- [ ] Audio buffers & queues: 100 MB
+- [ ] Operating system & other processes: ~4 GB
+- [ ] Total headroom: > 2 GB free at all times.
+
+**Cold Boot Time Targets**
+- [ ] Cold boot (from launch to “Ready”): < 30 seconds
+- [ ] Warm restart (service stop → start again): < 10 seconds
+- [ ] Vosk failover latency: < 50 ms
+- [ ] OBS reconnect: < 2 seconds
+- [ ] Queue drain on shutdown: < 5 seconds
+
+Benchmark each target in CI and alert on regression.
+
+### 14.3 Performance Benchmarks per Phase
+
+Add measurable engineering targets:
+
+- [ ] Audio callback execution: < 5 ms
+- [ ] STT 15‑word window processing: < 300 ms (GPU)
+- [ ] BM25 query: < 10 ms
+- [ ] FAISS query: < 40 ms
+- [ ] Intent classification: < 1 ms
+- [ ] RRF fusion: < 5 ms
+- [ ] Display broadcast latency (from decision to WebSocket send): < 100 ms
+- [ ] UI telemetry refresh: debounced to 2 Hz max
+
+Monitor these in rehearsal mode and log violations.
+
+### 14.4 Non‑Functional Requirements (Architectural Guardrails)
+
+- [ ] **Reliability** – Zero audio loss during failover (validated by replay tests)
+- [ ] **Availability** – Survive 2‑hour service continuously without crash or intervention
+- [ ] **Recoverability** – Resume session after crash with no manual data repair
+- [ ] **Determinism** – Replaying the same PCM stream produces identical search outputs (version‑locked models)
+- [ ] **Portability** – Same `config.json` works on Windows and Linux (paths resolved dynamically)
+- [ ] **Maintainability** – No circular imports; each module < 1000 LOC; all public methods typed
+
+### 14.5 Technical Debt Prevention Rules
+
+- [ ] No global mutable state outside `service_manager`
+- [ ] No thread directly talks to another thread (use queues / events only)
+- [ ] No silent exceptions – every exception caught is logged and, if fatal, escalates
+- [ ] Every thread has a heartbeat monitored by service manager
+- [ ] Every background loop includes a sleep or yield
+- [ ] Every config option is documented in `config_schema.py`
+- [ ] Every public method has type hints
+- [ ] Every queue payload is versioned (in `events.py`)
+
+### 14.6 Model Management
+
+- [ ] Central model registry (`core/models.py`)
+- [ ] Store checksums (SHA256) for Faster‑Whisper, Vosk, embedding model
+- [ ] On startup, verify checksums; if mismatch, warn and optionally auto‑redownload
+- [ ] Version pinning: lock model versions in `config.json`
+- [ ] Automatic download from trusted URLs (with user consent)
+- [ ] Cache cleanup policy: remove unused models after N days
+- [ ] Compatibility validation: ensure embedding model dimension matches FAISS index
+
+### 14.7 Architectural Split: Three Isolated Subsystems
+
+**A. Real‑Time Engine** (hard realtime‑ish)
+- Audio capture, STT, search, broadcast
+- Runs in dedicated threads with highest priority
+- No blocking calls to subsystems B or C
+- Communicates via message passing only
+
+**B. Operator Application** (human‑facing)
+- PyQt UI, review queue, scheduling, themes
+- Runs on main thread, can be slower
+- Observes real‑time engine via queues, never blocks it
+
+**C. Post‑Service Processing** (non‑realtime)
+- Cloud extraction, analytics, exports, reports
+- Runs after service ends or as low‑priority background tasks
+- Can be paused or throttled without affecting live service
+
+- [ ] Implement clear message‑passing interfaces between subsystems
+- [ ] Verify real‑time engine never waits for B or C
+- [ ] Document subsystem boundaries in developer guide
+
+---
+
+## Dependency & Phase Map (Updated)
 
 ```
 Phase 0 (VM + Environment)
-    └── Phase 1 (Bible Indexes) ─────────────────────────┐
-    └── Phase 2 (Core Infrastructure)                     │
-            └── Phase 3 (Audio Pipeline)                  │
-            └── Phase 4 (STT Engine)                      │
-                    └── Phase 5 (Search Engine) ←─────────┘
-                            └── Phase 6 (Intent)
-                                    └── Phase 7 (Display)
-                                            └── Phase 8 (GPU Monitor) [parallel]
-                                            └── Phase 9 (Operator UI)
-                                                    └── Phase 10 (Cloud Pipeline)
-                                                            └── Phase 11 (Packaging)
-                                                                    └── Phase 12 (Testing)
-                                                                            └── Phase 13 (Documentation)
+    └── Phase 1 (Bible Indexes) ─────────────────────────────────────┐
+    └── Phase 2 (Core Infrastructure + Service Manager + Startup Checks) │
+            ├── Phase 3 (Audio Pipeline)                              │
+            ├── Phase 4 (STT Engine)                                  │
+            │       └── Phase 5 (Search Engine) ←─────────────────────┘
+            │               └── Phase 6 (Intent)
+            │                       └── Phase 7 (Display)
+            │                               ├── Phase 8 (GPU Monitor) [parallel]
+            │                               └── Phase 9 (Operator UI)
+            │                                       └── Phase 10 (Cloud Pipeline)
+            │                                               └── Phase 11 (Packaging)
+            │                                                       └── Phase 12 (Testing)
+            │                                                               └── Phase 13 (Documentation)
+            └── Phase 14 (Production Survivability) ←─────────────────────────┘
+                    (Architectural hardening, modes, budgets, benchmarks)
 ```
 
 ---
 
-## Key Constraints Reference
+## Key Constraints Reference (Updated)
 
 | Constraint | Rule |
 |---|---|
@@ -811,3 +1032,8 @@ Phase 0 (VM + Environment)
 | Offline queue path | System data dir only; never Desktop/Documents/Downloads |
 | Admin privileges | Required for `nvmlDeviceSetPowerManagementLimit`; check at boot |
 | DB writes | Single-writer pattern only; no thread writes directly to SQLite |
+| **WebSocket** | Binds only to localhost; remote connections rejected |
+| **UI responsiveness** | No blocking ops on UI thread; max 30 FPS |
+| **Memory budgets** | Enforced via startup checks; reject upgrades exceeding budget |
+| **Cold boot** | < 30 seconds to READY state |
+| **Zero audio loss** | Guaranteed during failover (replay validated) |
