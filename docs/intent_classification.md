@@ -101,7 +101,7 @@ The display decision matrix in Phase 5 combines the RRF Rank Score with the Bool
 
 | Confidence | Trigger State | Action |
 |-----------|---------------|--------|
-| ≥ 85% | `True` | **Auto-Display** (Pushed instantly to OBS) |
+| ≥ 85% | `True` | **Top of Review Queue** (Highest priority for operator) |
 | ≥ 85% | `False` | **Operator Review Queue** |
 | 40–84% | Any | **Operator Review Queue** |
 | < 40% | Any | **Discard** |

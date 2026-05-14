@@ -147,7 +147,7 @@ This is the active service loop. It runs continuously until the operator ends th
 | **2A: Transcription** | Thread 1 captures audio → Queue A → Thread 2 transcribes → sliding window fills → Queue B | Continuous |
 | **2B: Search & Scoring** | BM25 + FAISS run in parallel → RRF fusion → Min-Max normalization → 0–100% confidence | ~35 ms |
 | **2C: Intent Check** | Regex Triggers evaluate quote intent as a Boolean State: True / False | < 1 ms |
-| **2D: Display Decision** | Auto-display (>85% + High intent), operator queue (moderate + Low intent), or discard | ~5 ms |
+| **2D: Display Decision** | Top of review queue (>85% + High intent), standard operator queue (moderate + Low intent), or discard | ~5 ms |
 | **2E: Persistence** | All events pushed to DB Write Queue asynchronously | Non-blocking |
 | **2F: Hardware Monitoring** | Thread 5 polls GPU temperature, throttles/restores power as needed | Every N seconds |
 

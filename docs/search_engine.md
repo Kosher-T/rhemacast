@@ -147,14 +147,14 @@ $$Confidence = \left( \frac{RRF_{observed} - RRF_{min}}{RRF_{max} - RRF_{min}} \
 | $RRF_{max}$ | ≈ 0.0327 | Ranked #1 in both lanes |
 | $RRF_{min}$ | ≈ 0.0153 | Ranked #5 in one lane only |
 
-**Tuning:** If empirical testing shows that verses hovering at 60% are triggering false positives in the auto-display tier, the `RRF_min` variable is adjusted upward to compress the scale, pushing lower-ranked combinations toward lower percentages.
+**Tuning:** If empirical testing shows that verses hovering at 60% are consistently rising to the top of the operator review queue as false positives, the `RRF_min` variable is adjusted upward to compress the scale, pushing lower-ranked combinations toward lower percentages.
 
 ### Dynamic RRF Scaling (Partial Buffers)
 
 When the buffer flushes early due to the slow-speech TTL timeout (e.g., only 8 words instead of 15), the semantic model inherently produces weaker vector coordinates due to insufficient context. To prevent unfairly penalizing short phrases:
 
 - As the buffer word count drops below 15, the system **programmatically lowers `RRF_max`** in the normalization equation.
-- This compresses the grading scale, allowing weaker raw RRF scores from a short phrase to still achieve the 85% auto-display threshold when the match is genuinely strong.
+- This compresses the grading scale, allowing weaker raw RRF scores from a short phrase to still achieve the 85% threshold (Top of Review Queue) when the match is genuinely strong.
 
 ---
 
@@ -179,13 +179,16 @@ The final routing decision combines the Confidence Score and the Boolean Trigger
 
 | Confidence | Trigger State | Action |
 |-----------|---------------|--------|
-| ≥ 85% | True | **Auto-Display** — bypass operator, push directly to WebSocket → OBS |
+| ≥ 85% | True | **Top of Review Queue** — highest priority for the operator, placed at the top of the queue |
 | ≥ 85% | False | **Operator Review Queue** — high confidence, but needs human validation |
 | 40–84% | Any | **Operator Review Queue** — subject to LRU deduplication |
 | < 40% | Any | **Discard** — text appended to transcript, search results dropped |
 
 > [!NOTE]
 > The exact confidence thresholds (85%, 40%) are **configurable by the system admin** from the operator settings menu. These values represent sensible defaults and should be adjusted based on empirical testing during rehearsals.
+
+> [!IMPORTANT]
+> **No Auto-Display:** The system does NOT automatically render verses to the screen, even for high-confidence/high-intent matches. Instead, the highest quality matches are placed directly at the top of the review queue for the operator to quickly approve. This decision was made to ensure human oversight. While this might be reconsidered later as a configurable option, for now, auto-display is strictly disabled.
 
 ### LRU Cache Deduplication
 
@@ -285,6 +288,6 @@ When the operator types a number as the first character:
 
 - **Sliding window and thread model:** [architecture.md](architecture.md)
 - **Intent classification details:** [intent_classification.md](intent_classification.md)
-- **Display pipeline after auto-display:** [display_and_broadcast.md](display_and_broadcast.md)
+- **Display pipeline overview:** [display_and_broadcast.md](display_and_broadcast.md)
 - **Database persistence of search metrics:** [database_and_storage.md](database_and_storage.md)
 - **Operator version interaction and display:** [display_and_broadcast.md](display_and_broadcast.md)

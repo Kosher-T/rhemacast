@@ -7,7 +7,7 @@
 1. **Listens** — A fine-tuned Continuous Stream STT engine transcribes the pastor's speech in real-time using a 15-word sliding window.
 2. **Searches** — A hybrid search engine (BM25 lexical + FAISS semantic) simultaneously scans 186,000+ Bible verses to find the best match for what was just said.
 3. **Scores** — Reciprocal Rank Fusion merges both search lanes into a single 0–100% confidence score, while an intent classifier determines if the pastor is actually quoting scripture.
-4. **Displays** — High-confidence, high-intent matches are auto-displayed via a lightweight WebSocket → HTML/CSS pipeline ingested as a Browser Source in OBS/vMix. Lower-confidence matches are routed to the operator for manual approval.
+4. **Displays** — High-confidence, high-intent matches are placed at the top of the operator's review queue. When manually approved by the operator, they are displayed via a lightweight WebSocket → HTML/CSS pipeline ingested as a Browser Source in OBS/vMix.
 5. **Archives** — Every transcript chunk, search result, and display event is persisted to a SQLite WAL database with a flat-file fail-safe.
 6. **Extracts** — After the service, the complete transcript is sent to a cloud LLM (Gemini Flash / Claude Haiku) to extract prayer points, declarations, and prophetic words.
 
@@ -44,7 +44,7 @@ graph TD
     BM25 --> RRF[RRF Fusion + Intent Check]
     FAISS --> RRF
     
-    RRF -->|"> 85% Con + High Intent"| AD[Auto-Display WebSocket]
+    RRF -->|"> 85% Con + High Intent"| AD[Top of Review Queue]
     RRF -->|"Moderate Con OR Low Intent"| QO[Queue: Operator Review]
     RRF -->|"< 40% Con"| D[Discard]
     

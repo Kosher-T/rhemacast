@@ -25,7 +25,7 @@ graph LR
 
 ## Component 1: The Python Dispatcher
 
-When the search pipeline (Phase 5) triggers an auto-display or the operator manually approves a verse, Python packages the display data into a minimal JSON payload and pushes it over a local WebSocket connection.
+When the operator manually approves a verse, Python packages the display data into a minimal JSON payload and pushes it over a local WebSocket connection.
 
 ### WebSocket Server & State Reconciliation
 
@@ -421,8 +421,7 @@ Each schedule item stores:
 
 | Source | Trigger | Flow |
 |--------|---------|------|
-| **Auto-Display** | Confidence ≥ 85% + High/Medium Intent | Search Thread → `broadcast_display()` → WebSocket → HTML → OBS |
-| **Operator Approval** | Operator clicks "Show" | UI Thread → `broadcast_display()` → WebSocket → HTML → OBS |
+| **Operator Approval** | Operator clicks "Show" on a queued or highly-ranked verse | UI Thread → `broadcast_display()` → WebSocket → HTML → OBS |
 | **Manual Override** | Operator types ref and clicks "Show" | UI Thread → `broadcast_display()` → WebSocket → HTML → OBS |
 | **Clear Screen** | Operator clicks "Clear" / timer expires | UI Thread → `broadcast_display({"action": "clear"})` → WebSocket → HTML → OBS |
 
