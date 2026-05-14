@@ -15,17 +15,21 @@ This phase is completed once. It creates the foundation every other phase depend
 - [ ] Install KVM/QEMU and libvirt
 
       `sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager`
+
 - [ ] Verify IOMMU groups — GTX 1650 must be in its own clean group
 
       `dmesg | grep -i iommu`
       `find /sys/kernel/iommu_groups/ -type l | sort -V | head -40`
+
 - [ ] Enable IOMMU in GRUB (Intel: `intel_iommu=on` / AMD: `amd_iommu=on`)
       Edit `/etc/default/grub` → `GRUB_CMDLINE_LINUX_DEFAULT`
 
       `sudo update-grub && reboot`
+
 - [ ] Confirm `vfio-pci` module is available
 
       `lsmod | grep vfio`
+
 
 ### 0.2 VFIO GPU Passthrough — The libvirt Hook Script
 
@@ -35,17 +39,21 @@ The hook binds/unbinds the GPU between the Linux nvidia driver and vfio-pci auto
 
       `lspci -nn | grep NVIDIA`
       # Example output: `01:00.0 [10de:1f82]` (GPU), `01:00.1 [10de:10fa]` (Audio)
+
 - [ ] Blacklist nvidia driver for vfio
 
       `/etc/modprobe.d/vfio.conf`:
       `options vfio-pci ids=10de:1f82,10de:10fa`
+
 - [ ] Create libvirt hook: `/etc/libvirt/hooks/qemu`
       # On VM start: unbind nvidia → bind vfio-pci
       # On VM stop:  unbind vfio-pci → bind nvidia
 
       `chmod +x /etc/libvirt/hooks/qemu`
+
 - [ ] Attach GPU to VM in virt-manager:
       Add Hardware → PCI Host Device → select GPU + Audio device
+
 - [ ] Test: Boot Windows VM → confirm Device Manager shows GTX 1650
       Install NVIDIA driver inside VM
       Run `nvidia-smi.exe` to verify CUDA access
@@ -59,11 +67,13 @@ Set up matching Python environments on Linux (dev) and inside the Windows VM (pa
 - [ ] Python 3.11 — recommended for CTranslate2/Faster-Whisper compatibility
       Linux:   `sudo apt install python3.11 python3.11-venv python3.11-dev`
       Windows: installer from python.org (add to PATH)
+
 - [ ] Create project virtualenv
 
       `python3.11 -m venv .venv`
       `source .venv/bin/activate`  (Linux)
       `.venv\Scripts\activate`     (Windows)
+
 - [ ] Install core dependencies (both platforms)
 
       `pip install faster-whisper`
@@ -76,12 +86,14 @@ Set up matching Python environments on Linux (dev) and inside the Windows VM (pa
       `pip install pynvml`
       `pip install sqlite3`   # stdlib, no install needed
       `pip install pyinstaller`  # Windows VM only, for packaging
+
 - [ ] Verify GPU access in Python (Windows VM)
 
       `python -c "import torch; print(torch.cuda.is_available())"`
       # Or via CTranslate2:
 
       `python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"`
+
 
 ### 0.4 Repository Structure
 
@@ -130,9 +142,11 @@ rhemacast/
 - [ ] Download NVIDIA CUDA Toolkit (match your driver version)
       https://developer.nvidia.com/cuda-downloads
       Recommended: CUDA 12.x
+
 - [ ] Install cuDNN (required by CTranslate2)
       https://developer.nvidia.com/cudnn
       Copy DLLs to CUDA bin directory
+
 - [ ] Verify: `nvcc --version` (should report CUDA version)
 
 ---
@@ -146,11 +160,13 @@ This phase builds the searchable Bible database and vector index. It runs once a
 - [ ] Obtain Bible texts in structured format (JSON or CSV):
       KJV, NKJV, ESV, NIV, NLT, AMP — exactly these 6 versions
       Format: `{ "book": "John", "chapter": 3, "verse": 16, "text": "..." }`
+
 - [ ] For public domain versions (KJV), download from a reliable source like `raw.githubusercontent.com/scrollmapper/bible_databases/`
 - [ ] For copyrighted versions (NKJV, NIV, etc.), document that the user must supply their own files; include a converter script for OSIS/USFM/JSON
 - [ ] Load into SQLite Bible database
       Table: `verses(id, version, book, chapter, verse_num, text)`
       Total rows: ~31,000 verses × 6 versions = ~186,000 rows
+
 - [ ] **Version fingerprinting** – Store a hash of each source file used to build indexes. At runtime, verify loaded index matches current Bible database; if mismatched, rebuild automatically or warn.
 
 ### 1.2 Build the BM25 Inverted Index
@@ -161,12 +177,14 @@ This phase builds the searchable Bible database and vector index. It runs once a
       - Lowercase
       - Strip custom stop-words: `{"the","is","a","and","to","of","in","that"}`
       - RETAIN archaic vocabulary: thou, hath, unto, thy, etc.
+
 - [ ] Tokenize and build BM25 index with `rank_bm25`
 
       ```python
       from rank_bm25 import BM25Okapi
       bm25 = BM25Okapi(tokenized_corpus)
       ```
+
 - [ ] Serialize and save
 
       ```python
@@ -185,12 +203,14 @@ Expected size: ~50–100 MB on disk / in RAM.
       from sentence_transformers import SentenceTransformer
       model = SentenceTransformer("all-MiniLM-L6-v2")
       ```
+
 - [ ] Encode all 186,000 verse texts → 384-dimensional vectors
 
       ```python
       # This takes ~20–40 minutes on CPU; run it once
       embeddings = model.encode(all_verse_texts, batch_size=256, show_progress_bar=True)
       ```
+
 - [ ] Build FAISS index (FlatL2 or IndexFlatIP for cosine similarity)
 
       ```python
@@ -199,6 +219,7 @@ Expected size: ~50–100 MB on disk / in RAM.
       faiss.normalize_L2(embeddings)
       index.add(embeddings)
       ```
+
 - [ ] Save index and reference lookup
 
       ```python
@@ -214,6 +235,7 @@ Expected size: ~280 MB in RAM, ~280 MB on disk.
       - Run 10 known verse fragments through BM25 → confirm correct verse in Top 5
       - Run 10 paraphrased verses through FAISS → confirm semantic match in Top 5
       - Run 5 phrases through both → manually verify RRF fusion ranking
+
 
 ---
 
@@ -241,6 +263,7 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       DB_QUEUE_MAXSIZE = 1000
       OPERATOR_QUEUE_MAXSIZE = 100
       ```
+
 - [ ] Add comments explaining the rationale for each constant.
 
 **NEW:** `core/config_schema.py` – validate `config.json` on startup.
@@ -270,22 +293,26 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       - `PRAGMA journal_mode=WAL`
       - `PRAGMA synchronous=NORMAL`
       - Create all tables: `transcripts`, `search_results`, `display_events`, `sessions`, `settings`, `metadata` (for schema version)
+
 - [ ] Implement the Database Write Queue pattern
 
       ```python
       db_write_queue = queue.Queue()
       # Single-writer Thread 4 pulls and executes all inserts
       ```
+
 - [ ] **Database migration strategy** – On startup, compare `user_version` with current version; apply migrations (add columns, new tables) using a simple Python script. Never drop columns – only add.
 - [ ] Implement session management:
       - Generate session ID with start time: `YYYY-MM-DD_HH-MM` (e.g., `2026-04-16_09-30`)
       - Phase 1 interruption gate: query for open sessions on boot
       - Blocking UI prompt: Resume / Start New
       - Sequence counter resume: `MAX(sequence_id) + 1`
+
 - [ ] Write flat file handler with:
       - Isolated path: `/var/lib/rhemacast/logs/` (Linux) or `C:\ProgramData\RhemaCast\Logs\` (Windows)
       - `PermissionError` fallback: PART2, PART3 suffix rotation
       - Simultaneous write with SQL insert (in Thread 4)
+
 
 ### 2.4 Queue Topology
 
@@ -297,6 +324,7 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       db_write_queue = queue.Queue(maxsize=1000)  # All database event payloads
       operator_queue = queue.Queue(maxsize=100)   # NEW: for UI review
       ```
+
 - [ ] Implement Queue A acknowledgment protocol:
 
       ```python
@@ -304,16 +332,19 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       # Chunks stay in pending until Thread 2 calls ack(chunk_id)
       # On Compute Failure: all pending chunks replayed to Vosk
       ```
+
 - [ ] Define POISON_PILL sentinel:
 
       ```python
       POISON_PILL = object()
       ```
+
 - [ ] **NEW: Backpressure & overflow policies**
       - Queue A: never drop audio chunks; trigger failover if depth > 400
       - Operator queue: drop oldest low‑confidence items if full
       - DB queue: emergency disk spool fallback if overloaded (write to flat file)
       - WebSocket broadcast queue: coalesce repeated “display same verse” events
+
 
 ### 2.5 WebSocket Server Skeleton
 
@@ -324,6 +355,7 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
       - On new client connect: instantly push `current_display_state`
       - `broadcast_display(payload)` function
       - OBS connection telemetry: expose `len(connected_clients)` to UI thread
+
 - [ ] **Optional health endpoint** – HTTP GET on port 8766 returning `{"status": "ok", "queue_depths": {...}}` for remote monitoring.
 - [ ] **Security** – Bind only to localhost; reject remote connections. Sanitize all HTML payloads; escape scripture text before rendering.
 
@@ -375,6 +407,7 @@ This phase adds operational resilience, architectural boundaries, and non‑func
       - `HEADLESS` – no UI, for remote monitoring or automated testing
       - `DEBUG` – verbose logging, extra checks
       - `BENCHMARK` – measure latencies, no real broadcast
+
 - [ ] Allow mode override via command line flag or config file.
 
 ### 14.2 Explicit Memory Budgets & Cold Boot Targets
@@ -484,12 +517,14 @@ Capture audio from the wireless receiver, push to Queue A with the acknowledgmen
       - 16kHz / Mono / float32 / 100ms blocks (`BLOCK_SIZE = 1600`)
       - Callback: `indata.copy() → queue_a.put()`
       - Device enumeration: `sd.query_devices()` → populate UI dropdown
+
 - [ ] **Pre‑flight device check** – Before enabling “Start Transcription”, test the selected input device with `sd.check_input_settings()`. If unavailable, show error and disable start button.
 - [ ] Implement FATAL_AUDIO_LOSS handler:
       - Catch `PortAudioError`
       - Push FATAL_AUDIO_LOSS payload to DB Write Queue
       - Push UI lockout alert to Main Thread
       - Halt transcription — no automated fallback
+
 - [ ] **Silence detection for TTL override** – In callback, compute RMS energy over each block. If energy < threshold (e.g., -50 dB) for 3 seconds, set `silence_detected` event. Thread 2 monitors this to flush buffer.
 - [ ] Test: capture 5 seconds of audio → verify PCM shape `(N, 1)` float32 range `[-1, 1]`
 
@@ -515,6 +550,7 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       from faster_whisper import WhisperModel
       model = WhisperModel("tiny.en", device="cuda", compute_type="int8")
       ```
+
 - [ ] **CUDA Toolkit verification** – At startup, attempt a tiny dummy inference. If CUDA missing, fall back to Vosk as primary (not just failover) and show error dialog: “CUDA Toolkit not found. Running in CPU‑only mode (Vosk).”
 - [ ] Implement 15-word sliding window:
 
@@ -529,12 +565,15 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       #     retain last 6 words (trailing overlap)
       #     drop oldest 9 words
       ```
+
 - [ ] TTL Override (slow speech deadlock prevention):
       - 3–5 second silence timer (uses energy detection from Phase 3)
       - On TTL fire: flush partial buffer, mark `word_count < 15` for Dynamic RRF Scaling
+
 - [ ] Wait State (trigger-driven snap):
       - Preceding: extract prior 15 words from `trigger_buffer`
       - Proceeding: set `wait_state` flag, collect future words, then snap
+
 - [ ] Push Queue B payload:
 
       ```python
@@ -546,6 +585,7 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
         "word_count": len(words)
       }
       ```
+
 - [ ] Simultaneously push raw STT payload to DB Write Queue (Stage 1 logging)
 
 ### 4.2 Vosk Failover (Thread 2-Fallback)
@@ -557,12 +597,14 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       vosk_model = Model("vosk-model-small-en-us")
       # Block thread with OS event flag — consumes 0 CPU cycles
       ```
+
 - [ ] Cap OpenBLAS/MKL threads during Phase 1 (pre-Vosk activation):
 
       ```python
       os.environ["OMP_NUM_THREADS"] = "2"
       os.environ["OPENBLAS_NUM_THREADS"] = "2"
       ```
+
 - [ ] Failover activation sequence:
       1. Compute Failure declared (heartbeat stall or queue depth)
       2. Thread 2 (GPU) halted
@@ -570,6 +612,7 @@ Faster-Whisper on GPU, 15-word sliding window, Vosk failover.
       4. Pending unacknowledged chunks replayed from Queue A
       5. Drain loop yields: `time.sleep(0.01)` between chunks
       6. Thread 1 continues pushing new audio (after pause/resume logic) — no audio loss
+
 
 ---
 
@@ -584,11 +627,13 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
       ```python
       bm25 = pickle.load(open("data/indexes/bm25.pkl", "rb"))
       ```
+
 - [ ] Load FAISS:
 
       ```python
       index = faiss.read_index("data/indexes/faiss.index")
       ```
+
 - [ ] Load embedding model (ONNX CPU):
 
       ```python
@@ -597,21 +642,25 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
       # Ensure it uses ONNX Runtime CPU execution provider (no GPU)
       ```
 
+
 ### 5.2 Search Pipeline (Thread 3)
 
 - [ ] Phase 1.5 — 8-word BM25 early exit:
       Configurable via `require_trigger_for_fast_lane` flag
       Default `False`: runs every 8 words unconditionally
+
 - [ ] Lane A — BM25 lexical search (~5 ms):
       - Normalize: strip apostrophes, replace compound punctuation → spaces, lowercase
       - Strip custom stop-words hash set
       - `bm25.get_scores(query_tokens)`
       - Return Top 5 ranked by score
+
 - [ ] Lane B — FAISS semantic search (~20–30 ms):
       - Embed raw (un-normalized) text → 384-dim vector
       - `faiss.normalize_L2(query_vector)`
       - `index.search(query_vector, 5)`
       - Return Top 5 ranked by cosine distance
+
 - [ ] Phase 3 — RRF Fusion (~5 ms):
 
       ```
@@ -634,12 +683,14 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
       confidence = (rrf - RRF_min) / (RRF_max - RRF_min) * 100
       confidence = max(0, min(100, confidence))   # clamp
       ```
+
 - [ ] Push Stage 2 payload to DB Write Queue (search metrics)
 - [ ] **NEW: Search observability** – In addition to results, log:
       - BM25 rank, FAISS rank, RRF score, confidence
       - Query tokens, embedding latency, search latency
       - Trigger phrase matched (if any)
       - Normalized inputs
+
 
 ---
 
@@ -657,18 +708,21 @@ Zero-compute heuristic gating via `intent_triggers.json` and compiled regex.
         "ignore_intent": ["turn off", "turn down"]
       }
       ```
+
 - [ ] Compile each phrase into a Token-Window Regex:
 
       ```python
       "turn to chapter" →
         re.compile(r'\bturn\b(?:\s+\w+){0,2}\s+\bto\b(?:\s+\w+){0,2}\s+\bchapter\b', re.IGNORECASE)
       ```
+
 - [ ] Store compiled patterns in RAM as two lists:
 
       ```python
       ignore_patterns = [...]
       trigger_patterns = [...]
       ```
+
 
 ### 6.2 Evaluation (< 1 ms)
 
@@ -680,6 +734,7 @@ Zero-compute heuristic gating via `intent_triggers.json` and compiled regex.
         if pattern.search(text_chunk):
           intent = False; return immediately
       ```
+
 - [ ] Step 2 — Positive evaluation:
 
       ```python
@@ -687,6 +742,7 @@ Zero-compute heuristic gating via `intent_triggers.json` and compiled regex.
         if pattern.search(text_chunk):
           intent = True; break
       ```
+
 - [ ] Return Boolean Trigger State to Display Decision
 
 ---
@@ -707,6 +763,7 @@ Routing logic, WebSocket payloads, HTML renderer, OBS integration.
       else:
         → discard
       ```
+
 - [ ] LRU Cache deduplication:
 
       ```python
@@ -715,6 +772,7 @@ Routing logic, WebSocket payloads, HTML renderer, OBS integration.
       # On queue push: if ref in cache and not expired → discard
       #                else: cache[ref] = now + TTL; push to queue
       ```
+
 - [ ] Push Stage 3 payload to DB Write Queue (display event)
 
 ### 7.2 HTML Renderer
@@ -741,6 +799,7 @@ Routing logic, WebSocket payloads, HTML renderer, OBS integration.
                         "--window-position=1920,0"])
       ```
 
+
 ---
 
 ## Phase 8 — GPU Thermal Monitor
@@ -756,6 +815,7 @@ pynvml polling, hardware-level power throttling, operator dashboard.
       pynvml.nvmlInit()
       handle = pynvml.nvmlDeviceGetHandleByIndex(0)
       ```
+
 - [ ] Admin privilege check at startup:
 
       ```python
@@ -766,6 +826,7 @@ pynvml polling, hardware-level power throttling, operator dashboard.
           return os.geteuid() == 0
       if not check_admin(): warn operator, disable throttling
       ```
+
 - [ ] Polling loop (every 2–5 seconds):
 
       ```python
@@ -778,6 +839,7 @@ pynvml polling, hardware-level power throttling, operator dashboard.
         pynvml.nvmlDeviceSetPowerManagementLimit(handle, default_power)
         is_throttled = False
       ```
+
 - [ ] Telemetry pushed to UI: temp, power draw, VRAM usage, utilization %, throttle state
 - [ ] Log VRAM usage to DB Write Queue for post-service leak detection
 
@@ -798,27 +860,33 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
 - [ ] Framework choice: PyQt6 (recommended for rich UI + keyboard intercept)
 
       `pip install PyQt6`
+
 - [ ] Lazy tab loading: only Presentation tab renders at boot
       All other tabs (Settings, Profile, Extensions, Theme Designer) load on first click
+
 - [ ] Presentation tab layout:
       - Left panel:   Schedule panel (drag-and-drop ordered verse list)
       - Center panel: Auto-detected verse feed + operator review queue
       - Right panel:  Manual navigation + translation bar
       - Bottom bar:   Predictive scripture input, start/stop controls
       - Status bar:   OBS connection indicator (green/red), GPU telemetry strip, RAM warning
+
 - [ ] Operator review queue:
       - Show/Reject buttons per item
       - Show → fires `broadcast_display()` + Stage 3 DB log
       - Reject → discards, removes from queue
+
 - [ ] Clear/Recall toggle:
       - First press: broadcast `{"action": "clear"}`
       - Second press (when clear): re-broadcast last cleared verse
+
 
 ### 9.2 Hotkey System
 
 - [ ] Load hotkey bindings at Phase 1:
       - defaults from `config.json`
       - overrides from SQLite `settings` table
+
 - [ ] Intercept key events at application level (suppress default OS behavior)
 - [ ] Configurable actions: Display, Clear/Recall, Theme Cycle Forward/Back/Reset
 - [ ] Settings UI for operator to remap bindings → saved via DB Write Queue
@@ -830,24 +898,29 @@ Main thread: Presentation tab, operator review queue, hotkeys, schedule panel, p
       - Spacebar advances focus between sections
       - Backspace: delete char, or retreat to previous section if empty
       - Enter: navigate Bible browser to reference
+
 - [ ] Predictive book name algorithm:
       - On each keystroke: find first book matching typed prefix
       - Valid next character: silently accept, update highlight
       - Invalid character: silently ignore (no input field change)
       - Untyped suffix: display highlighted (selected) in field
+
 - [ ] Numeric prefix handling:
       - Type "1" → "1 Samuel" (first matching book); continue typing letters immediately
+
 
 ### 9.4 Translation Bar & Drag-and-Drop
 
 - [ ] Translation bar (bottom of Manual panel):
       - Single-click: switch browse view to that version
       - Double-click: broadcast currently-selected verse in that version
+
 - [ ] Schedule panel drag-and-drop:
       - Accept drags from Bible browser + operator review queue
       - Drop appends to end or inserts at position (visual indicator)
       - Reorder within panel
       - Each item stores: ref, translation, text, theme
+
 
 ### 9.5 Theme Designer (Extension)
 
@@ -881,6 +954,7 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
 
       `if len(chunk.split()) > 6: result += " ".join(chunk.split()[6:])`
 
+
 ### 10.2 LLM Extraction with Retry
 
 - [ ] Implement `cloud/extraction.py`:
@@ -888,10 +962,12 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
       - Secondary: Claude 3 Haiku
       - Tertiary: GPT-4o-mini
       - Fallback: Llama 3.1 via Groq (standard OpenAI client format)
+
 - [ ] Always use native JSON Mode / Structured Outputs parameter
 - [ ] Retry loop (`MAX_RETRIES = 3`):
       - On JSON parse failure: append error to prompt for self-correction
       - After 3 failures: failover to next model in chain
+
 - [ ] **Pre‑truncation safety** – If transcript tokens > model context window minus 5000, truncate from the **middle** (preserve first 10% and last 10% of sermon). Log warning.
 - [ ] API keys loaded from `.env` file only – never persisted to any table. Optionally use system keyring (Windows Credential Manager / libsecret) via `keyring` library.
 
@@ -900,14 +976,17 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
 - [ ] `queue_for_later(transcript, reason)`:
       - Append JSON line to `OFFLINE_QUEUE_PATH` (disk persistence)
       - `reason`: `"network_down"` | `"api_exhausted"`
+
 - [ ] Operator Consent Gate at boot:
       - If `OFFLINE_QUEUE_PATH` has data:
         Raise non-blocking UI alert: "X past services pending. Process now or after service?"
+
 - [ ] Reconnection polling — exponential backoff with jitter:
 
       `BASE = 5s, MAX = 300s, MULTIPLIER = 2, JITTER = ±20%`
       - `network_down`: ping 1.1.1.1
       - `api_exhausted`: ping provider status endpoint
+
 - [ ] Segregated verification: wrong ping target = silent ban loop
 
 ---
@@ -920,24 +999,29 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
 - [ ] Install PyInstaller in the Windows virtualenv
 
       `pip install pyinstaller`
+
 - [ ] Create `rhemacast.spec`:
       - `hidden_imports`: `['pynvml', 'sounddevice', '_sounddevice_data']`
       - `datas`: `[('data/indexes/', 'data/indexes/'), ('data/intent_triggers.json', 'data/'), ('display/', 'display/')]`
       - `collect_data_files('faster_whisper')`
       - `collect_data_files('vosk')`
       - DO NOT bundle CUDA DLLs — target system must have CUDA Toolkit
+
 - [ ] Build:
 
       `pyinstaller rhemacast.spec --onefile --windowed`
+
 - [ ] **Inno Setup script** (`rhemacast.iss`) – creates installer that:
       - Checks for CUDA Toolkit and prompts to download if missing.
       - Installs `.exe`, `data/`, `display/` folders in `%ProgramFiles%\RhemaCast`.
       - Creates Start Menu shortcuts and optionally desktop icon.
       - Writes registry entries for uninstallation.
+
 - [ ] **Automatic update check** – On startup, ping a public version manifest URL (e.g., GitHub release). If newer version available, show notification with “Download” button.
 - [ ] Installer note:
       Document that users must install NVIDIA CUDA Toolkit separately.
       Test on a clean Windows VM (no pre-installed CUDA) to confirm the exe fails with a clear error message rather than a silent crash.
+
 
 ### 11.2 Linux .deb
 
@@ -949,17 +1033,21 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
       Depends: python3.11, python3-pip, libportaudio2,
                nvidia-cuda-toolkit, libgomp1
       ```
+
 - [ ] Write `debian/postinst`:
 
       `pip3 install -r /opt/rhemacast/requirements.txt`
+
 - [ ] Build:
 
       `dpkg-buildpackage -us -uc`
       # Or simpler: `fpm -s python -t deb .`
+
 - [ ] Test install on a clean Ubuntu VM:
 
       `sudo dpkg -i rhemacast_*.deb`
       `rhemacast --check-deps`
+
 
 ---
 
@@ -995,20 +1083,24 @@ End-to-end stress tests simulating real 2-hour services.
       - Queue A depth must stay under 50 items under normal load
       - DB Writer thread must have zero skipped payloads
       - Flat file must match SQL transcript exactly (diff them post-test)
+
 - [ ] Thermal throttle simulation:
       - Manually set power limit to 45W mid-test
       - Confirm transcription slows but continues
       - Confirm no audio loss (Queue A ack protocol intact)
       - Restore power → confirm full speed returns
+
 - [ ] Compute Failure drill:
       - Intentionally kill Thread 2 mid-service
       - Verify Vosk activates in < 10ms (event flag flip)
       - Verify all pending Queue A chunks are replayed (zero audio loss)
       - Verify service continues uninterrupted
+
 - [ ] Shutdown stress test:
       - Flood DB Write Queue with 5000 payloads, then click End Service
       - Verify all payloads committed before Thread 4 exits
       - Verify WAL checkpoint completes cleanly
+
 
 ### 12.5 Search Quality Calibration
 
@@ -1018,6 +1110,7 @@ End-to-end stress tests simulating real 2-hour services.
 - [ ] Measure: correct verse in Top 5 result (target: > 95%)
 - [ ] Adjust RRF_min, auto-display threshold (85%), and discard threshold (40%)
       based on empirical false-positive/false-negative rates
+
 - [ ] Re-test intent classification: tune trigger phrases in `intent_triggers.json`
 
 ### 12.6 Data Integrity Tests
