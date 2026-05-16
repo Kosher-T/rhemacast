@@ -61,6 +61,16 @@ The Faster-Whisper model requires CUDA runtime libraries (cuBLAS, cuDNN). These 
 
 ONNX Runtime (CPU execution provider) and Vosk are fully cross-platform and require no platform-specific handling.
 
+### CUDA Toolkit Verification at Startup
+
+At startup, the application performs a tiny dummy inference through CTranslate2 to verify CUDA availability. If the CUDA toolkit is missing or the inference fails, the system does not attempt to use the GPU at all. Instead:
+
+- An error dialog is shown: **"CUDA Toolkit not found. Running in CPU-only mode (Vosk)."**
+- Vosk becomes the **primary** STT model for the session (not merely a failover).
+- The Faster-Whisper GPU path is disabled entirely.
+
+This ensures the user gets immediate, clear feedback and a working (if lower-quality) transcription experience without silent degradation.
+
 ---
 
 ## 2. Semantic Embedding Model — The Search Brain
@@ -138,6 +148,42 @@ Open-source models (Llama 3.1, Qwen 2.5) can be queried at zero cost via serverl
 
 > [!WARNING]
 > **Do not** attempt to run open-source models via custom batch-processing pipelines on Kaggle. This introduces catastrophic execution latency (15–30 minutes) and violates standard production REST architecture. Always use serverless inference APIs.
+
+---
+
+## 5. Model Management
+
+Central model registry at `core/models.py` governs all AI model lifecycle operations:
+
+### Integrity Verification
+
+- SHA256 checksums are stored for Faster-Whisper, Vosk, and the embedding model (`all-MiniLM-L6-v2`).
+- On startup, each model file is checksummed. If a mismatch is detected, a warning is issued and the user may optionally consent to an automatic re-download.
+
+### Version Pinning
+
+- Model versions are locked in `config.json` to prevent unexpected upgrades from breaking behavior.
+- Updates require explicit user action (version bump in config).
+
+### Automatic Download
+
+- Models are downloaded automatically from trusted URLs when first required, **only after user consent**.
+- Download progress is displayed, and the connection uses HTTPS with certificate verification.
+
+### Cache Cleanup Policy
+
+- Unused models are automatically removed after N days (configurable in `config.json`).
+- The cleanup runs at startup and can be triggered manually.
+
+### Compatibility Validation
+
+- The embedding model's output dimension (384) is validated against the FAISS index dimension at startup.
+- A mismatch produces a hard error with a clear message, preventing silent corruption of search results.
+
+### VRAM Budget Enforcement
+
+- Model upgrades that would exceed the 4 GB VRAM budget are rejected with an explanation.
+- The system checks the declared VRAM footprint of any model before loading.
 
 ---
 

@@ -43,6 +43,12 @@ conn.execute("PRAGMA synchronous=NORMAL")  # Balanced durability vs speed
 
 ---
 
+## Database Migration Strategy
+
+On startup, compare `PRAGMA user_version` with the expected version. If older, apply migrations sequentially (add columns, new tables) using a simple Python migration script. Never drop columns — only add. Log all migrations applied.
+
+---
+
 ## The Single-Writer Queue Pattern
 
 ### The Problem
@@ -82,6 +88,7 @@ Application settings and states are strictly segregated to prevent database bloa
 1. **JSON Config (`config.json`)**: Stores static application state (e.g., UI defaults, theme CSS definitions, **default hotkey bindings**). Edited by the system admin. Read exactly once at boot.
 2. **SQLite `settings` table**: Stores user-toggled, active settings managed through the Operator UI (e.g., current active theme, current RRF confidence threshold, **operator-customized hotkey bindings** that override `config.json` defaults). Read at boot, and updated safely via the single-writer Database Write Queue.
 3. **`.env` File**: Strictly reserved for API keys (e.g., Gemini, Claude, Groq). Injected dynamically at runtime and never persisted to any table.
+4. **System Keyring**: Optionally, API keys can be stored in the system keyring (Windows Credential Manager via `keyring` library, or libsecret on Linux) as an alternative to `.env` files. The keyring is checked first; if the key isn't found, fall back to `.env`.
 
 ---
 
@@ -158,6 +165,23 @@ CREATE TABLE sessions (
     ended_at      INTEGER,             -- NULL until service ends
     audio_source  TEXT,                 -- "wireless", "dfn3_room"
     notes         TEXT                  -- Operator notes
+);
+```
+
+### `sermon_insights` Table
+
+Feeds the History tab's insight cards and the hybrid archive search. On extraction completion, each insight is encoded via all-MiniLM-L6-v2 and stored in a dedicated `archive.index` FAISS file. The History tab uses BM25 on `content` + FAISS on `archive.index` for natural-language search.
+
+```sql
+CREATE TABLE sermon_insights (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    TEXT    NOT NULL,
+    type          TEXT    NOT NULL,  -- 'Prophecy', 'Declaration', 'Prayer_Point', 'Scripture'
+    content       TEXT    NOT NULL,
+    metadata_json TEXT,              -- Additional structured data
+    vector_id     INTEGER,           -- Reference into archive.index FAISS
+    created_at    INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
 ```
 

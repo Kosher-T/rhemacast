@@ -212,6 +212,19 @@ Because the 6-word trailing overlap can cause the exact same verse to be identif
 
 ---
 
+## Search Observability & Metrics Logging
+
+In addition to the search results, log the following metrics with every evaluation to the DB Write Queue (Stage 2):
+- BM25 rank, FAISS rank, RRF score, confidence percentage
+- Query tokens after normalization, embedding latency, search latency
+- Trigger phrase matched (if any)
+- Normalized input text (for forensic analysis)
+- Dynamic RRF scale factor applied
+
+These metrics are pushed as part of the Stage 2 payload to the Database Write Queue and stored in the `search_results` table for post-service forensic analysis and threshold tuning.
+
+---
+
 ## Performance Budget
 
 | Phase | Operation | Time |

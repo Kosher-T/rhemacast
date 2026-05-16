@@ -158,6 +158,31 @@ Thread 5 should expose the following telemetry to the operator UI:
 
 ---
 
+## CPU & RAM Monitoring (Extension)
+
+In addition to GPU metrics, Thread 5 is responsible for monitoring system memory (`psutil.virtual_memory()`) to prevent out-of-memory (OOM) crashes during long services.
+
+### Memory Thresholds and Logging
+
+Thread 5 polls `psutil.virtual_memory()` every 30 seconds.
+
+```python
+import psutil
+
+while service_active:
+    mem = psutil.virtual_memory()
+    if mem.available < CRITICAL_RAM_THRESHOLD:  # 500 MB
+        alert_operator(f"CRITICAL: Available RAM dropped to {mem.available / 1e6:.0f} MB")
+        log_top_10_tracemalloc()
+        graceful_shutdown()
+    time.sleep(30)
+```
+
+*   **Critical RAM Threshold (500 MB):** If available system RAM drops below **500 MB**, Thread 5 pushes a critical alert to the operator and initiates a **graceful service shutdown** — queued transcriptions are flushed to disk, active connections are drained, and the service exits cleanly — to prevent an unmanaged OS-level OOM kill.
+*   **Forensic Profiling (`tracemalloc`):** When the critical threshold is crossed, the system immediately captures the top 10 memory-consuming Python object allocations via `tracemalloc`. This snapshot is saved to the diagnostics log for post-mortem leak analysis (unbounded queues, dangling references, accumulating caches).
+
+---
+
 ## Cross-Platform GPU Considerations
 
 RhemaCast is developed on Linux and targets Windows as its primary deployment platform. The GPU subsystem is largely platform-agnostic, but several areas require attention:
@@ -189,6 +214,39 @@ During development, the NVIDIA GPU is dynamically passed through to a Windows VM
 | **Driver installation** | NVIDIA GeForce Experience / standalone `.exe` | Package manager (`nvidia-driver-*`) or `.run` installer |
 | **NVML library path** | System PATH (auto-included with driver) | `/usr/lib/x86_64-linux-gnu/libnvidia-ml.so` |
 | **Privilege model** | Run as Administrator / UAC elevation | `sudo` / root |
+
+---
+
+## Formal Memory Budgets
+
+### VRAM Budget (GTX 1650, 4 GB)
+
+| Allocation | Budget | Notes |
+|------------|--------|-------|
+| Faster-Whisper | 3 GB | Max reservation for the STT model |
+| CUDA overhead (context, cuDNN/cuBLAS kernels) | 500 MB | Driver, context, kernel caches |
+| Safety margin | 500 MB | Fragmentation spikes, transient allocations |
+| **Total** | **4 GB** | Budget is a hard ceiling — reject model upgrades that exceed it |
+
+> [!CAUTION]
+> Model selection logic **must** enforce this budget: if a requested model variant (e.g., `small` → `medium`) would exceed the 3 GB Faster-Whisper allocation, the upgrade is rejected and the current model continues running. See [ai_models.md](ai_models.md) for the model upgrade protocol.
+
+### RAM Budget (16 GB System)
+
+| Allocation | Budget |
+|------------|--------|
+| FAISS (186K × 384-dim vectors) | 300 MB |
+| BM25 inverted index | 100 MB |
+| SQLite cache (WAL) | 256 MB |
+| Embedding model (ONNX Runtime) | 200 MB |
+| UI (PyQt) | 150 MB |
+| Audio buffers & queues | 100 MB |
+| Operating system and other processes | ~4 GB |
+| **Total accounted** | **~5.1 GB** |
+| **Headroom (> 2 GB free)** | **~10.9 GB available** |
+
+> [!TIP]
+| The > 2 GB headroom ensures that transcription spikes, temporary model re-loads, and unforeseen memory growth during long services do not trigger an OOM condition. Combined with the psutil monitoring above, this budget provides two layers of protection against RAM exhaustion.
 
 ---
 

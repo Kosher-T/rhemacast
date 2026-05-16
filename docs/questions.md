@@ -276,3 +276,28 @@ This specific schema is the industry standard for fast, in-memory text matching 
 
 **Resolution:**
 * **Session-Scoped Composite Keys [INDUSTRY STANDARD]:** Resetting the integer to 1 every service will mathematically destroy chronological retrieval if multiple services are stored in the same database. During Phase 1 Initialization, the application must generate a globally unique identifier for the specific service (a Session UUID, e.g., `2026-04-16_AM`). When the STT thread assigns the localized Sequence ID (1, 2, 3...), it is packaged alongside this Session UUID. The reconstruction query is strictly constrained (`SELECT text FROM transcripts WHERE session_id = ? ORDER BY sequence_id ASC`), ensuring perfect historical isolation while allowing the local counter to safely reset on boot.
+
+## 30. Service Manager State Machine
+**Question:** How does the service manager handle thread lifecycle and crash recovery?
+
+**Resolution:** The `core/service_manager.py` module defines explicit service states: BOOTING, READY, RUNNING, DEGRADED, FAILOVER, SHUTTING_DOWN, CRASHED. Threads register with the service manager and provide heartbeats. Boot sequencing follows strict order: T4 → T5 → T1 → T2 → T3. On crash, the service manager escalates: transient errors → DEGRADED, critical thread death → FAILOVER, unrecoverable → SHUTTING_DOWN. Restart policies allow retrying a thread up to 3 times before permanent failover.
+
+## 31. Startup Validation Pipeline
+**Question:** What pre-flight checks run before enabling the "Start Transcription" button?
+
+**Resolution:** The `core/startup_checks.py` module runs a comprehensive checklist: CUDA availability, FAISS/BM25 index existence with fingerprint match, SQLite writable with integrity_check, microphone accessible, WebSocket port free, sufficient RAM (at least 2 GB free), Vosk model exists, display.html reachable, OBS browser source optional ping, write permissions for logs and offline queue, GPU temperature below 85°C, required environment variables present. Produces PASS/WARNING/FAIL report and blocks "Start Service" if critical checks fail.
+
+## 32. Operational Modes
+**Question:** How do the 7 operational modes affect pipeline execution?
+
+**Resolution:** Seven modes in core/service_manager.py: NORMAL (full GPU, FAISS, cloud, throttling), SAFE_MODE (disable FAISS, cloud, throttling; BM25+Vosk only), CPU_ONLY (Faster-Whisper on CPU, Vosk fallback, no GPU monitoring), REHEARSAL (read from WAV, disable broadcast), HEADLESS (no UI, for automated testing), DEBUG (verbose logging, extra checks), BENCHMARK (measure latencies, no broadcast). Mode override via command line flag or config.json.
+
+## 33. Model Management
+**Question:** How are model versions, checksums, and downloads managed?
+
+**Resolution:** `core/models.py` serves as the central model registry. SHA256 checksums are stored for Faster-Whisper, Vosk, and the embedding model. On startup, checksums are verified; mismatch triggers a warning and optional auto-redownload with user consent. Model versions are pinned in config.json. Automatic downloads use trusted URLs with explicit user consent. Cache cleanup removes unused models after a configurable number of days. Compatibility validation ensures embedding model dimension (384) matches the FAISS index.
+
+## 34. Sermon Archive & Semantic Search
+**Question:** How are extracted insights stored, vectorized, and searched historically?
+
+**Resolution:** A `sermon_insights` table in SQLite stores extracted prophecies, declarations, prayer points, and scriptures. On extraction completion, each insight is encoded via all-MiniLM-L6-v2 and stored in a dedicated `archive.index` FAISS file. The History tab provides Insight Cards with a Natural Language Search bar using hybrid search: BM25 (lexical on content) + FAISS (semantic on archive.index). Category filters narrow by type. Context Reveal: clicking an insight fetches the surrounding transcript from the transcripts table.

@@ -16,6 +16,9 @@ This document specifies how RhemaCast manages thread startup, runtime synchroniz
 | **Thread 5 — Hardware Monitor** | Polls GPU temperature via pynvml, throttles/restores power | Phase 1 Initialization | Service flag set to `False` |
 | **WebSocket Server** | Pushes display payloads to HTML renderer | Phase 1 Initialization | Application exit |
 
+> [!NOTE]
+> **Service Manager:** `core/service_manager.py` is the central authority managing all thread lifecycles with explicit states: `BOOTING`, `READY`, `RUNNING`, `DEGRADED`, `FAILOVER`, `SHUTTING_DOWN`, `CRASHED`. The service manager handles boot sequencing (T4 → T5 → T1 → T2 → T3), thread registration with heartbeats, graceful shutdown via sequential poison pills with timeouts, crash escalation, and restart policies (e.g., restart Thread 2 up to 3 times before permanent failover).
+
 ---
 
 ## Startup Sequence
@@ -90,6 +93,8 @@ To prevent drift, Queue A enforces latency memory bounds:
 1. **Queue A Bounds:** Queue A is monitored for size limits. At 100ms block sizes, a queue depth of 150 items equates to exactly 15 seconds of transcription lag.
 2. **Compute Failure:** If Queue A exceeds 150 items, the system declares a Compute Failure. The Main Thread flips an OS-level event flag to unblock the fallback thread.
 
+**Refined Compute Failure detection:** Thread 2 increments a counter each time it processes a chunk. A watchdog thread checks the counter; if stalled for > 2 seconds while audio is incoming, declare Compute Failure. When Compute Failure occurs: pause audio capture (set flag in Thread 1 to stop pushing new chunks), replay pending unacknowledged chunks to Vosk, then resume capture.
+
 #### Failover Replay Sequence (Supervisor Pattern)
 
 When Failover is triggered:
@@ -152,71 +157,19 @@ while True:
     # ... normal processing ...
 ```
 
----
+### Operational Modes
 
-## Timeout Joins
+The operational modes affect thread behavior as follows:
 
-### The Problem
-
-If Thread 3 (Search) hangs mid-FAISS calculation, it will never detect the poison pill. Using a naive blocking `thread.join()` will deadlock the entire application shutdown.
-
-### The Solution
-
-The main thread enforces a **strict timeout** on every thread join:
-
-```python
-TEARDOWN_TIMEOUT = 3.0  # seconds
-
-# After pushing poison pills, wait for orderly shutdown:
-for thread in [audio_thread, stt_thread, search_thread]:
-    thread.join(timeout=TEARDOWN_TIMEOUT)
-    if thread.is_alive():
-        log_warning(f"Thread {thread.name} failed to exit within {TEARDOWN_TIMEOUT}s. Abandoning.")
-
-# Ensure DB thread gets its pill even if upstream threads hung
-if db_queue.empty() or not db_thread_received_pill:
-    db_write_queue.put(POISON_PILL)
-
-db_thread.join(timeout=TEARDOWN_TIMEOUT)
-
-# The OS will reap any abandoned threads upon final process termination
-```
-
-### Timeout Behavior
-
-| Scenario | Action |
-|----------|--------|
-| Thread exits within 3 seconds | Normal — join completes, thread cleaned up |
-| Thread fails to exit within 3 seconds | Main thread abandons it, injects a poison pill directly to the next queue, and proceeds |
-| DB thread hung | Main thread logs a critical warning; the WAL file may not be cleanly committed, but the flat file fail-safe preserves the raw transcript |
-
-> [!WARNING]
-> A hung DB thread means the WAL file may not be fully committed. However, this is an extremely rare edge case (SQLite WAL commits are typically sub-millisecond). The append-only flat file exists precisely for this scenario.
-
----
-
-## Service State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Initializing: Application Launch
-    Initializing --> Ready: Models loaded, DB open
-    Ready --> Live: "Start Transcription" clicked
-    Live --> Live: Normal operation
-    Live --> Throttled: GPU temp > 82°C
-    Throttled --> Live: GPU temp < 70°C
-    Throttled --> Failover: GPU crash / unrecoverable
-    Failover --> Live: Vosk initialized, pending chunks replayed
-    Live --> ShuttingDown: "End Service" clicked
-    Throttled --> ShuttingDown: "End Service" clicked
-    Failover --> ShuttingDown: "End Service" clicked
-    ShuttingDown --> CloudExtraction: All threads terminated
-    CloudExtraction --> Archival: LLM extraction complete
-    CloudExtraction --> OfflineQueued: Network unavailable
-    OfflineQueued --> CloudExtraction: Connection restored
-    Archival --> Ready: Ready for next service
-    Archival --> [*]: Application closed
-```
+| Mode | Effect |
+|------|--------|
+| `NORMAL` | Full pipeline — all threads active |
+| `SAFE_MODE` | Disables FAISS and cloud-dependent features |
+| `CPU_ONLY` | Disables GPU monitoring (Thread 5 skips pynvml) |
+| `REHEARSAL` | Reads from a pre-recorded WAV file instead of microphone; disables broadcast output |
+| `HEADLESS` | Runs without UI; all state transitions logged to console |
+| `DEBUG` | Enables verbose per-thread logging and extended heartbeat intervals |
+| `BENCHMARK` | Runs the pipeline against a replay corpus with throughput/latency metrics |
 
 ---
 
@@ -251,6 +204,21 @@ while True:
 
 ---
 
+## Error Propagation Patterns
+
+The system defines four error responses, each with distinct semantics:
+
+| Response | Description |
+|----------|-------------|
+| **Continue** | Transient error — log and proceed without state change |
+| **Degrade** | Non-critical component fails — fall back to a simpler model or trigger-based logic (e.g., embedding model fails → `intent_triggers.json`) |
+| **Failover** | Critical component fails — switch to a backup pipeline (e.g., GPU crash → Vosk) |
+| **Shutdown** | Unrecoverable error — cascade poison pills through all queues and terminate |
+
+These patterns compose hierarchically: a thread may attempt Continue, escalate to Degrade if errors persist, then to Failover, and finally to Shutdown.
+
+---
+
 ## Cross-Platform Threading Notes
 
 The threading architecture is fully portable between Windows and Linux:
@@ -258,6 +226,14 @@ The threading architecture is fully portable between Windows and Linux:
 - **Python `threading` module** behaves identically on both platforms (same GIL semantics, same `Thread` API, same `queue.Queue` implementation).
 - **No POSIX signals used.** The architecture deliberately avoids `os.kill()` and POSIX signal handling (which differ significantly on Windows). Instead, the **poison pill pattern** provides clean, cross-platform thread teardown via queue-based sentinel objects. This is an architectural win for portability.
 - **`time.sleep()` precision** differs slightly between Windows (~15ms granularity) and Linux (~1ms granularity), but this has no functional impact — the polling intervals (2–5 seconds for Thread 5) and queue timeouts are orders of magnitude larger.
+
+---
+
+## Rehearsal Mode & Deterministic Replay
+
+A **UI toggle** reads a pre-recorded 16kHz WAV file and pushes it into Queue A as if from the microphone, enabling offline testing of the full pipeline without live audio.
+
+For diagnostics, raw Queue A audio stream is recorded to `.pcm` with timestamps during live services. The **Replay Session System** feeds recorded `.pcm` back into the pipeline offline, captures all thread outputs, and compares them against a golden baseline to detect regressions.
 
 ---
 

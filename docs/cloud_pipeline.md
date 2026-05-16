@@ -38,6 +38,10 @@ The monolithic payload fits comfortably within the context windows of all target
 | GPT-4o-mini | 128,000 tokens | ~16% |
 | Llama 3.1 (via Groq) | 128,000 tokens | ~16% |
 
+### API Key Resolution
+
+API keys should be loaded from the system keyring (Windows Credential Manager / libsecret via the `keyring` library) as a first option, falling back to `.env` file if not found in keyring. Keys are never persisted to any database table.
+
 ---
 
 ## Structured Output Enforcement
@@ -142,6 +146,10 @@ async def extract_with_retry(transcript: str) -> dict:
 | 2 | Claude 3 Haiku | Primary fails all 3 retries or API outage |
 | 3 | GPT-4o-mini | Both primary and secondary fail |
 | 4 | Open-source (Llama 3.1 / Qwen 2.5 via Groq/Together AI) | All commercial APIs down |
+
+### Pre-truncation Safety
+
+If the transcript token count exceeds the model's context window minus 5000 tokens (reserved for the prompt and schema), truncate from the middle — preserve the first 10% and last 10% of the transcript. Log a warning about the truncation. This ensures the opening and closing of the sermon (typically the most thematically significant parts) are preserved.
 
 ---
 
@@ -296,17 +304,19 @@ response = client.chat.completions.create(
 
 ## Semantic Archive Search
 
-All extracted insights (Declarations, Prophecies, Prayer Points) are stored in the local SQLite database and indexed for **Natural Language Search**.
+All extracted insights (Declarations, Prophecies, Prayer Points) are stored in the local SQLite `sermon_insights` table and indexed for **Natural Language Search**. On extraction completion, each insight is encoded via all-MiniLM-L6-v2 and stored in a dedicated `archive.index` FAISS file.
 
 ### The Hybrid Search Pivot
 
 Similar to the live Bible search, the Archive Search uses a hybrid approach:
 - **Lexical (BM25):** For exact matches on keywords or names.
-- **Semantic (FAISS):** For conceptual matches. This allows an operator to search for "fire outbreak" and find a prophecy about "spiritual awakening and burning passion" even if the exact phrase "fire outbreak" wasn't used.
+- **Semantic (FAISS on `archive.index`):** For conceptual matches. This allows an operator to search for "fire outbreak" and find a prophecy about "spiritual awakening and burning passion" even if the exact phrase "fire outbreak" wasn't used.
+
+Category filters (Prophecies, Declarations, Scriptures, Prayer Points) narrow the result set.
 
 ### History Tab Integration
 
-The **History** tab serves as the primary browser for these insights. Raw display logs are suppressed in favor of these high-value extractions, allowing the operator to quickly review the spiritual highlights of past services.
+The **History** tab serves as the primary browser for these insights, providing a hybrid search: BM25 (lexical on content) + FAISS (semantic on `archive.index`) with category filters (Prophecies, Declarations, Scriptures, Prayer Points). Clicking an insight reveals the surrounding transcript context. Raw display logs are suppressed in favor of these high-value extractions, allowing the operator to quickly review the spiritual highlights of past services.
 
 ---
 

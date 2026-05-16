@@ -78,6 +78,18 @@ The JSON payload pushed over the WebSocket is intentionally microscopic:
 | `translation` | string | Translation abbreviation (e.g., "KJV", "NKJV", "NIV") |
 | `theme` | string | Active visual theme ID (maps to a CSS class in the renderer) |
 
+### Tooltips
+
+All UI controls in the operator interface include hover tooltips to explain their function. Tooltips are implemented as `title` attributes on HTML elements or via a dedicated tooltip system in the renderer.
+
+| Control | Tooltip |
+|---------|---------|
+| **Confidence Threshold** | Verses above this and with trigger intent go to top of queue |
+| **Clear** | Removes current display from broadcast |
+| **Theme** | Switch visual styling for the displayed verse |
+| **Show / Display** | Sends the selected verse to the broadcast output |
+| **Schedule Panel** | Drag verses here to build an ordered playlist for the service |
+
 ### Clear Payload
 
 When the operator clears the screen or the display timer expires:
@@ -427,6 +439,18 @@ Each schedule item stores:
 
 > [!NOTE]
 > **UI to Display Race Condition:** When the operator clicks "Show" on a queued verse, the execution is strictly decoupled. The **WebSocket Push** is fired asynchronously (`asyncio.create_task`) to update the screen instantly. Simultaneously, the **Database Log** is pushed to the unconstrained Database_Write_Queue. The WebSocket execution never awaits database write confirmation.
+
+### Color-Coded Confidence Indicators
+
+The operator review queue uses color-coded confidence indicators to help the operator quickly identify which queued items need immediate attention:
+
+| Tier | Confidence Range | Color | Meaning |
+|------|-----------------|-------|---------|
+| **Tier 1** | ≥ 85% | Bright green (accent) | Top of Queue priority |
+| **Tier 2** | ≥ 60% | Yellow (moderate accent) | Medium priority |
+| **Tier 3** | ≥ 40% | Orange (low accent) | Low priority |
+
+These visual cues allow the operator to scan the queue at a glance and focus on the highest-confidence verses first.
 
 ---
 

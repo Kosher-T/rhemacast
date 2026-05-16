@@ -108,6 +108,12 @@ Normal operation resumes only upon direct operator intervention.
 
 ---
 
+## Silence Detection for TTL Override
+
+In the audio callback, compute RMS energy over each block. If energy remains below a threshold (e.g., -50 dB) for 3 continuous seconds, set a `silence_detected` event flag. Thread 2 monitors this flag to flush the partial buffer and trigger Dynamic RRF Scaling.
+
+---
+
 ## Signal Chain Summary
 
 ```mermaid
@@ -131,6 +137,12 @@ graph TD
 
 ---
 
+## Queue A Backpressure Protocol
+
+When Compute Failure is declared (Thread 2 stalled > 2s), pause audio capture by setting a flag in Thread 1 to stop pushing new chunks. After pending unacknowledged chunks are replayed to Vosk, resume capture. This prevents unbounded backlog.
+
+---
+
 ## Device Selection
 
 At startup, the application should enumerate available audio input devices via `sd.query_devices()` and either:
@@ -139,6 +151,8 @@ At startup, the application should enumerate available audio input devices via `
 2. **Present a dropdown** in the operator UI listing all available input devices with their names, sample rate support, and channel counts.
 
 The selected device index is passed as the `device` parameter to `sd.InputStream()`. If the configured device is unavailable (e.g., the wireless receiver is unplugged), the application should display a clear warning and prevent the operator from starting the transcription session.
+
+Before enabling "Start Transcription", test the selected input device with `sd.check_input_settings()`. If the device is unavailable, show an error message and disable the start button.
 
 ---
 
