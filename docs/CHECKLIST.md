@@ -12,16 +12,16 @@ This phase is completed once. It creates the foundation every other phase depend
 
 ### 0.1 Linux Workstation Baseline
 
-- [ ] Install KVM/QEMU and libvirt
+- ~~[X] Install KVM/QEMU and libvirt~~
 
       `sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager`
 
-- [ ] Verify IOMMU groups — GTX 1650 must be in its own clean group
+- ~~[X] Verify IOMMU groups — GTX 1650 must be in its own clean group~~
 
       `dmesg | grep -i iommu`
       `find /sys/kernel/iommu_groups/ -type l | sort -V | head -40`
 
-- [ ] Enable IOMMU in GRUB (Intel: `intel_iommu=on` / AMD: `amd_iommu=on`)
+- [X] Enable IOMMU in GRUB (Intel: `intel_iommu=on` / AMD: `amd_iommu=on`)
       Edit `/etc/default/grub` → `GRUB_CMDLINE_LINUX_DEFAULT`
 
       `sudo update-grub && reboot`
