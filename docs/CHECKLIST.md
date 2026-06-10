@@ -21,26 +21,29 @@ This phase is completed once. It creates the foundation every other phase depend
       `dmesg | grep -i iommu`
       `find /sys/kernel/iommu_groups/ -type l | sort -V | head -40`
 
-- [X] Enable IOMMU in GRUB (Intel: `intel_iommu=on` / AMD: `amd_iommu=on`)
-      Edit `/etc/default/grub` → `GRUB_CMDLINE_LINUX_DEFAULT`
+- ~~[X] Enable IOMMU in bootloader (Pop!_OS uses systemd-boot via kernelstub)~~
+      Intel: `sudo kernelstub -a "intel_iommu=on iommu=pt"`
+      AMD:   `sudo kernelstub -a "amd_iommu=on iommu=pt"`
 
-      `sudo update-grub && reboot`
+      `sudo reboot`
+      Verify: `cat /proc/cmdline` and `dmesg | grep -i iommu`
 
-- [ ] Confirm `vfio-pci` module is available
+- ~~[X] Confirm `vfio-pci` module is available and loaded~~
 
-      `lsmod | grep vfio`
+      `modinfo vfio-pci` (check availability)
+      `sudo modprobe vfio-pci && lsmod | grep vfio` (load and verify)
 
 
 ### 0.2 VFIO GPU Passthrough — The libvirt Hook Script
 
 The hook binds/unbinds the GPU between the Linux nvidia driver and vfio-pci automatically on VM start/stop. No manual rebinding or reboots.
 
-- [ ] Note GPU PCI IDs
+- ~~[X] Note GPU PCI IDs~~
 
       `lspci -nn | grep NVIDIA`
       # Example output: `01:00.0 [10de:1f82]` (GPU), `01:00.1 [10de:10fa]` (Audio)
 
-- [ ] Create libvirt hook for dynamic GPU rebinding: `/etc/libvirt/hooks/qemu`
+- ~~[X] Create libvirt hook for dynamic GPU rebinding: `/etc/libvirt/hooks/qemu`~~
       # On VM start: unbind nvidia → bind vfio-pci
       # On VM stop:  unbind vfio-pci → bind nvidia
       # Do NOT permanently blacklist nvidia via /etc/modprobe.d/vfio.conf —
