@@ -108,42 +108,45 @@ Now that the GPU passthrough infrastructure is in place, create the Windows VM t
       - Name: `base-install` — clean state before CUDA and dev tools
       - Allows quick rollback if the dev environment gets polluted
 
+**This phase is incomplete. I have not be able to grant the Windows VM on-demand access to my external GPU. I shall have to continue around this until I discover a fix.**
+
+
 ### 0.4 Python Environment — Both Platforms
 
 Set up matching Python environments on Linux (dev) and inside the Windows VM (packaging + Windows testing).
 
-- [ ] Python 3.11 — recommended for CTranslate2/Faster-Whisper compatibility
-      Linux:   `sudo apt install python3.11 python3.11-venv python3.11-dev`
+- ~~[X] Python 3.12.3 — recommended for CTranslate2/Faster-Whisper compatibility~~
+      Linux:   `sudo apt install python3 python3-venv python3-dev`
       Windows: installer from python.org (add to PATH)
 
-- [ ] Create project virtualenv
+- ~~[X] Create project virtualenv~~
 
-      `python3.11 -m venv .venv`
+      `python3 -m venv .venv`
       `source .venv/bin/activate`  (Linux)
       `.venv\Scripts\activate`     (Windows)
 
-- [ ] Install core dependencies (both platforms)
+- ~~[X] Install core dependencies (both platforms)~~
 
       `pip install faster-whisper`
       `pip install sounddevice numpy`
       `pip install vosk`
       `pip install faiss-cpu`
-      `pip install "sentence-transformers[onnx]" onnxruntime`
+      `pip install "sentence-transformers[onnx]" onnxruntime`  # 533 MB
       `pip install rank_bm25`
       `pip install websockets aiohttp`
       `pip install pynvml`
       `pip install psutil`
       `pip install keyring`
-      `pip install PyQt6`
+      `pip install PyQt6`                                      # 85 MB
       `pip install pyinstaller`  # Windows VM only, for packaging
       `pip install pytest pytest-qt`
       # Note: sqlite3 and unittest.mock are Python stdlib — no pip install needed
 
-- [ ] Generate requirements file
+- [X] ~~Generate requirements file~~
 
       `pip freeze > requirements.txt`
 
-- [ ] Verify GPU access in Python (Windows VM)
+- [ ] Verify GPU access in Python (Windows VM)  # No access to GPU yet. Working on that.
 
       `python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"`
       # CTranslate2 is the backend used by faster-whisper — PyTorch is not required
@@ -165,6 +168,7 @@ rhemacast/
 │   ├── service_manager.py      # NEW: thread lifecycle & health
 │   ├── events.py               # NEW: explicit event dataclasses
 │   ├── errors.py               # NEW: error taxonomy
+│   ├── logging_config.py       # NEW: centralized logging configuration
 │   └── startup_checks.py       # NEW: pre-flight checklist
 ├── data/
 │   ├── bible/                  # Raw Bible JSON/CSV sources
@@ -190,6 +194,16 @@ rhemacast/
 ├── requirements.txt
 └── main.py
 ```
+
+- [ ] **Create `config.json`** with all default values at project root. Include:
+      - Hotkey defaults (F1–F12 bindings)
+      - Model versions (Faster-Whisper variant, embedding model)
+      - Operational mode (`NORMAL`)
+      - Confidence thresholds (top-of-queue: 85, discard: 40)
+      - Queue maxsizes
+      - Poll intervals
+      - Theme settings
+      - `config_version` for schema migration
 
 ### 0.6 CUDA Toolkit — Windows VM
 
@@ -226,7 +240,8 @@ This phase builds the searchable Bible database and vector index. It runs once a
       Format: `{ "book": "John", "chapter": 3, "verse": 16, "text": "..." }`
 
 - [ ] For public domain versions (KJV), download from a reliable source like `raw.githubusercontent.com/scrollmapper/bible_databases/`
-- [ ] For copyrighted versions (NKJV, NIV, etc.), document that the user must supply their own files; include a converter script for OSIS/USFM/JSON
+- [ ] For copyrighted versions (NKJV, NIV, ESV, NLT, AMP), document that the user must supply their own files; include a converter script for OSIS/USFM/JSON. Acceptable formats: JSON (preferred), CSV, or OSIS XML. Provide a conversion script template in `data/bible/convert.sh`.
+- [ ] **Licensing note:** Users are responsible for compliance with copyright terms for NKJV, NIV, ESV, NLT, and AMP. KJV is public domain. Do not distribute copyrighted Bible texts.
 - [ ] Load into SQLite Bible database
       Table: `verses(id, version, book, chapter, verse_num, text)`
       Total rows: ~31,000 verses × 6 versions = ~186,000 rows
@@ -488,6 +503,20 @@ Queues, database, WebSocket skeleton, and threading harness. No AI models yet. T
 - [ ] Verify required environment variables present (API keys not needed for startup, but keys for cloud extraction must be present if enabled)
 - [ ] Produce PASS / WARNING / FAIL report; block “Start Service” if critical checks fail.
 
+### 2.10 Logging Framework
+
+**NEW:** Configure Python `logging` module as the single logging backend.
+
+- [ ] Central log configuration in `core/logging_config.py`:
+      - Structured format: `%(asctime)s | %(levelname)-8s | %(name)s | %(message)s`
+      - JSON-lines mode for machine parsing (optional, via config flag)
+      - Log rotation: 10 MB per file, keep 7 days
+- [ ] Log levels per module:
+      - `core/` modules: WARNING+ in production, DEBUG in debug mode
+      - `tests/`: INFO+
+- [ ] All threads write to the same rotating handler; no per-thread log files
+- [ ] Log output paths: `/var/lib/rhemacast/logs/` (Linux), `C:\ProgramData\RhemaCast\Logs\` (Windows)
+
 
 ### 2.X Tests & Validation
 
@@ -680,6 +709,19 @@ BM25 + FAISS in parallel, RRF fusion, Min-Max normalization.
       ```python
       index = faiss.read_index("data/indexes/faiss.index")
       ```
+
+- [ ] **Index loading error handling** — Wrap all index loading in try/except with clear error messages:
+      ```python
+      try:
+          bm25 = pickle.load(open("data/indexes/bm25.pkl", "rb"))
+      except FileNotFoundError:
+          log.critical("BM25 index not found at data/indexes/bm25.pkl — run Phase 1 offline build first")
+          raise StartupCheckError("BM25 index missing")
+      except Exception as e:
+          log.critical(f"Failed to load BM25 index: {e}")
+          raise StartupCheckError(f"BM25 index corrupted: {e}")
+      ```
+      Same pattern for FAISS index and embedding model. Fail startup with clear message if indexes are missing or corrupted.
 
 - [ ] Load embedding model (ONNX CPU):
 
@@ -1203,6 +1245,27 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
       - Installs `.exe`, `data/`, `display/` folders in `%ProgramFiles%\RhemaCast`.
       - Creates Start Menu shortcuts and optionally desktop icon.
       - Writes registry entries for uninstallation.
+      - The `.iss` script should be written inside the Windows VM. A minimal Inno Setup template:
+
+      ```
+      [Setup]
+      AppName=RhemaCast
+      AppVersion=1.0
+      DefaultDirName={autopf}\RhemaCast
+      OutputDir=installer_output
+
+      [Files]
+      Source: "dist\rhemacast.exe"; DestDir: "{app}"
+      Source: "data\*"; DestDir: "{app}\data"; Flags: recursesubdirs
+      Source: "display\*"; DestDir: "{app}\display"; Flags: recursesubdirs
+
+      [Icons]
+      Name: "{group}\RhemaCast"; Filename: "{app}\rhemacast.exe"
+      Name: "{autodesktop}\RhemaCast"; Filename: "{app}\rhemacast.exe"; Tasks: desktopicon
+
+      [Tasks]
+      Name: "desktopicon"; Description: "Create desktop icon"
+      ```
 
 - [ ] **Automatic update check** – On startup, ping a public version manifest URL (e.g., GitHub release). If newer version available, show notification with “Download” button.
 - [ ] Installer note:
@@ -1217,7 +1280,7 @@ Post-service LLM extraction, retry logic, offline queuing, reconnection polling.
       `debian/control`:
       ```
       Package: rhemacast
-      Depends: python3.11, python3-pip, libportaudio2,
+      Depends: python3 (>= 3.12.3), python3-pip, libportaudio2,
                nvidia-cuda-toolkit, libgomp1
       ```
 
@@ -1521,6 +1584,43 @@ Build the post-service repository and the natural language search interface.
 
 ---
 
+## CI/CD & Version Control Workflow
+
+### Branch Strategy
+
+- [ ] `main` — production-ready, tagged releases only
+- [ ] `develop` — integration branch, all feature branches merge here
+- [ ] `feature/*` — individual features (e.g., `feature/stt-inference`)
+- [ ] `fix/*` — bug fixes
+
+### Commit Conventions
+
+- [ ] Use conventional commits: `feat:`, `fix:`, `docs:`, `test:`, `chore:`
+- [ ] Reference issue numbers where applicable
+
+### Automated Testing Pipeline
+
+- [ ] **GitHub Actions** workflow:
+      - On push to `develop` and on PRs: run `pytest tests/ --tb=short`
+      - On push to `main`: run full test suite + lint + typecheck
+      - Matrix: Python 3.12.3 on ubuntu-latest (Linux), optionally windows-latest
+      - Cache `.venv` and pip packages for fast CI runs
+- [ ] **Lint:** `ruff check .` (or `flake8`)
+- [ ] **Typecheck:** `mypy core/` (gradual adoption — start with critical modules)
+- [ ] **Pre-commit hooks** (optional but recommended):
+      - `ruff` for linting
+      - `mypy` for type checking
+      - Prevent commits with `print()` in production code
+
+### Versioning
+
+- [ ] Semantic versioning: `MAJOR.MINOR.PATCH`
+- [ ] Tag releases in git: `git tag v1.0.0`
+- [ ] Auto-update check pings a public version manifest (see Phase 11)
+
+
+---
+
 ## Dependency & Phase Map (Updated)
 
 ```
@@ -1551,7 +1651,7 @@ Phase 0 (VM + Environment)
 | VRAM | 4 GB hard cap; only Faster-Whisper touches GPU |
 | All other models | CPU via ONNX Runtime / standard RAM |
 | Bible versions | Exactly 6: KJV, NKJV, ESV, NIV, NLT, AMP |
-| Audio source | Wireless hardware only; no software noise bridges |
+| Audio source | Wireless hardware only; no software noise bridges; DeepFilterNet3 (DFN3) deprecated — do NOT integrate |
 | BM25 normalization | Symmetric: same map used offline (index build) and live |
 | CUDA DLLs | Never bundled in .exe; CUDA Toolkit assumed on target system |
 | Cloud payloads | Monolithic only; chunking prohibited |

@@ -29,7 +29,7 @@ The 4 GB VRAM is a hard constraint. Only one model is permitted to reside in VRA
 | **Remaining headroom** | ~500 MB – 2 GB | Safety buffer for memory fragmentation spikes |
 
 > [!IMPORTANT]
-> **No other model touches VRAM.** The semantic embedding model (`all-MiniLM-L6-v2`) runs via ONNX Runtime on the CPU execution provider. FAISS runs on CPU. This is a deliberate architectural constraint — not a performance trade-off — to guarantee VRAM isolation for the STT engine.
+> **No other model touches VRAM.** The semantic embedding model (`all-MiniLM-L6-v2`) runs via ONNX Runtime on the CPU execution provider. FAISS runs on CPU. The intent classifier (`intent_triggers.json`) is zero-compute regex. This is a deliberate architectural constraint — not a performance trade-off — to guarantee VRAM isolation for the STT engine.
 
 ---
 
@@ -67,7 +67,7 @@ while service_active:
     elif temp <= SAFE_BASELINE and is_throttled:
         restore_gpu(handle)
     
-    time.sleep(POLL_INTERVAL)
+    event.wait(POLL_INTERVAL)  # Use threading.Event instead of time.sleep() per architecture.md
 ```
 
 ### Thermal Thresholds
@@ -76,7 +76,7 @@ while service_active:
 |-----------|-------|--------|
 | **Critical** | 82°C (configurable) | Trigger GPU power throttling |
 | **Safe baseline** | 70°C (configurable) | Restore full power after throttling event |
-| **Poll interval** | 2–5 seconds (configurable) | Frequency of temperature checks |
+| **Poll interval** | 2–5 seconds (configurable) | Frequency of temperature checks (uses `threading.Event.wait()`, not `time.sleep()`) |
 
 > [!TIP]
 > These threshold values should be calibrated per-GPU during testing. Consumer GPUs (GTX 1650, RTX 3060) have different thermal envelopes than professional cards. Start conservative (80°C critical) and adjust based on observed behavior during 2-hour stress tests.
