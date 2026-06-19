@@ -2,3 +2,11 @@ system_prompt.md
 /temp
 checklist_audit.md
 /venv
+/local
+
+# Bible data — generated files (scripts + README are tracked)
+/data/bible/json/
+/data/bible/*.db
+/data/bible/sources/
+__pycache__/
+/docs
