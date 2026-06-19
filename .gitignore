@@ -9,4 +9,4 @@ checklist_audit.md
 /data/bible/*.db
 /data/bible/sources/
 __pycache__/
-/docs
+/docs/*
