@@ -7,6 +7,8 @@ checklist_audit.md
 # Bible data — generated files (scripts + README are tracked)
 /data/bible/json/
 /data/bible/*.db
+/data/app.db
+/var/lib/rhemacast/logs/
 /data/bible/sources/
 /data/indexes/
 __pycache__/
