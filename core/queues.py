@@ -73,11 +73,13 @@ audio_buffer = AudioChunkBuffer()
 
 # ─── Operator Queue Policy ───────────────────────────────────────────────────
 
-def push_to_operator(item: Any, confidence: float):
+def push_to_operator(item: Any, confidence: float, priority: str = "normal"):
     """
     Operator queue backpressure policy: drop oldest low-confidence items if full.
     For simplicity, if full, we just pop the oldest to make room.
     """
+    item["priority"] = priority
+    
     if operator_queue.full():
         logger.warning("Operator queue full. Evicting oldest item.")
         try:

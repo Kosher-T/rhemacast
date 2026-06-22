@@ -1,0 +1,88 @@
+/* Base Reset & Transparency for OBS */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body, html {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: transparent !important; /* MUST be transparent for OBS overlay */
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    align-items: flex-end; /* Align to bottom for lower-thirds style */
+    justify-content: center;
+    padding-bottom: 80px;
+}
+
+/* Glassmorphism Container */
+#container {
+    max-width: 80%;
+    min-width: 60%;
+    padding: 40px;
+    border-radius: 24px;
+    background: rgba(15, 23, 42, 0.6); /* Slate 900 with opacity */
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 
+                0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), 
+                transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+#container.hidden {
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+    pointer-events: none;
+}
+
+/* Typography */
+#verse-text {
+    font-size: 2.5rem;
+    font-weight: 800;
+    line-height: 1.4;
+    color: #f8fafc;
+    text-align: center;
+    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    margin-bottom: 24px;
+    letter-spacing: -0.02em;
+}
+
+#verse-ref {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #94a3b8;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+/* --- THEMES --- */
+
+/* Theme: Communion */
+.theme-communion #container {
+    background: rgba(69, 10, 10, 0.6); /* Dark Red */
+    border-color: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 25px 50px -12px rgba(69, 10, 10, 0.8), 
+                0 0 0 1px rgba(239, 68, 68, 0.1) inset;
+}
+.theme-communion #verse-ref {
+    color: #fca5a5;
+}
+
+/* Theme: Prophetic */
+.theme-prophetic #container {
+    background: rgba(23, 37, 84, 0.6); /* Dark Blue */
+    border-color: rgba(59, 130, 246, 0.2);
+    box-shadow: 0 25px 50px -12px rgba(23, 37, 84, 0.8), 
+                0 0 0 1px rgba(59, 130, 246, 0.1) inset;
+}
+.theme-prophetic #verse-ref {
+    color: #93c5fd;
+}

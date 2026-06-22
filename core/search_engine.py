@@ -20,7 +20,25 @@ logger = logging.getLogger(__name__)
 
 # Config
 require_trigger_for_fast_lane = False
-CONFIDENCE_THRESHOLD = 50.0  # arbitrary default
+CONFIDENCE_THRESHOLD = 40.0
+
+LRU_CACHE = {}
+CACHE_TTL = 15.0
+
+def check_lru_cache(verse_ref: str) -> bool:
+    """Returns True if the verse was recently pushed to the operator queue."""
+    now = time.time()
+    if verse_ref in LRU_CACHE and (now - LRU_CACHE[verse_ref]) < CACHE_TTL:
+        return True
+    
+    LRU_CACHE[verse_ref] = now
+    
+    # Prune expired
+    expired = [k for k, v in LRU_CACHE.items() if (now - v) >= CACHE_TTL]
+    for k in expired:
+        del LRU_CACHE[k]
+        
+    return False
 
 # ─── Normalization ────────────────────────────────────────────────────────────
 
@@ -202,7 +220,28 @@ def _search_thread_target():
                 
                 # If high confidence and not ignored, push to operator queue
                 if best["confidence"] >= CONFIDENCE_THRESHOLD and not is_ignored:
-                    push_to_operator(best, best["confidence"])
+                    ref = f"[{best['version']}] {best['book']} {best['chapter']}:{best['verse']}"
+                    
+                    if not check_lru_cache(ref):
+                        # Display Decision Matrix
+                        if best["confidence"] >= 85 and is_triggered:
+                            priority = "high"
+                        else:
+                            priority = "normal"
+                            
+                        push_to_operator(best, best["confidence"], priority=priority)
+                        
+                        # Phase 7: Push Stage 3 payload to DB Write Queue
+                        db_write_queue.put({
+                            "type": "display_event",
+                            "payload": {
+                                "action": "operator_queue_push",
+                                "ref": ref,
+                                "priority": priority,
+                                "confidence": best["confidence"],
+                                "timestamp_ms": int(time.time() * 1000)
+                            }
+                        })
             
             queue_b.task_done()
             
