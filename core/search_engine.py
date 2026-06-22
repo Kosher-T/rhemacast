@@ -14,6 +14,7 @@ import numpy as np
 from core.queues import queue_b, db_write_queue, push_to_operator
 from core.service_manager import manager, service_active
 from core.model_manager import model_manager
+from core.intent_classifier import intent_classifier
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +151,11 @@ def _search_thread_target():
             text_chunk = payload.get("text_chunk", "")
             word_count = payload.get("word_count", 0)
             
+            # Phase 6: Intent Classification
+            is_triggered, is_ignored, matched_phrase = intent_classifier.evaluate_intent(text_chunk)
+            
             # Phase 1.5 - 8-word BM25 early exit check (Fast Lane)
-            if require_trigger_for_fast_lane and word_count < 8:
+            if require_trigger_for_fast_lane and word_count < 8 and not is_triggered:
                 queue_b.task_done()
                 continue
                 
@@ -174,6 +178,8 @@ def _search_thread_target():
             
             if fused:
                 best = fused[0]
+                best["intent_state"] = is_triggered
+                best["intent_ignored"] = is_ignored
                 
                 # Push Stage 2 payload to DB Write Queue (search observability)
                 observability = {
@@ -186,13 +192,16 @@ def _search_thread_target():
                     "bm25_latency_ms": (t_bm25_end - t_bm25_start) * 1000,
                     "faiss_latency_ms": (t_faiss_end - t_faiss_start) * 1000,
                     "total_search_latency_ms": total_latency,
+                    "intent_state": is_triggered,
+                    "intent_ignored": is_ignored,
+                    "matched_trigger": matched_phrase,
                     "best_match": best
                 }
                 
                 db_write_queue.put({"type": "search_metrics", "payload": observability})
                 
-                # If high confidence, push to operator queue
-                if best["confidence"] >= CONFIDENCE_THRESHOLD:
+                # If high confidence and not ignored, push to operator queue
+                if best["confidence"] >= CONFIDENCE_THRESHOLD and not is_ignored:
                     push_to_operator(best, best["confidence"])
             
             queue_b.task_done()

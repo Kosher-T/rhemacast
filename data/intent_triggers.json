@@ -1,0 +1,4 @@
+{
+  "trigger_intent": ["turn to chapter", "turn to", "verse", "let's read", "book of", "gospel of", "turn off the verse"],
+  "ignore_intent": ["turn off", "turn down", "don't turn to"]
+}
