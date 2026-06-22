@@ -20,7 +20,13 @@ logger = logging.getLogger(__name__)
 
 # Config
 require_trigger_for_fast_lane = False
-CONFIDENCE_THRESHOLD = 40.0
+CONFIDENCE_THRESHOLD = 85.0
+
+def set_confidence_threshold(value: float):
+    """Allow external modules (e.g. Settings UI) to reconfigure the threshold at runtime."""
+    global CONFIDENCE_THRESHOLD
+    CONFIDENCE_THRESHOLD = max(0.0, min(100.0, value))
+    logger.info(f"Confidence threshold updated to {CONFIDENCE_THRESHOLD}%")
 
 LRU_CACHE = {}
 CACHE_TTL = 15.0

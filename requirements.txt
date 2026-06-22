@@ -46,6 +46,7 @@ Pygments==2.20.0
 pynvml==13.0.1
 pytest==9.1.0
 pytest-qt==4.5.0
+PyQt6-WebEngine==6.11.0
 PyYAML==6.0.3
 rank-bm25==0.2.2
 requests==2.34.2
