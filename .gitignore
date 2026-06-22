@@ -14,3 +14,8 @@ checklist_audit.md
 __pycache__/
 /docs
 /ui*
+
+# Audio test files
+*.wav
+*.pcm
+*.flac
