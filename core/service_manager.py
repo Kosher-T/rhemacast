@@ -26,6 +26,7 @@ import threading
 import time
 import logging
 import queue
+import tracemalloc
 from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
@@ -95,6 +96,10 @@ class ServiceManager:
     def boot(self):
         """Boots all registered threads in specific sequence."""
         logger.info("Service Manager initiating boot sequence...")
+        
+        # Start tracemalloc for OOM crash dumps
+        tracemalloc.start()
+        
         self.state = ServiceState.BOOTING
         service_active.set()
         compute_failure.clear()
