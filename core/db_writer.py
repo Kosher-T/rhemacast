@@ -16,14 +16,9 @@ from typing import Any
 
 from .database import get_connection
 from .events import BaseEvent, TranscriptChunk, SearchResult, DisplayCommand
+from .queues import db_write_queue, POISON_PILL
 
 logger = logging.getLogger(__name__)
-
-# Single-writer queue
-db_write_queue = queue.Queue()
-
-# Sentinel for graceful shutdown (Phase 2.4 will use this)
-POISON_PILL = object()
 
 if sys.platform == "win32":
     BASE_LOG_DIR = r"C:\ProgramData\RhemaCast\Logs"
