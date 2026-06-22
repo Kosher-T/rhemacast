@@ -14,6 +14,12 @@ Thread Inventory & Lifecycle:
 | Thread 4 — DB Writer | SQL inserts + flat file append | Phase 1 init | Poison pill from DB Queue |
 | Thread 5 — Hardware Monitor | GPU temp polling via pynvml | Phase 1 init | Service flag set to False |
 | WebSocket Server | Push display payloads to HTML renderer | Phase 1 init | Application exit |
+
+Error Propagation Patterns:
+1. CONTINUE (transient error): Log warning, push error event to DB queue, resume loop.
+2. DEGRADE (non-critical subsystem failure): Transition system to DEGRADED state, notify operator.
+3. FAILOVER (critical component failure): Transition to FAILOVER state (e.g., Vosk fallback).
+4. SHUTDOWN (unrecoverable error): Cascade poison pills, log critical error, exit.
 """
 
 import threading
