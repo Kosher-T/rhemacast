@@ -8,6 +8,7 @@ checklist_audit.md
 /data/bible/json/
 /data/bible/*.db
 /data/bible/sources/
+/data/indexes/
 __pycache__/
 /docs
 /ui*
