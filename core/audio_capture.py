@@ -37,8 +37,15 @@ def get_input_devices() -> List[Dict[str, str]]:
     devices = []
     try:
         device_list = sd.query_devices()
+        # Blacklist of common Linux ALSA virtual/routing devices to hide from the UI
+        linux_virtual_blacklist = ['lavrate', 'speex', 'pulse', 'upmix', 'vdownmix', 'pipewire', 'samplerate', 'sysdefault', 'default']
+        
         for idx, dev in enumerate(device_list):
             if dev['max_input_channels'] > 0:
+                name_lower = dev['name'].lower()
+                if any(b in name_lower for b in linux_virtual_blacklist):
+                    continue
+                    
                 devices.append({
                     'index': idx,
                     'name': dev['name'],
