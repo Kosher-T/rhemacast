@@ -112,3 +112,50 @@ def get_max_sequence_id(session_id: str) -> int:
     row = cursor.fetchone()
     conn.close()
     return row["max_seq"] if row and row["max_seq"] is not None else 0
+
+def stitch_transcript(session_id: str) -> str:
+    """Reconstructs the full transcript for a session, deduplicating the 6-word trailing overlap."""
+    conn = get_connection()
+    cursor = conn.execute("SELECT text_chunk FROM transcripts WHERE session_id = ? ORDER BY sequence_id ASC", (session_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = ""
+    for i, row in enumerate(rows):
+        chunk = row["text_chunk"]
+        words = chunk.split()
+        if i == 0:
+            result += chunk
+        else:
+            if len(words) > 6:
+                result += " " + " ".join(words[6:])
+            else:
+                result += " " + chunk
+    return result.strip()
+
+def get_false_positives(session_id: str) -> list:
+    """
+    Forensic audit trail query to find false positives:
+    Top-queued verses with low actual relevance.
+    """
+    query = '''
+        SELECT t.text_chunk as source_text, 
+               json_extract(sr.results_json, '$[0].verse_ref') as top_verse_ref, 
+               sr.confidence_pct, 
+               sr.intent_matched as intent_score,
+               CASE WHEN sr.confidence_pct >= 85 AND sr.intent_matched = 1 THEN 'top_queued'
+                    WHEN sr.confidence_pct >= 40 THEN 'operator_queue'
+                    ELSE 'discard' END as action_taken
+        FROM search_results sr
+        JOIN transcripts t ON sr.session_id = t.session_id AND sr.sequence_id = t.sequence_id
+        WHERE sr.session_id = ? 
+          AND (CASE WHEN sr.confidence_pct >= 85 AND sr.intent_matched = 1 THEN 'top_queued'
+                    WHEN sr.confidence_pct >= 40 THEN 'operator_queue'
+                    ELSE 'discard' END) = 'top_queued'
+        ORDER BY sr.confidence_pct ASC;
+    '''
+    conn = get_connection()
+    cursor = conn.execute(query, (session_id,))
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
