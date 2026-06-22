@@ -22,3 +22,6 @@ __pycache__/
 
 # Models
 /models/
+
+
+data/vosk-model-small-en-us

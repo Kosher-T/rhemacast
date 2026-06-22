@@ -81,3 +81,11 @@ class CloudExtractionFailure(RhemaCastError):
     fatal = False
     operator_visible = False
     auto_recoverable = True  # Sent to offline queue for later retry
+
+class StartupCheckError(RhemaCastError):
+    """Raised when a critical startup verification step fails (e.g. missing indexes)."""
+    pattern = ErrorPropagationPattern.SHUTDOWN
+    retryable = False
+    fatal = True
+    operator_visible = True
+    auto_recoverable = False

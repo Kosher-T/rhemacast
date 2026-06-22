@@ -10,6 +10,9 @@ class ModelManager:
         self.whisper_model = None
         self.vosk_model = None
         self.embedding_model = None
+        self.bm25_index = None
+        self.verse_lookup = None
+        self.faiss_index = None
         
         self.stt_mode = "unknown"
         self.embedding_mode = "unknown"
@@ -17,6 +20,7 @@ class ModelManager:
     def load_all_models(self):
         """Loads all required models. Logs appropriately."""
         logger.info("Initializing ModelManager...")
+        self._load_indexes()
         self._load_vosk()
         self._load_whisper()
         self._load_embedding()
@@ -93,7 +97,51 @@ class ModelManager:
                 self.embedding_mode = "backup"
                 logger.info("Backup embedding model loaded.")
             except Exception as e2:
+                from core.errors import StartupCheckError
                 logger.critical(f"Backup embedding model also failed: {e2}")
+                raise StartupCheckError(f"Embedding models failed to load: {e2}")
+
+    def _load_indexes(self):
+        import pickle
+        from core.errors import StartupCheckError
+        try:
+            import faiss
+        except ImportError:
+            faiss = None
+            
+        data_dir = os.path.join(self.root_dir, "data", "indexes")
+        bm25_path = os.path.join(data_dir, "bm25.pkl")
+        lookup_path = os.path.join(data_dir, "verse_lookup.pkl")
+        faiss_path = os.path.join(data_dir, "faiss.index")
+
+        # Load BM25
+        try:
+            logger.info(f"Loading BM25 index from {bm25_path}...")
+            with open(bm25_path, "rb") as f:
+                self.bm25_index = pickle.load(f)
+            with open(lookup_path, "rb") as f:
+                self.verse_lookup = pickle.load(f)
+            logger.info("BM25 index loaded successfully.")
+        except FileNotFoundError:
+            logger.critical("BM25 index not found at data/indexes/bm25.pkl — run Phase 1 offline build first")
+            raise StartupCheckError("BM25 index missing")
+        except Exception as e:
+            logger.critical(f"Failed to load BM25 index: {e}")
+            raise StartupCheckError(f"BM25 index corrupted: {e}")
+
+        # Load FAISS
+        try:
+            logger.info(f"Loading FAISS index from {faiss_path}...")
+            if not faiss:
+                raise ImportError("faiss module is not installed.")
+            self.faiss_index = faiss.read_index(faiss_path)
+            logger.info("FAISS index loaded successfully.")
+        except FileNotFoundError:
+            logger.critical("FAISS index not found at data/indexes/faiss.index — run Phase 1 offline build first")
+            raise StartupCheckError("FAISS index missing")
+        except Exception as e:
+            logger.critical(f"Failed to load FAISS index: {e}")
+            raise StartupCheckError(f"FAISS index corrupted: {e}")
 
 # Global singleton
 model_manager = ModelManager()
