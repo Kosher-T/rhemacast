@@ -10,13 +10,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import time
 
-@dataclass
+@dataclass(kw_only=True)
 class BaseEvent:
     """Base class for all events to enforce versioning and timestamps."""
     version: int
     timestamp_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
-@dataclass
+@dataclass(kw_only=True)
 class TranscriptChunk(BaseEvent):
     """Payload pushed to Queue B from the STT engine."""
     session_id: str
@@ -25,7 +25,7 @@ class TranscriptChunk(BaseEvent):
     word_count: int
     version: int = 1
 
-@dataclass
+@dataclass(kw_only=True)
 class SearchQuery(BaseEvent):
     """Payload representing a triggered search attempt."""
     session_id: str
@@ -35,7 +35,7 @@ class SearchQuery(BaseEvent):
     trigger_phrase: Optional[str]
     version: int = 1
 
-@dataclass
+@dataclass(kw_only=True)
 class VerseResult:
     """A single verse result within a SearchResult payload."""
     rank: int
@@ -48,7 +48,7 @@ class VerseResult:
     faiss_rank: Optional[int]
     rrf_score: float
 
-@dataclass
+@dataclass(kw_only=True)
 class SearchResult(BaseEvent):
     """Payload representing the results of a search."""
     session_id: str
@@ -59,7 +59,7 @@ class SearchResult(BaseEvent):
     latency_ms: float
     version: int = 1
 
-@dataclass
+@dataclass(kw_only=True)
 class DisplayCommand(BaseEvent):
     """Payload for broadcasting commands to the WebSocket display clients."""
     action: str  # "display", "clear", etc.
@@ -69,7 +69,7 @@ class DisplayCommand(BaseEvent):
     theme: Optional[str] = None
     version: int = 1
 
-@dataclass
+@dataclass(kw_only=True)
 class TelemetrySample(BaseEvent):
     """Payload for hardware and system monitoring."""
     gpu_temp_c: Optional[float] = None
