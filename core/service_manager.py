@@ -3,6 +3,17 @@ core/service_manager.py
 
 Central threading harness and state machine orchestrator for RhemaCast.
 Manages thread boot sequence, health monitoring, crash escalation, and teardown.
+
+Thread Inventory & Lifecycle:
+| Thread | Purpose | Started At | Stopped At |
+|--------|---------|-----------|-----------|
+| Main Thread | UI rendering, operator controls, lifecycle | Application launch | Application exit |
+| Thread 1 — Audio Capture | Captures PCM audio, pushes to Queue A | "Start Transcription" | Poison pill from Queue A |
+| Thread 2 — STT Inference | Faster-Whisper on GPU, sliding window | "Start Transcription" | Poison pill from Queue A |
+| Thread 3 — Search & Scoring | BM25 + FAISS parallel, RRF fusion | "Start Transcription" | Poison pill from Queue B |
+| Thread 4 — DB Writer | SQL inserts + flat file append | Phase 1 init | Poison pill from DB Queue |
+| Thread 5 — Hardware Monitor | GPU temp polling via pynvml | Phase 1 init | Service flag set to False |
+| WebSocket Server | Push display payloads to HTML renderer | Phase 1 init | Application exit |
 """
 
 import threading
