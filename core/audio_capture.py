@@ -20,6 +20,10 @@ silence_detected = threading.Event()
 # Internal event to control the capture loop
 _capture_running = threading.Event()
 
+# Globally accessible event to pause capture queueing during failover
+capture_paused = threading.Event()
+_paused_buffer = []
+
 # Internal state for tracking silence duration
 _silence_duration_blocks = 0
 SILENCE_THRESHOLD_DB = -50.0
@@ -94,10 +98,19 @@ def _audio_callback(indata: np.ndarray, frames: int, time_info: dict, status: sd
         if silence_detected.is_set():
             silence_detected.clear()
 
-    # Generate unique ID and push PCM data to Queue A
+    # Generate unique ID and PCM data
     chunk_id = str(uuid.uuid4())
     pcm_data = indata.copy().tobytes()
-    audio_buffer.enqueue(chunk_id, pcm_data)
+    
+    if capture_paused.is_set():
+        _paused_buffer.append((chunk_id, pcm_data))
+    else:
+        # Flush buffer first to preserve order
+        if _paused_buffer:
+            for c_id, data in _paused_buffer:
+                audio_buffer.enqueue(c_id, data)
+            _paused_buffer.clear()
+        audio_buffer.enqueue(chunk_id, pcm_data)
 
 def _capture_thread_target(device_index: int):
     """

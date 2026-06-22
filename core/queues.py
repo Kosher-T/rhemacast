@@ -44,15 +44,20 @@ class AudioChunkBuffer:
         self.pending_chunks: Dict[str, bytes] = OrderedDict()
 
     def enqueue(self, chunk_id: str, pcm_data: bytes):
-        """Adds a chunk to Queue A and tracks it as pending."""
+        """Adds a chunk to Queue A."""
         if queue_a.qsize() > 400:
             # Backpressure Policy: Queue A: never drop audio chunks; trigger failover if depth > 400
             # Failover flag to be handled by the service manager
             logger.warning("Queue A depth > 400! Failover threshold reached.")
         
-        # We still enqueue (never drop)
-        self.pending_chunks[chunk_id] = pcm_data
+        # We enqueue without tracking as pending yet
         queue_a.put((chunk_id, pcm_data))
+
+    def pull(self, block: bool = True, timeout: Optional[float] = None) -> tuple[str, bytes]:
+        """Thread 2 pulls from Queue A and tracks as pending."""
+        chunk_id, pcm_data = queue_a.get(block=block, timeout=timeout)
+        self.pending_chunks[chunk_id] = pcm_data
+        return chunk_id, pcm_data
 
     def ack(self, chunk_id: str):
         """Thread 2 calls this when processing completes successfully."""
