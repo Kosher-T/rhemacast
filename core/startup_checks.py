@@ -36,6 +36,8 @@ except (ImportError, OSError):
     # Sounddevice might fail to import if portaudio is missing in headless mode
     HAS_SOUNDDEVICE = False
 
+from core.model_manager import model_manager
+
 class CheckStatus(Enum):
     PASS = "PASS"
     WARNING = "WARNING"
@@ -66,18 +68,12 @@ class StartupValidator:
         return h.hexdigest()
 
     def check_cuda(self):
-        if not HAS_CTRANSLATE2:
-            self._add_result("CUDA Availability", CheckStatus.FAIL, "ctranslate2 not installed.", True)
-            return
-            
-        try:
-            device_count = ctranslate2.get_cuda_device_count()
-            if device_count > 0:
-                self._add_result("CUDA Availability", CheckStatus.PASS, f"Found {device_count} CUDA device(s).", True)
-            else:
-                self._add_result("CUDA Availability", CheckStatus.WARNING, "No CUDA devices found. Will run in CPU_ONLY mode.", False)
-        except Exception as e:
-            self._add_result("CUDA Availability", CheckStatus.WARNING, f"CUDA check failed: {e}. Will run in CPU_ONLY mode.", False)
+        if model_manager.stt_mode == "whisper_primary":
+            self._add_result("CUDA Availability", CheckStatus.PASS, "Faster-Whisper CUDA verification passed.", True)
+        elif model_manager.stt_mode == "vosk_primary":
+            self._add_result("CUDA Availability", CheckStatus.WARNING, "CUDA unavailable or Whisper failed. Running in CPU_ONLY mode (Vosk).", False)
+        else:
+            self._add_result("CUDA Availability", CheckStatus.FAIL, "STT Engine failed to initialize.", True)
 
     def check_indexes(self):
         # FAISS
@@ -167,10 +163,8 @@ class StartupValidator:
             self._add_result("System RAM", CheckStatus.FAIL, f"Only {free_gb:.1f} GB available. Minimum 2.0 GB required.", True)
 
     def check_vosk(self):
-        # Fallback check
-        vosk_path = os.path.join(self.root_dir, "models", "vosk-model-small-en-us")
-        if os.path.exists(vosk_path) and os.path.isdir(vosk_path):
-            self._add_result("Vosk Model", CheckStatus.PASS, "Found Vosk failover model.", True)
+        if model_manager.vosk_model is not None:
+            self._add_result("Vosk Model", CheckStatus.PASS, "Found Vosk failover model and loaded warm standby.", True)
         else:
             self._add_result("Vosk Model", CheckStatus.WARNING, "Vosk model not found. Failover will be unavailable.", False)
 
@@ -214,6 +208,8 @@ class StartupValidator:
         """
         Runs all checks and returns (is_safe_to_boot, list_of_results).
         """
+        model_manager.load_all_models()
+        
         self.check_cuda()
         self.check_indexes()
         self.check_sqlite()
