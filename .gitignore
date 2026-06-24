@@ -13,7 +13,7 @@ checklist_audit.md
 /data/indexes/
 __pycache__/
 /docs
-/ui*
+/ui_draft
 
 # Audio test files
 *.wav
@@ -26,3 +26,4 @@ __pycache__/
 
 data/vosk-model-small-en-us
 .env
+.svg
