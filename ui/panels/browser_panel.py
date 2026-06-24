@@ -5,12 +5,14 @@ Manual navigation panel: Bible browser with translation bar.
 Implements single-click (browse) and double-click (broadcast) on translations.
 """
 
+import os
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QFrame, QScrollArea, QStackedWidget
 )
-from PyQt6.QtGui import QWheelEvent
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon, QWheelEvent
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 
 from ui.styles import (
     PANEL_BODY_STYLE, SLATE_300, SLATE_500, BLUE_500,
@@ -215,15 +217,19 @@ class BrowserPanel(QWidget):
         nav_layout.setSpacing(8)
         
         # Toggle Mode Button
-        self.mode_toggle_btn = QPushButton("🔍")
-        self.mode_toggle_btn.setFixedSize(24, 24)
+        _assets = os.path.join(os.path.dirname(__file__), "..", "assets")
+        self._icon_search = QIcon(os.path.join(_assets, "search.svg"))
+        self._icon_book = QIcon(os.path.join(_assets, "book.svg"))
+        self.mode_toggle_btn = QPushButton()
+        self.mode_toggle_btn.setIcon(self._icon_search)
+        self.mode_toggle_btn.setIconSize(QSize(18, 18))
+        self.mode_toggle_btn.setFixedSize(28, 28)
         self.mode_toggle_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 color: {BLUE_500};
                 border: none;
                 border-radius: 4px;
-                font-size: 14px;
             }}
             QPushButton:hover {{
                 background: rgba(59, 130, 246, 0.2);
@@ -297,12 +303,12 @@ class BrowserPanel(QWidget):
         if current_idx == 0:
             # Switch to search
             self.nav_stack.setCurrentIndex(1)
-            self.mode_toggle_btn.setText("🔎") # Or another icon for search mode
+            self.mode_toggle_btn.setIcon(self._icon_book)
             self.mode_toggle_btn.setToolTip("Switch to Book/Chapter/Verse navigation")
             self.search_input.setFocus()
         else:
             # Switch to predictive
             self.nav_stack.setCurrentIndex(0)
-            self.mode_toggle_btn.setText("📖") # Or another icon for predictive mode
+            self.mode_toggle_btn.setIcon(self._icon_search)
             self.mode_toggle_btn.setToolTip("Switch to Natural Language Search")
             self.predictive_input.reset()

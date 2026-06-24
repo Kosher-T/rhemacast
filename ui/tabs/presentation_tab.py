@@ -6,10 +6,13 @@ The main workspace: nested QSplitter layout matching the HTML draft.
   Bottom: Manual Browser (L) | Queue (R)
 """
 
+import os
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 
 from ui.panels.schedule_panel import SchedulePanel
 from ui.panels.queue_panel import QueuePanel
@@ -81,35 +84,37 @@ class LiveOutputFrame(QWidget):
 
         # ── Macro Controls ──
         controls_container = QWidget()
-        controls_container.setMaximumWidth(320)
         controls = QHBoxLayout(controls_container)
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(12)
 
-        btn_prev = QPushButton("◀")
+        btn_prev = QPushButton("<")
         btn_prev.setStyleSheet(MACRO_BTN_AMBER)
-        btn_prev.setFixedHeight(44)
+        btn_prev.setFixedSize(80, 40)
         btn_prev.setToolTip("Previous Verse")
         btn_prev.clicked.connect(self.prev_verse.emit)
         controls.addWidget(btn_prev)
 
-        self.btn_clear = QPushButton("⊘  CLEAR")
+        _icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "eye-off.svg")
+        self.btn_clear = QPushButton()
+        self.btn_clear.setIcon(QIcon(_icon_path))
+        self.btn_clear.setIconSize(QSize(18, 18))
         self.btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
-        self.btn_clear.setFixedHeight(44)
+        self.btn_clear.setFixedSize(90, 40)
         self.btn_clear.setToolTip("Clear screen / Recall last cleared verse")
         self.btn_clear.clicked.connect(self.clear_recall.emit)
-        controls.addWidget(self.btn_clear, 1)
+        controls.addWidget(self.btn_clear)
 
-        btn_next = QPushButton("▶")
+        btn_next = QPushButton(">")
         btn_next.setStyleSheet(MACRO_BTN_AMBER)
-        btn_next.setFixedHeight(44)
+        btn_next.setFixedSize(80, 40)
         btn_next.setToolTip("Next Verse")
         btn_next.clicked.connect(self.next_verse.emit)
         controls.addWidget(btn_next)
 
         macro_wrapper = QHBoxLayout()
         macro_wrapper.addStretch()
-        macro_wrapper.addWidget(controls_container, 1)
+        macro_wrapper.addWidget(controls_container)
         macro_wrapper.addStretch()
         layout.addLayout(macro_wrapper)
 

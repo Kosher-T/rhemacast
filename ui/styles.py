@@ -49,17 +49,17 @@ QWidget {{
 /* ── Splitter Handles (Resizers) ── */
 QSplitter::handle:horizontal {{
     width: 6px;
-    background: transparent;
+    background: rgba(59, 130, 246, 0.15);
 }}
 QSplitter::handle:horizontal:hover {{
-    background: rgba(59, 130, 246, 0.25);
+    background: rgba(59, 130, 246, 0.35);
 }}
 QSplitter::handle:vertical {{
     height: 6px;
-    background: transparent;
+    background: rgba(59, 130, 246, 0.15);
 }}
 QSplitter::handle:vertical:hover {{
-    background: rgba(59, 130, 246, 0.25);
+    background: rgba(59, 130, 246, 0.35);
 }}
 
 /* ── Scroll Bars (Thin, dark) ── */
@@ -210,10 +210,10 @@ MACRO_BTN_AMBER = f"""
         background-color: rgba(245, 158, 11, 0.9);
         color: {AMBER_900};
         border-radius: 4px;
-        border-bottom: 4px solid rgb(180, 120, 0);
+        border-bottom: 3px solid rgb(180, 120, 0);
         font-weight: 800;
-        font-size: 16px;
-        padding: 8px;
+        font-size: 14px;
+        padding: 4px 16px;
         margin-top: 0px;
     }}
     QPushButton:hover {{
@@ -222,7 +222,7 @@ MACRO_BTN_AMBER = f"""
     QPushButton:pressed {{
         background-color: rgba(217, 119, 6, 0.9);
         border-bottom: 0px;
-        margin-top: 4px;
+        margin-top: 3px;
     }}
 """
 
@@ -231,10 +231,10 @@ MACRO_BTN_CLEAR = f"""
         background-color: rgba(51, 65, 85, 0.9);
         color: {WHITE};
         border-radius: 4px;
-        border-bottom: 4px solid rgb(30, 41, 59);
+        border-bottom: 3px solid rgb(30, 41, 59);
         font-weight: 700;
-        font-size: 13px;
-        padding: 8px;
+        font-size: 12px;
+        padding: 4px 16px;
         margin-top: 0px;
     }}
     QPushButton:hover {{
@@ -243,7 +243,7 @@ MACRO_BTN_CLEAR = f"""
     QPushButton:pressed {{
         background-color: rgba(30, 41, 59, 0.9);
         border-bottom: 0px;
-        margin-top: 4px;
+        margin-top: 3px;
     }}
 """
 
