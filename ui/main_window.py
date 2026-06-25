@@ -13,7 +13,8 @@ from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
 from ui.styles import (
-    SLATE_950, CHROME_BG, CHROME_TAB_ACTIVE, WHITE, SLATE_400, BORDER_SUBTLE
+    SLATE_950, SLATE_600, CHROME_BG, CHROME_TAB_ACTIVE,
+    WHITE, SLATE_400, EMERALD_500, RED_500, BORDER_SUBTLE
 )
 from ui.tabs.presentation_tab import PresentationTab
 from ui.widgets.status_bar import StatusBar
@@ -217,40 +218,81 @@ class MainWindow(QMainWindow):
         self.title_bar = FramelessTitleBar(self)
         root_layout.addWidget(self.title_bar)
         
-        # 1.5 Sub-toolbar (File Edit View etc)
+        # 1.5 Sub-toolbar (View | Schedule Remote Live Sync)
         self.sub_toolbar = QWidget()
         self.sub_toolbar.setObjectName("SubToolbar")
-        self.sub_toolbar.setStyleSheet(f"""
-            QWidget#SubToolbar {{
-                background-color: {SLATE_950};
-                border-bottom: 1px solid {BORDER_SUBTLE};
-            }}
+        
+        _greyed_btn_style = f"""
             QPushButton {{
                 background: transparent;
-                color: {SLATE_400};
+                color: {SLATE_600};
                 font-size: 11px;
                 padding: 4px 8px;
                 border: none;
             }}
+            QPushButton:disabled {{
+                color: {SLATE_600};
+            }}
+        """
+        
+        _service_btn_style = f"""
+            QPushButton {{
+                background: rgba(16, 185, 129, 0.15);
+                color: {EMERALD_500};
+                font-size: 11px;
+                font-weight: 700;
+                padding: 4px 14px;
+                border: 1px solid rgba(16, 185, 129, 0.3);
+                border-radius: 4px;
+            }}
             QPushButton:hover {{
-                color: {WHITE};
+                background: rgba(16, 185, 129, 0.25);
+            }}
+            QPushButton:disabled {{
+                background: rgba(239, 68, 68, 0.1);
+                color: {RED_500};
+                border-color: rgba(239, 68, 68, 0.2);
+            }}
+        """
+        
+        self.sub_toolbar.setStyleSheet(f"""
+            QWidget#SubToolbar {{
+                background-color: {SLATE_950};
+                border-bottom: 1px solid {BORDER_SUBTLE};
             }}
         """)
         sub_layout = QHBoxLayout(self.sub_toolbar)
         sub_layout.setContentsMargins(12, 4, 12, 4)
         sub_layout.setSpacing(4)
         
-        for text in ["File", "Edit", "View"]:
-            sub_layout.addWidget(QPushButton(text))
+        # Greyed-out menu items
+        for text in ["View"]:
+            btn = QPushButton(text)
+            btn.setStyleSheet(_greyed_btn_style)
+            btn.setEnabled(False)
+            btn.setToolTip(f"{text} — coming soon")
+            sub_layout.addWidget(btn)
             
         sep = QLabel("|")
-        sep.setStyleSheet(f"color: {SLATE_400}; font-size: 11px; margin: 0 4px;")
+        sep.setStyleSheet(f"color: {SLATE_600}; font-size: 11px; margin: 0 4px;")
         sub_layout.addWidget(sep)
         
         for text in ["Schedule", "Remote", "Live Sync"]:
-            sub_layout.addWidget(QPushButton(text))
+            btn = QPushButton(text)
+            btn.setStyleSheet(_greyed_btn_style)
+            btn.setEnabled(False)
+            btn.setToolTip(f"{text} — coming soon")
+            sub_layout.addWidget(btn)
             
         sub_layout.addStretch()
+        
+        # Start Service button
+        self.start_service_btn = QPushButton("▶  Start Service")
+        self.start_service_btn.setStyleSheet(_service_btn_style)
+        self.start_service_btn.setToolTip("Boot all backend threads (Audio, STT, Search, DB Writer, Hardware Monitor)")
+        self.start_service_btn.clicked.connect(self._toggle_service)
+        sub_layout.addWidget(self.start_service_btn)
+        self._service_running = False
         
         root_layout.addWidget(self.sub_toolbar)
         
@@ -410,3 +452,67 @@ class MainWindow(QMainWindow):
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "live_output"):
             pres_tab.live_output.clear_recall.emit()
+
+    def _toggle_service(self):
+        """Toggle the backend service threads on/off."""
+        if self._service_running:
+            self._stop_service()
+        else:
+            self._start_service()
+
+    def _start_service(self):
+        """Boot all backend threads via ServiceManager."""
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            from core.service_manager import manager
+            manager.boot()
+            self._service_running = True
+            self.start_service_btn.setText("■  Stop Service")
+            self.start_service_btn.setToolTip("Stop all backend threads")
+            # Switch to red-ish disabled style for the stop state
+            self.start_service_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(239, 68, 68, 0.15);
+                    color: {RED_500};
+                    font-size: 11px;
+                    font-weight: 700;
+                    padding: 4px 14px;
+                    border: 1px solid rgba(239, 68, 68, 0.3);
+                    border-radius: 4px;
+                }}
+                QPushButton:hover {{
+                    background: rgba(239, 68, 68, 0.25);
+                }}
+            """)
+            logger.info("Service started successfully.")
+        except Exception as e:
+            logger.error(f"Failed to start service: {e}")
+
+    def _stop_service(self):
+        """Gracefully stop all backend threads."""
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            from core.service_manager import manager
+            manager.initiate_shutdown()
+            self._service_running = False
+            self.start_service_btn.setText("▶  Start Service")
+            self.start_service_btn.setToolTip("Boot all backend threads")
+            self.start_service_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(16, 185, 129, 0.15);
+                    color: {EMERALD_500};
+                    font-size: 11px;
+                    font-weight: 700;
+                    padding: 4px 14px;
+                    border: 1px solid rgba(16, 185, 129, 0.3);
+                    border-radius: 4px;
+                }}
+                QPushButton:hover {{
+                    background: rgba(16, 185, 129, 0.25);
+                }}
+            """)
+            logger.info("Service stopped.")
+        except Exception as e:
+            logger.error(f"Failed to stop service: {e}")

@@ -4,9 +4,17 @@ ui/tabs/presentation_tab.py
 The main workspace: nested QSplitter layout matching the HTML draft.
   Top: Schedule (L) | Live Output + Controls (C) | STT + Preview (R)
   Bottom: Manual Browser (L) | Queue (R)
+
+Wires all panel signals to backend actions:
+  - Queue Show → WebSocket broadcast + operator preview update
+  - Clear/Prev/Next macro buttons → display state management
+  - Transcribe toggle → start/stop Thread 1 + Thread 2
 """
 
 import os
+import logging
+import asyncio
+import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton, QFrame
@@ -23,6 +31,8 @@ from ui.styles import (
     MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
     RED_500, WHITE, SLATE_950, BORDER_SUBTLE
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LiveOutputFrame(QWidget):
@@ -118,12 +128,40 @@ class LiveOutputFrame(QWidget):
         macro_wrapper.addStretch()
         layout.addLayout(macro_wrapper)
 
+    def set_live_text(self, text: str, ref: str):
+        """Update the live output viewport with verse text."""
+        self.output_label.setText(f"{text}\n\n— {ref}")
+        self.output_label.setStyleSheet(f"""
+            color: {WHITE};
+            font-size: 16px; font-weight: 600;
+            font-style: normal;
+            padding: 16px;
+        """)
+        self.output_label.setWordWrap(True)
+
+    def clear_live_output(self):
+        """Reset the live output to its default empty state."""
+        self.output_label.setText("LIVE OUTPUT")
+        self.output_label.setStyleSheet(f"""
+            color: rgba(255, 255, 255, 12);
+            font-size: 28px; font-weight: 900;
+            font-style: italic;
+        """)
+
 
 class PresentationTab(QWidget):
     """The main Presentation workspace tab."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        # Display state
+        self._current_display = None      # Currently displayed verse dict
+        self._last_cleared_display = None  # Last verse before clear (for recall)
+        self._is_cleared = True
+        
+        # Schedule navigation index
+        self._schedule_index = -1
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(4, 4, 4, 4)
@@ -185,3 +223,214 @@ class PresentationTab(QWidget):
         main_splitter.setSizes([650, 350])
 
         root_layout.addWidget(main_splitter)
+        
+        # ── Wire all signals ──
+        self._connect_signals()
+
+    def _connect_signals(self):
+        """Connect all panel signals to their backend actions."""
+        
+        # Queue panel: "Show" button → broadcast verse to display
+        self.queue_panel.display_requested.connect(self._on_display_verse)
+        
+        # Live output: clear/recall toggle
+        self.live_output.clear_recall.connect(self._on_clear_recall)
+        
+        # Live output: prev/next verse navigation (uses schedule)
+        self.live_output.prev_verse.connect(self._on_prev_verse)
+        self.live_output.next_verse.connect(self._on_next_verse)
+        
+        # STT panel: transcription start/stop → control Thread 1 + Thread 2
+        self.stt_panel.transcription_started.connect(self._on_start_transcription)
+        self.stt_panel.transcription_stopped.connect(self._on_stop_transcription)
+        
+        # Browser panel: double-click broadcast
+        self.browser_panel.broadcast_in_version.connect(self._on_browser_broadcast)
+
+    def _on_display_verse(self, data: dict):
+        """
+        Called when operator clicks 'Show' on a queue item.
+        Updates the live output, operator preview, and broadcasts via WebSocket.
+        """
+        verse_text = data.get("text", "")
+        book = data.get("book", "")
+        chapter = data.get("chapter", "")
+        verse_num = data.get("verse_num", "")
+        version = data.get("version", "")
+        ref = f"[{version}] {book} {chapter}:{verse_num}"
+        
+        # Update local display state
+        self._current_display = data
+        self._is_cleared = False
+        
+        # Update UI
+        self.live_output.set_live_text(verse_text, ref)
+        self.stt_panel.update_preview(verse_text, ref)
+        
+        # Add to schedule if not already there
+        self.schedule_panel.add_item(ref, version, verse_text)
+        
+        # Broadcast via WebSocket
+        self._broadcast_to_ws({
+            "action": "display",
+            "text": verse_text,
+            "ref": ref,
+            "translation": version,
+            "book": book,
+            "chapter": str(chapter),
+            "verse": str(verse_num),
+            "theme": "default"
+        })
+        
+        logger.info(f"Displaying: {ref}")
+
+    def _on_browser_broadcast(self, version: str):
+        """Called when operator double-clicks a translation in the browser panel."""
+        verse_data = self.browser_panel.get_selected_verse()
+        if not verse_data:
+            return
+        
+        book = self.browser_panel._current_book or ""
+        ref = f"[{version}] {book} {verse_data['chapter']}:{verse_data['verse']}"
+        text = verse_data.get("text", "")
+        
+        self._current_display = {
+            "text": text,
+            "book": book,
+            "chapter": verse_data["chapter"],
+            "verse_num": verse_data["verse"],
+            "version": version
+        }
+        self._is_cleared = False
+        
+        self.live_output.set_live_text(text, ref)
+        self.stt_panel.update_preview(text, ref)
+        self.schedule_panel.add_item(ref, version, text)
+        
+        self._broadcast_to_ws({
+            "action": "display",
+            "text": text,
+            "ref": ref,
+            "translation": version,
+            "book": book,
+            "chapter": str(verse_data["chapter"]),
+            "verse": str(verse_data["verse"]),
+            "theme": "default"
+        })
+        
+        logger.info(f"Browser broadcast: {ref}")
+
+    def _on_clear_recall(self):
+        """Toggle between clear and recall of the last displayed verse."""
+        if not self._is_cleared and self._current_display:
+            # Clear the screen
+            self._last_cleared_display = self._current_display
+            self._current_display = None
+            self._is_cleared = True
+            
+            self.live_output.clear_live_output()
+            self.stt_panel.clear_preview()
+            
+            self._broadcast_to_ws({"action": "clear"})
+            logger.info("Display cleared")
+            
+        elif self._is_cleared and self._last_cleared_display:
+            # Recall the last cleared verse
+            self._on_display_verse(self._last_cleared_display)
+            logger.info("Display recalled")
+
+    def _on_prev_verse(self):
+        """Navigate to the previous item in the schedule."""
+        schedule = self.schedule_panel.get_schedule()
+        if not schedule:
+            return
+        
+        self._schedule_index = max(0, self._schedule_index - 1)
+        item = schedule[self._schedule_index]
+        
+        # Construct a display-compatible dict from the schedule item
+        self._display_schedule_item(item)
+
+    def _on_next_verse(self):
+        """Navigate to the next item in the schedule."""
+        schedule = self.schedule_panel.get_schedule()
+        if not schedule:
+            return
+        
+        self._schedule_index = min(len(schedule) - 1, self._schedule_index + 1)
+        item = schedule[self._schedule_index]
+        
+        self._display_schedule_item(item)
+
+    def _display_schedule_item(self, item: dict):
+        """Display a schedule item on the live output."""
+        ref = item.get("ref", "")
+        text = item.get("text", "")
+        version = item.get("translation", "")
+        
+        self._current_display = item
+        self._is_cleared = False
+        
+        self.live_output.set_live_text(text, ref)
+        self.stt_panel.update_preview(text, ref)
+        
+        self._broadcast_to_ws({
+            "action": "display",
+            "text": text,
+            "ref": ref,
+            "translation": version,
+            "theme": item.get("theme", "default")
+        })
+
+    def _on_start_transcription(self):
+        """Start audio capture (Thread 1) and STT inference (Thread 2)."""
+        try:
+            from core.stt_inference import start_stt
+            from core.audio_capture import start_capture
+            
+            # Start audio capture on system default device
+            start_capture(device_index=None)
+            
+            # Start STT inference
+            start_stt()
+            
+            logger.info("Transcription started (T1 + T2)")
+        except Exception as e:
+            logger.error(f"Failed to start transcription: {e}")
+
+    def _on_stop_transcription(self):
+        """Stop audio capture (Thread 1) and STT inference (Thread 2)."""
+        try:
+            from core.stt_inference import stop_stt
+            from core.audio_capture import stop_capture
+            
+            stop_capture()
+            stop_stt()
+            
+            logger.info("Transcription stopped (T1 + T2)")
+        except Exception as e:
+            logger.error(f"Failed to stop transcription: {e}")
+
+    def _broadcast_to_ws(self, payload: dict):
+        """
+        Send a display command to all connected WebSocket clients (OBS Browser Sources).
+        Runs the async broadcast in a fire-and-forget manner.
+        """
+        try:
+            from core.websocket_server import broadcast_display
+            
+            # We need to run the async broadcast from a sync context.
+            # Use a thread to fire the coroutine without blocking the UI.
+            def _fire():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(broadcast_display(payload))
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"WebSocket broadcast error: {e}")
+            
+            t = threading.Thread(target=_fire, daemon=True)
+            t.start()
+        except Exception as e:
+            logger.error(f"Failed to initiate WebSocket broadcast: {e}")

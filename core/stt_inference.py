@@ -5,7 +5,7 @@ import threading
 import collections
 import numpy as np
 
-from core.queues import audio_buffer, queue_a, queue_b, db_write_queue
+from core.queues import audio_buffer, queue_a, queue_b, db_write_queue, transcript_ui_queue
 from core.audio_capture import capture_paused, silence_detected
 from core.errors import ComputeFailure
 from core.service_manager import manager, service_active, compute_failure
@@ -87,6 +87,12 @@ def _stt_thread_target():
                             # Log to DB Write Queue
                             db_write_queue.put({"type": "raw_stt", "payload": payload})
                             
+                            # Push to UI transcript stream
+                            try:
+                                transcript_ui_queue.put_nowait(" ".join(chunk_words))
+                            except queue.Full:
+                                pass
+                            
                             # Retain last 6 words (overlap), drop oldest 9
                             word_buffer = word_buffer[9:]
                 
@@ -102,6 +108,10 @@ def _stt_thread_target():
                     sequence_counter += 1
                     queue_b.put(payload)
                     db_write_queue.put({"type": "raw_stt", "payload": payload})
+                    try:
+                        transcript_ui_queue.put_nowait(" ".join(word_buffer))
+                    except queue.Full:
+                        pass
                     word_buffer.clear()
                     silence_detected.clear()
                 

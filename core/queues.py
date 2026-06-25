@@ -31,6 +31,9 @@ operator_queue = queue.Queue(maxsize=100)
 # For WebSocket broadcast coalescence
 ws_broadcast_queue = queue.Queue(maxsize=100)
 
+# Lightweight queue for pushing transcript text to the STT panel in the UI
+transcript_ui_queue = queue.Queue(maxsize=200)
+
 
 # ─── Queue A Acknowledgment Protocol ─────────────────────────────────────────
 

@@ -3,13 +3,14 @@ ui/panels/stt_panel.py
 
 Right panel: STT transcript monitor + operator preview.
 Shows live transcription output from Thread 2.
+Emits transcription_started/stopped signals for backend control.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QFrame, QSplitter
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.widgets.aspect_ratio import AspectRatioWidget
 from ui.styles import (
@@ -21,6 +22,9 @@ from ui.styles import (
 
 class STTPanel(QWidget):
     """STT Monitor + Operator Preview panel (right side)."""
+
+    transcription_started = pyqtSignal()
+    transcription_stopped = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,6 +169,11 @@ class STTPanel(QWidget):
                 }}
             """)
             self.transcribe_btn.setToolTip("Stop live transcription")
+            self.transcript_view.append(
+                f'<p style="color: {EMERALD_400}; font-style: italic;">'
+                '🔴 // Transcription Started</p>'
+            )
+            self.transcription_started.emit()
         else:
             self.transcribe_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -179,6 +188,11 @@ class STTPanel(QWidget):
                 }}
             """)
             self.transcribe_btn.setToolTip("Start live transcription")
+            self.transcript_view.append(
+                f'<p style="color: {EMERALD_400}; font-style: italic;">'
+                '🟢 // Transcription Stopped</p>'
+            )
+            self.transcription_stopped.emit()
 
     def append_transcript(self, text: str):
         """Append a new transcript chunk to the monitor."""
@@ -192,4 +206,13 @@ class STTPanel(QWidget):
             font-size: 13px; font-weight: 600;
             font-style: normal; letter-spacing: 0px;
             padding: 12px;
+        """)
+
+    def clear_preview(self):
+        """Reset the preview to its default state."""
+        self.preview_label.setText("PREVIEW")
+        self.preview_label.setStyleSheet(f"""
+            color: rgba(255, 255, 255, 12);
+            font-size: 18px; font-weight: 900;
+            font-style: italic; letter-spacing: 4px;
         """)

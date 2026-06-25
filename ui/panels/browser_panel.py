@@ -3,9 +3,12 @@ ui/panels/browser_panel.py
 
 Manual navigation panel: Bible browser with translation bar.
 Implements single-click (browse) and double-click (broadcast) on translations.
+Wired to bible.db via core.bible_service for live chapter/verse navigation.
 """
 
 import os
+import webbrowser
+import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -21,6 +24,9 @@ from ui.styles import (
     BORDER_SUBTLE, SLATE_950, WHITE
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
+from core.bible_service import AVAILABLE_TRANSLATIONS, get_chapter, search_verses_text
+
+logger = logging.getLogger(__name__)
 
 
 class _HScrollArea(QScrollArea):
@@ -133,16 +139,15 @@ class BrowserPanel(QWidget):
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
-        self._current_translation = "NIV"
+        self._current_translation = "AMP"
+        self._current_book = None
+        self._current_chapter = None
         self._selected_verse = None
         self._translation_buttons: dict[str, TranslationButton] = {}
 
+        # Lock to on-device translations only
         if translations is None:
-            translations = [
-                "AMP", "ESV", "KJV", "NIV", "NKJV", "NLT", "MSG", "NASB",
-                "ASV", "BBE", "CSB", "CEV", "GNV", "GW", "HCSB", "ICB", 
-                "ISV", "LEB", "MEV", "NET", "RSV", "WEB", "YLT"
-            ]
+            translations = list(AVAILABLE_TRANSLATIONS)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -189,7 +194,7 @@ class BrowserPanel(QWidget):
 
         toolbar_layout.addWidget(scroll_area, 1)
 
-        # Add translation button
+        # Add translation button — links to https://biblelist.netlify.app/
         add_btn = QPushButton("+ Add")
         add_btn.setStyleSheet(f"""
             QPushButton {{
@@ -204,6 +209,8 @@ class BrowserPanel(QWidget):
                 color: {WHITE};
             }}
         """)
+        add_btn.setToolTip("Download additional Bible translations from biblelist.netlify.app")
+        add_btn.clicked.connect(lambda: webbrowser.open("https://biblelist.netlify.app/"))
         toolbar_layout.addWidget(add_btn)
 
         # Nav input container (bg-black/40 px-2 py-1 gap-2 border-l border-white/10)
@@ -244,6 +251,7 @@ class BrowserPanel(QWidget):
         # Mode 0: Predictive Input
         self.predictive_input = PredictiveScriptureInput()
         self.predictive_input.setStyleSheet("background: transparent; border: none;") # Override floating pill styles
+        self.predictive_input.navigate_requested.connect(self._on_navigate_requested)
         self.nav_stack.addWidget(self.predictive_input)
         
         # Mode 1: Natural Language Search
@@ -257,6 +265,7 @@ class BrowserPanel(QWidget):
                 font-size: 11px;
             }}
         """)
+        self.search_input.returnPressed.connect(self._on_search_submitted)
         self.nav_stack.addWidget(self.search_input)
         
         nav_layout.addWidget(self.nav_stack, 1)
@@ -282,16 +291,72 @@ class BrowserPanel(QWidget):
         self.verse_list.clear()
         for i, v in enumerate(verses):
             row = VerseRow(v["chapter"], v["verse"], v["text"], i % 2 == 0)
+            row.clicked.connect(self._on_verse_clicked)
+            row.double_clicked.connect(self._on_verse_double_clicked)
             item = QListWidgetItem()
             item.setSizeHint(row.sizeHint())
             self.verse_list.addItem(item)
             self.verse_list.setItemWidget(item, row)
 
+    def _on_navigate_requested(self, book: str, chapter: int, verse: int):
+        """Handle predictive input navigation → query bible.db and display."""
+        self._current_book = book
+        self._current_chapter = chapter
+        
+        verses = get_chapter(self._current_translation, book, chapter)
+        if verses:
+            self.load_verses(verses)
+            logger.info(f"Loaded {len(verses)} verses: {book} {chapter} [{self._current_translation}]")
+            
+            # Scroll to the requested verse if specified
+            if verse > 1:
+                for i in range(self.verse_list.count()):
+                    widget = self.verse_list.itemWidget(self.verse_list.item(i))
+                    if widget and widget.verse_data.get("verse") == verse:
+                        self.verse_list.scrollToItem(self.verse_list.item(i))
+                        widget.set_selected(True)
+                        self._selected_verse = widget.verse_data
+                        break
+        else:
+            logger.warning(f"No verses found for {book} {chapter} [{self._current_translation}]")
+
+    def _on_search_submitted(self):
+        """Handle natural language search via FTS/LIKE on bible.db."""
+        query = self.search_input.text().strip()
+        if not query:
+            return
+        
+        results = search_verses_text(query, self._current_translation, limit=30)
+        if results:
+            self.load_verses(results)
+            logger.info(f"Search '{query}' returned {len(results)} results")
+        else:
+            self.verse_list.clear()
+            logger.info(f"Search '{query}' returned no results")
+
+    def _on_verse_clicked(self, verse_data: dict):
+        """Single click selects a verse for preview."""
+        self._selected_verse = verse_data
+        # Reset all verse row selections
+        for i in range(self.verse_list.count()):
+            widget = self.verse_list.itemWidget(self.verse_list.item(i))
+            if isinstance(widget, VerseRow):
+                widget.set_selected(widget.verse_data == verse_data)
+
+    def _on_verse_double_clicked(self, verse_data: dict):
+        """Double click broadcasts the verse."""
+        self._selected_verse = verse_data
+        self.broadcast_in_version.emit(self._current_translation)
+
     def _on_translation_single_click(self, abbrev: str):
-        """Switch browse view to that version (no broadcast)."""
+        """Switch browse view to that version and re-fetch current chapter."""
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        
+        # Re-fetch the current chapter in the new translation
+        if self._current_book and self._current_chapter:
+            self._on_navigate_requested(self._current_book, self._current_chapter, 1)
 
     def _on_translation_double_click(self, abbrev: str):
         """Broadcast currently-selected verse in that version."""
@@ -312,3 +377,11 @@ class BrowserPanel(QWidget):
             self.mode_toggle_btn.setIcon(self._icon_search)
             self.mode_toggle_btn.setToolTip("Switch to Natural Language Search")
             self.predictive_input.reset()
+    
+    def get_selected_verse(self) -> dict | None:
+        """Return the currently selected verse data, if any."""
+        return self._selected_verse
+    
+    def get_current_translation(self) -> str:
+        """Return the currently active translation abbreviation."""
+        return self._current_translation
