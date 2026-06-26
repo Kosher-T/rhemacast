@@ -106,6 +106,13 @@ class BookInput(QLineEdit):
         self._typed = ""
         self.clear()
 
+    def set_value(self, text: str):
+        """Programmatically set the book name (no signals emitted)."""
+        self._typed = text
+        self.setText(text)
+        # Select the full text so it's visually clear this is set
+        self.selectAll()
+
 
 class NumericInput(QLineEdit):
     """Simple numeric-only input for chapter or verse."""
@@ -142,6 +149,10 @@ class NumericInput(QLineEdit):
         if text and text.isdigit():
             super().keyPressEvent(event)
         # else: silently ignore
+
+    def set_value(self, value: int):
+        """Programmatically set the numeric value (no signals emitted)."""
+        self.setText(str(value))
 
 
 class PredictiveScriptureInput(QWidget):
@@ -224,3 +235,12 @@ class PredictiveScriptureInput(QWidget):
         self.chapter_input.clear()
         self.verse_input.clear()
         self.book_input.setFocus()
+
+    def set_values(self, book: str, chapter: int, verse: int):
+        """
+        Programmatically set all three fields without emitting navigate_requested.
+        Used by BrowserPanel to reflect the currently highlighted verse.
+        """
+        self.book_input.set_value(book)
+        self.chapter_input.set_value(chapter)
+        self.verse_input.set_value(verse)

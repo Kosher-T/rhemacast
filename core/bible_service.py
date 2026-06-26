@@ -71,6 +71,31 @@ def get_chapter(version: str, book: str, chapter: int) -> List[Dict]:
         return []
 
 
+def get_all_verses(version: str) -> List[Dict]:
+    """
+    Retrieve the entire bible for a given translation in canonical order.
+    Returns a list of dicts with keys: book, chapter, verse, text.
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.execute(
+            "SELECT book, chapter, verse_num, text FROM verses "
+            "WHERE version = ? "
+            "ORDER BY id ASC",
+            (version.upper(),)
+        )
+        results = [
+            {"book": row["book"], "chapter": row["chapter"],
+             "verse": row["verse_num"], "text": row["text"]}
+            for row in cursor.fetchall()
+        ]
+        conn.close()
+        return results
+    except Exception as e:
+        logger.error(f"Failed to query all verses: {e}")
+        return []
+
+
 def get_verse(version: str, book: str, chapter: int, verse: int) -> Optional[Dict]:
     """Retrieve a single verse."""
     try:
