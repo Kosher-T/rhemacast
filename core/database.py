@@ -159,3 +159,45 @@ def get_false_positives(session_id: str) -> list:
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return results
+
+
+# ── Settings Persistence ──
+
+def get_setting(key: str, default: str = None) -> str | None:
+    """Retrieve a setting value by key. Returns default if not found."""
+    try:
+        conn = get_connection()
+        cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row["value"] if row else default
+    except Exception:
+        return default
+
+
+def set_setting(key: str, value: str) -> bool:
+    """Insert or update a setting value. Returns True on success."""
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def delete_setting(key: str) -> bool:
+    """Delete a setting by key. Returns True on success."""
+    try:
+        conn = get_connection()
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False

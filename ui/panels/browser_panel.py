@@ -25,6 +25,7 @@ from ui.styles import (
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
 from core.bible_service import AVAILABLE_TRANSLATIONS, get_chapter, search_verses_text
+from core.database import get_setting, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,13 @@ class BrowserPanel(QWidget):
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
-        self._current_translation = "AMP"
+        
+        # Load last used translation from settings, default to AMP
+        saved_translation = get_setting("bible.last_translation", "AMP")
+        if saved_translation not in AVAILABLE_TRANSLATIONS:
+            saved_translation = "AMP"
+        self._current_translation = saved_translation
+        
         self._current_book = None
         self._current_chapter = None
         self._selected_verse = None
@@ -286,6 +293,18 @@ class BrowserPanel(QWidget):
         """)
         layout.addWidget(self.verse_list)
 
+        # Load default chapter on startup (Genesis 1)
+        self._load_initial_chapter()
+
+    def _load_initial_chapter(self):
+        """Load Genesis 1 in the current translation on startup."""
+        self._current_book = "Genesis"
+        self._current_chapter = 1
+        verses = get_chapter(self._current_translation, "Genesis", 1)
+        if verses:
+            self.load_verses(verses)
+            logger.info(f"Loaded initial chapter: Genesis 1 [{self._current_translation}]")
+
     def load_verses(self, verses: list):
         """Load a list of verse dicts into the browser display."""
         self.verse_list.clear()
@@ -353,6 +372,9 @@ class BrowserPanel(QWidget):
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        
+        # Persist the selected translation
+        set_setting("bible.last_translation", abbrev)
         
         # Re-fetch the current chapter in the new translation
         if self._current_book and self._current_chapter:

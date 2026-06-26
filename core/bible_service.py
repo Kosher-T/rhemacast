@@ -17,8 +17,8 @@ _BIBLE_DB_PATH = os.path.join(
     "data", "bible", "bible.db"
 )
 
-# Available on-device translations (must match what's in bible.db)
-AVAILABLE_TRANSLATIONS = ["AMP", "ESV", "KJV", "NIV", "NKJV", "NLT"]
+# Default translations (fallback if bible.db query fails)
+_DEFAULT_TRANSLATIONS = ["AMP", "ESV", "KJV", "NIV", "NKJV", "NLT"]
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -26,6 +26,25 @@ def _get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{_BIBLE_DB_PATH}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_available_translations() -> List[str]:
+    """Return the list of translations available in bible.db, dynamically."""
+    try:
+        conn = _get_connection()
+        cursor = conn.execute(
+            "SELECT DISTINCT version FROM verses ORDER BY version ASC"
+        )
+        translations = [row["version"] for row in cursor.fetchall()]
+        conn.close()
+        return translations if translations else _DEFAULT_TRANSLATIONS
+    except Exception as e:
+        logger.error(f"Failed to query available translations: {e}")
+        return _DEFAULT_TRANSLATIONS
+
+
+# Backward-compatible: module-level constant populated lazily
+AVAILABLE_TRANSLATIONS = get_available_translations()
 
 
 def get_chapter(version: str, book: str, chapter: int) -> List[Dict]:
