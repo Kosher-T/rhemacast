@@ -36,6 +36,29 @@ from core.database import get_setting, set_setting
 
 logger = logging.getLogger(__name__)
 
+BOOK_ABBREV = {
+    "Genesis": "Gen", "Exodus": "Exod", "Leviticus": "Lev", "Numbers": "Num",
+    "Deuteronomy": "Deut", "Joshua": "Josh", "Judges": "Judg", "Ruth": "Ruth",
+    "1 Samuel": "1 Sam", "2 Samuel": "2 Sam", "1 Kings": "1 Kgs", "2 Kings": "2 Kgs",
+    "1 Chronicles": "1 Chr", "2 Chronicles": "2 Chr", "Ezra": "Ezra",
+    "Nehemiah": "Neh", "Esther": "Esth", "Job": "Job", "Psalms": "Ps",
+    "Proverbs": "Prov", "Ecclesiastes": "Eccl", "Song of Solomon": "Song",
+    "Isaiah": "Isa", "Jeremiah": "Jer", "Lamentations": "Lam",
+    "Ezekiel": "Ezek", "Daniel": "Dan", "Hosea": "Hos", "Joel": "Joel",
+    "Amos": "Amos", "Obadiah": "Obad", "Jonah": "Jonah", "Micah": "Mic",
+    "Nahum": "Nah", "Habakkuk": "Hab", "Zephaniah": "Zeph", "Haggai": "Hag",
+    "Zechariah": "Zech", "Malachi": "Mal", "Matthew": "Matt", "Mark": "Mark",
+    "Luke": "Luke", "John": "John", "Acts": "Acts", "Romans": "Rom",
+    "1 Corinthians": "1 Cor", "2 Corinthians": "2 Cor", "Galatians": "Gal",
+    "Ephesians": "Eph", "Philippians": "Phil", "Colossians": "Col",
+    "1 Thessalonians": "1 Thess", "2 Thessalonians": "2 Thess",
+    "1 Timothy": "1 Tim", "2 Timothy": "2 Tim", "Titus": "Titus",
+    "Philemon": "Phlm", "Hebrews": "Heb", "James": "Jas",
+    "1 Peter": "1 Pet", "2 Peter": "2 Pet", "1 John": "1 John",
+    "2 John": "2 John", "3 John": "3 John", "Jude": "Jude",
+    "Revelation": "Rev",
+}
+
 # Fixed height for each verse row (pixels)
 _ROW_HEIGHT = 32
 
@@ -144,10 +167,11 @@ class VerseDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect.x(), option.rect.y(), 2, option.rect.height(),
                              QColor(BLUE_500))
 
-        # Reference text (chapter:verse)
-        ref = f"{verse['chapter']}:{verse['verse']}"
+        # Reference text (Book chapter:verse)
+        abbrev = BOOK_ABBREV.get(verse['book'], verse['book'][:4])
+        ref = f"{abbrev} {verse['chapter']}:{verse['verse']}"
         ref_rect = option.rect.adjusted(8, 0, 0, 0)
-        ref_rect.setWidth(32)
+        ref_rect.setWidth(60)
         painter.setPen(QPen(QColor(BLUE_500)))
         font = painter.font()
         font.setPixelSize(10)
@@ -156,7 +180,7 @@ class VerseDelegate(QStyledItemDelegate):
         painter.drawText(ref_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ref)
 
         # Verse text
-        text_rect = option.rect.adjusted(50, 0, -8, 0)
+        text_rect = option.rect.adjusted(68, 0, -8, 0)
         painter.setPen(QPen(QColor(SLATE_300)))
         font.setPixelSize(12)
         font.setBold(False)
