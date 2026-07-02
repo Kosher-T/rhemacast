@@ -27,3 +27,4 @@ __pycache__/
 data/vosk-model-small-en-us
 .env
 .svg
+AGENTS.md
