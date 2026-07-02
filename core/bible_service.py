@@ -154,6 +154,23 @@ def get_chapter_count(version: str, book: str) -> int:
         return 0
 
 
+def get_verse_count(version: str, book: str, chapter: int) -> int:
+    """Return the number of verses in a chapter."""
+    try:
+        conn = _get_connection()
+        cursor = conn.execute(
+            "SELECT MAX(verse_num) as max_v FROM verses "
+            "WHERE version = ? AND book = ? AND chapter = ?",
+            (version.upper(), book, chapter)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row["max_v"] if row and row["max_v"] else 0
+    except Exception as e:
+        logger.error(f"Failed to query verse count: {e}")
+        return 0
+
+
 def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> List[Dict]:
     """
     Simple FTS5 search on verse text within a specific translation.

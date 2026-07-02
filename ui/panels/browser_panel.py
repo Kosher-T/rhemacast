@@ -351,6 +351,7 @@ class BrowserPanel(QWidget):
         self.predictive_input = PredictiveScriptureInput()
         self.predictive_input.setStyleSheet("background: transparent; border: none;")
         self.predictive_input.navigate_requested.connect(self._on_navigate_requested)
+        self.predictive_input.set_translation(self._current_translation)
         self.nav_stack.addWidget(self.predictive_input)
 
         # Mode 1: Natural Language Search
@@ -365,6 +366,7 @@ class BrowserPanel(QWidget):
             }}
         """)
         self.search_input.returnPressed.connect(self._on_search_submitted)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
         self.nav_stack.addWidget(self.search_input)
 
         nav_layout.addWidget(self.nav_stack, 1)
@@ -475,7 +477,6 @@ class BrowserPanel(QWidget):
         """Handle predictive input navigation → scroll to and highlight the verse."""
         self._set_highlight(book, chapter, verse)
         self._scroll_to_highlight()
-        self._update_navigator()
 
     def _on_search_submitted(self):
         """Handle natural language search via FTS/LIKE on bible.db."""
@@ -485,20 +486,32 @@ class BrowserPanel(QWidget):
 
         results = search_verses_text(query, self._current_translation, limit=30)
         if results:
-            # Search results come back without 'book' in some paths, add if missing
             for r in results:
                 if "book" not in r:
                     r["book"] = self._highlighted_book
             self._model.load_all(results)
-            if results:
-                first = results[0]
-                self._set_highlight(first["book"], first["chapter"], first["verse"])
-                self._scroll_to_highlight()
-                self._update_navigator()
+            self.verse_list.scrollTo(self._model.index(0), QListView.ScrollHint.PositionAtTop)
             logger.info(f"Search '{query}' returned {len(results)} results")
         else:
             self._model.load_all([])
             logger.info(f"Search '{query}' returned no results")
+
+    def _on_search_text_changed(self, text: str):
+        """Live search on every keypress; restore Bible when empty."""
+        query = text.strip()
+        if not query:
+            self._load_bible()
+            return
+
+        results = search_verses_text(query, self._current_translation, limit=30)
+        if results:
+            for r in results:
+                if "book" not in r:
+                    r["book"] = self._highlighted_book
+            self._model.load_all(results)
+            self.verse_list.scrollTo(self._model.index(0), QListView.ScrollHint.PositionAtTop)
+        else:
+            self._model.load_all([])
 
     # ── Translation Switching ──────────────────────────────────────────────
 
@@ -507,6 +520,7 @@ class BrowserPanel(QWidget):
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        self.predictive_input.set_translation(abbrev)
 
         # Persist the selected translation
         set_setting("bible.last_translation", abbrev)
@@ -519,6 +533,7 @@ class BrowserPanel(QWidget):
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        self.predictive_input.set_translation(abbrev)
         set_setting("bible.last_translation", abbrev)
 
         # Reload bible in new translation, preserving highlighted verse
@@ -541,7 +556,12 @@ class BrowserPanel(QWidget):
             self.nav_stack.setCurrentIndex(0)
             self.mode_toggle_btn.setIcon(self._icon_search)
             self.mode_toggle_btn.setToolTip("Switch to Natural Language Search")
-            self.predictive_input.reset()
+            self.predictive_input.set_values(
+                self._highlighted_book,
+                self._highlighted_chapter,
+                self._highlighted_verse
+            )
+            self._load_bible()
 
     # ── Public Accessors ───────────────────────────────────────────────────
 

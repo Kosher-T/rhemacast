@@ -10,11 +10,12 @@ Predictive Scripture Input: Book | Chapter | Verse
 - Untyped suffix of the matched book name is highlighted (selected).
 """
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QLabel
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QLabel, QSizePolicy
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QKeyEvent, QMouseEvent
 
 from ui.styles import WHITE, BLUE_500, SLATE_500, SLATE_950, BORDER_SUBTLE
+from core.bible_service import get_chapter_count, get_verse_count
 
 # Canonical book ordering
 BIBLE_BOOKS = [
@@ -44,20 +45,44 @@ class BookInput(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setPlaceholderText("Book")
+        self.setTextMargins(0, 0, 0, 0)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.textChanged.connect(self._autosize)
         self._typed = ""
+        self._click_selected = False
+        self._focus_arrived = False
+        self._autosize()
+
+    def _autosize(self):
+        text = self.text() or self.placeholderText()
+        w = self.fontMetrics().horizontalAdvance(text) + 2
+        self.setFixedWidth(w)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        super().mousePressEvent(event)
+        self.selectAll()
+        self._click_selected = True
+        self._focus_arrived = True
+
+    def _on_focus_arrived(self):
+        self.setFocus()
+        self.selectAll()
+        self._focus_arrived = True
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         text = event.text()
 
-        if key == Qt.Key.Key_Space:
-            # Advance to chapter section
+        if key == Qt.Key.Key_Space or key == Qt.Key.Key_Right:
             if self.text().strip():
                 self.book_resolved.emit(self.text().strip())
                 self.advance_to_chapter.emit()
             return
 
         if key == Qt.Key.Key_Backspace:
+            if self._click_selected:
+                self._click_selected = False
+                return
             if self._typed:
                 self._typed = self._typed[:-1]
                 self._update_prediction()
@@ -69,19 +94,20 @@ class BookInput(QLineEdit):
                 self.advance_to_chapter.emit()
             return
 
-        # Accept alphanumeric characters only
         if not text or not (text.isalpha() or text.isdigit()):
             return
 
-        # Attempt to match
+        if self._click_selected or self._focus_arrived:
+            self._typed = ""
+            self._click_selected = False
+            self._focus_arrived = False
+
         candidate = self._typed + text
         match = self._find_match(candidate)
         if match:
             self._typed = candidate
             self.setText(match)
-            # Select the untyped suffix
             self.setSelection(len(self._typed), len(match) - len(self._typed))
-        # else: silently ignore invalid character
 
     def _find_match(self, prefix: str) -> str | None:
         """Find the first book matching the typed prefix (case-insensitive)."""
@@ -93,7 +119,7 @@ class BookInput(QLineEdit):
 
     def _update_prediction(self):
         if not self._typed:
-            self.clear()
+            self.selectAll()
             return
         match = self._find_match(self._typed)
         if match:
@@ -110,8 +136,6 @@ class BookInput(QLineEdit):
         """Programmatically set the book name (no signals emitted)."""
         self._typed = text
         self.setText(text)
-        # Select the full text so it's visually clear this is set
-        self.selectAll()
 
 
 class NumericInput(QLineEdit):
@@ -120,39 +144,88 @@ class NumericInput(QLineEdit):
     advance = pyqtSignal()
     retreat = pyqtSignal()
 
-    def __init__(self, placeholder: str, parent=None):
+    def __init__(self, placeholder: str, parent=None, auto_size=True, max_value=None):
         super().__init__(parent)
         self.setPlaceholderText(placeholder)
-        self.setMaximumWidth(60)
+        self.setTextMargins(0, 0, 0, 0)
+        self._click_selected = False
+        self._sel_start = 0
+        self._max_value = max_value
+        if auto_size:
+            self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self.textChanged.connect(self._autosize)
+            self._autosize()
+
+    def _autosize(self):
+        text = self.text() or self.placeholderText()
+        w = self.fontMetrics().horizontalAdvance(text) + 2
+        self.setFixedWidth(w)
+
+    def _sync_selection(self):
+        if self.text() and self._sel_start < len(self.text()):
+            self.setSelection(self._sel_start, len(self.text()) - self._sel_start)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        super().mousePressEvent(event)
+        self.selectAll()
+        self._click_selected = True
+        self._sel_start = 0
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         text = event.text()
 
-        if key == Qt.Key.Key_Space:
-            if self.text().strip():
-                self.advance.emit()
+        if key == Qt.Key.Key_Space or key == Qt.Key.Key_Right:
+            self.advance.emit()
+            return
+
+        if key == Qt.Key.Key_Left:
+            self.retreat.emit()
             return
 
         if key == Qt.Key.Key_Backspace:
+            if self._click_selected:
+                self._click_selected = False
+                if self.text():
+                    self.setText("1")
+                    self._sel_start = 0
+                    self.retreat.emit()
+                else:
+                    self.retreat.emit()
+                return
             if not self.text():
                 self.retreat.emit()
                 return
-            super().keyPressEvent(event)
+            if self._sel_start > 0:
+                self._sel_start -= 1
+                self._sync_selection()
+            elif self._sel_start == 0:
+                self.setText("1")
+                self._sel_start = 0
+                self.retreat.emit()
             return
 
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.advance.emit()
             return
 
-        # Only accept digits
         if text and text.isdigit():
+            if self._max_value is not None:
+                max_val = self._max_value() if callable(self._max_value) else self._max_value
+                if max_val is not None:
+                    if self._sel_start < len(self.text()):
+                        candidate = text
+                    else:
+                        candidate = self.text() + text
+                    if int(candidate) > max_val:
+                        return
             super().keyPressEvent(event)
-        # else: silently ignore
+            self._sel_start = len(self.text())
 
     def set_value(self, value: int):
         """Programmatically set the numeric value (no signals emitted)."""
         self.setText(str(value))
+        self._sel_start = len(self.text())
 
 
 class PredictiveScriptureInput(QWidget):
@@ -165,6 +238,9 @@ class PredictiveScriptureInput(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self._translation = "KJV"
+        self._live_nav_suppressed = False
 
         self.setObjectName("PredictiveContainer")
         self.setStyleSheet(f"""
@@ -185,38 +261,80 @@ class PredictiveScriptureInput(QWidget):
                 border: none;
                 font-size: 12px;
                 font-weight: 600;
-                padding: 4px;
+                padding: 0px;
+                margin: 0px;
             }}
         """
-        separator_style = f"color: {SLATE_500}; font-size: 14px; font-weight: 300; padding: 0 2px;"
+        separator_style = f"color: {SLATE_500}; font-size: 14px; font-weight: 300; padding: 0px; margin: 0px;"
 
         # Book
         self.book_input = BookInput()
         self.book_input.setStyleSheet(field_style)
-        self.book_input.advance_to_chapter.connect(lambda: self.chapter_input.setFocus())
-        layout.addWidget(self.book_input, 3)
+        self.book_input.advance_to_chapter.connect(self._advance_to_chapter)
+        self.book_input.textChanged.connect(self._try_live_navigate)
+        layout.addWidget(self.book_input)
 
-        sep1 = QLabel("|")
-        sep1.setStyleSheet(separator_style)
-        layout.addWidget(sep1)
+        layout.addSpacing(2)
 
-        # Chapter
-        self.chapter_input = NumericInput("Ch")
+        # Chapter — max validated against book
+        self.chapter_input = NumericInput("Ch", max_value=self._chapter_max)
         self.chapter_input.setStyleSheet(field_style)
-        self.chapter_input.advance.connect(lambda: self.verse_input.setFocus())
-        self.chapter_input.retreat.connect(lambda: self.book_input.setFocus())
-        layout.addWidget(self.chapter_input, 1)
+        self.chapter_input.advance.connect(self._advance_to_verse)
+        self.chapter_input.retreat.connect(self.book_input._on_focus_arrived)
+        self.chapter_input.textChanged.connect(self._try_live_navigate)
+        layout.addWidget(self.chapter_input)
+
+        layout.addSpacing(1)
 
         sep2 = QLabel(":")
         sep2.setStyleSheet(separator_style)
         layout.addWidget(sep2)
 
-        # Verse
-        self.verse_input = NumericInput("Vs")
+        layout.addSpacing(2)
+
+        # Verse — max validated against book:chapter
+        self.verse_input = NumericInput("Vs", auto_size=False, max_value=self._verse_max)
         self.verse_input.setStyleSheet(field_style)
+        self.verse_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.verse_input.advance.connect(self._on_navigate)
-        self.verse_input.retreat.connect(lambda: self.chapter_input.setFocus())
-        layout.addWidget(self.verse_input, 1)
+        self.verse_input.retreat.connect(self._retreat_to_chapter)
+        self.verse_input.textChanged.connect(self._try_live_navigate)
+        layout.addWidget(self.verse_input)
+
+    def _chapter_max(self):
+        book = self.book_input.text().strip()
+        if not book:
+            return None
+        return get_chapter_count(self._translation, book) or None
+
+    def _verse_max(self):
+        book = self.book_input.text().strip()
+        chapter = self.chapter_input.text().strip()
+        if not book or not chapter:
+            return None
+        return get_verse_count(self._translation, book, int(chapter)) or None
+
+    def _advance_to_chapter(self):
+        self.chapter_input.set_value(1)
+        self.chapter_input._sel_start = 0
+        self.verse_input.set_value(1)
+        self.verse_input._sel_start = 0
+        self.chapter_input.setFocus()
+        self.chapter_input.selectAll()
+
+    def _advance_to_verse(self):
+        self.verse_input.set_value(1)
+        self.verse_input._sel_start = 0
+        self.verse_input.setFocus()
+        self.verse_input.selectAll()
+
+    def _retreat_to_chapter(self):
+        self.chapter_input.setFocus()
+        self.chapter_input.selectAll()
+        self.chapter_input._click_selected = True
+
+    def set_translation(self, translation: str):
+        self._translation = translation
 
     def _on_navigate(self):
         book = self.book_input.text().strip()
@@ -224,6 +342,20 @@ class PredictiveScriptureInput(QWidget):
         verse = self.verse_input.text().strip()
 
         if book and chapter:
+            self.navigate_requested.emit(
+                book,
+                int(chapter) if chapter else 1,
+                int(verse) if verse else 1
+            )
+
+    def _try_live_navigate(self):
+        if self._live_nav_suppressed:
+            return
+        book = self.book_input.text().strip()
+        chapter = self.chapter_input.text().strip()
+        verse = self.verse_input.text().strip()
+
+        if book and book in BIBLE_BOOKS and chapter:
             self.navigate_requested.emit(
                 book,
                 int(chapter) if chapter else 1,
@@ -241,6 +373,8 @@ class PredictiveScriptureInput(QWidget):
         Programmatically set all three fields without emitting navigate_requested.
         Used by BrowserPanel to reflect the currently highlighted verse.
         """
+        self._live_nav_suppressed = True
         self.book_input.set_value(book)
         self.chapter_input.set_value(chapter)
         self.verse_input.set_value(verse)
+        self._live_nav_suppressed = False
