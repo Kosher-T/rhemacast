@@ -27,6 +27,7 @@ from ui.panels.queue_panel import QueuePanel
 from ui.panels.browser_panel import BrowserPanel
 from ui.panels.stt_panel import STTPanel
 from ui.widgets.aspect_ratio import AspectRatioWidget
+from core.bible_service import get_display_name
 from ui.styles import (
     MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
     RED_500, WHITE, SLATE_950, BORDER_SUBTLE
@@ -159,6 +160,7 @@ class PresentationTab(QWidget):
         self._current_display = None      # Currently displayed verse dict
         self._last_cleared_display = None  # Last verse before clear (for recall)
         self._is_cleared = True
+        self._current_theme = "default"   # Active display theme
         
         # Schedule navigation index
         self._schedule_index = -1
@@ -233,6 +235,9 @@ class PresentationTab(QWidget):
         # Queue panel: "Show" button → broadcast verse to display
         self.queue_panel.display_requested.connect(self._on_display_verse)
         
+        # Queue panel: theme selection → update live display
+        self.queue_panel.theme_changed.connect(self._on_theme_changed)
+        
         # Live output: clear/recall toggle
         self.live_output.clear_recall.connect(self._on_clear_recall)
         
@@ -257,7 +262,8 @@ class PresentationTab(QWidget):
         chapter = data.get("chapter", "")
         verse_num = data.get("verse_num", "")
         version = data.get("version", "")
-        ref = f"[{version}] {book} {chapter}:{verse_num}"
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+        reference = f"{book} {chapter}:{verse_num}"
         
         # Update local display state
         self._current_display = data
@@ -271,15 +277,18 @@ class PresentationTab(QWidget):
         self.schedule_panel.add_item(ref, version, verse_text)
         
         # Broadcast via WebSocket
+        from core.theme_loader import get_theme
         self._broadcast_to_ws({
             "action": "display",
             "text": verse_text,
             "ref": ref,
-            "translation": version,
+            "reference": reference,
+            "translation": get_display_name(version),
             "book": book,
             "chapter": str(chapter),
             "verse": str(verse_num),
-            "theme": "default"
+            "theme": self._current_theme,
+            "theme_data": get_theme(self._current_theme)
         })
         
         logger.info(f"Displaying: {ref}")
@@ -291,7 +300,8 @@ class PresentationTab(QWidget):
             return
         
         book = self.browser_panel._current_book or ""
-        ref = f"[{version}] {book} {verse_data['chapter']}:{verse_data['verse']}"
+        ref = f"[{get_display_name(version)}] {book} {verse_data['chapter']}:{verse_data['verse']}"
+        reference = f"{book} {verse_data['chapter']}:{verse_data['verse']}"
         text = verse_data.get("text", "")
         
         self._current_display = {
@@ -307,15 +317,18 @@ class PresentationTab(QWidget):
         self.stt_panel.update_preview(text, ref)
         self.schedule_panel.add_item(ref, version, text)
         
+        from core.theme_loader import get_theme
         self._broadcast_to_ws({
             "action": "display",
             "text": text,
             "ref": ref,
-            "translation": version,
+            "reference": reference,
+            "translation": get_display_name(version),
             "book": book,
             "chapter": str(verse_data["chapter"]),
             "verse": str(verse_data["verse"]),
-            "theme": "default"
+            "theme": self._current_theme,
+            "theme_data": get_theme(self._current_theme)
         })
         
         logger.info(f"Browser broadcast: {ref}")
@@ -338,6 +351,14 @@ class PresentationTab(QWidget):
             # Recall the last cleared verse
             self._on_display_verse(self._last_cleared_display)
             logger.info("Display recalled")
+
+    def _on_theme_changed(self, theme_name: str):
+        """Operator selected a new display theme — re-broadcast current verse with new theme."""
+        self._current_theme = theme_name
+        if self._current_display:
+            # Re-display the current verse with the new theme
+            self._on_display_verse(self._current_display)
+        logger.info(f"Theme changed to: {theme_name}")
 
     def _on_prev_verse(self):
         """Navigate to the previous item in the schedule."""
@@ -368,18 +389,24 @@ class PresentationTab(QWidget):
         text = item.get("text", "")
         version = item.get("translation", "")
         
+        # Parse reference from "[VERSION] Book Chapter:Verse" format
+        reference = ref.split("] ", 1)[1] if "] " in ref else ref
+        
         self._current_display = item
         self._is_cleared = False
         
         self.live_output.set_live_text(text, ref)
         self.stt_panel.update_preview(text, ref)
         
+        from core.theme_loader import get_theme
         self._broadcast_to_ws({
             "action": "display",
             "text": text,
             "ref": ref,
-            "translation": version,
-            "theme": item.get("theme", "default")
+            "reference": reference,
+            "translation": get_display_name(version) if version else "",
+            "theme": item.get("theme", "default"),
+            "theme_data": get_theme(item.get("theme", "default"))
         })
 
     def _on_start_transcription(self):

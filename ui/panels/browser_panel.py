@@ -10,17 +10,18 @@ so only visible rows are rendered. A verse is always highlighted, and
 the predictive navigator always reflects that verse's book/chapter/verse.
 """
 
+import json
 import os
-import webbrowser
 import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListView, QLineEdit, QFrame, QScrollArea, QStackedWidget,
-    QStyleOptionViewItem, QStyledItemDelegate, QStyle
+    QStyleOptionViewItem, QStyledItemDelegate, QStyle, QMessageBox,
+    QMenu, QInputDialog
 )
-from PyQt6.QtGui import QIcon, QWheelEvent, QFontMetrics
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel
+from PyQt6.QtGui import QIcon, QWheelEvent, QFontMetrics, QDrag, QAction, QCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint
 
 from ui.styles import (
     PANEL_BODY_STYLE, SLATE_300, SLATE_500, BLUE_500,
@@ -29,8 +30,11 @@ from ui.styles import (
     BORDER_SUBTLE, SLATE_950, WHITE
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
+from ui.dialogs.add_translation_dialog import AddTranslationDialog
 from core.bible_service import (
-    AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses, search_verses_text
+    AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses, search_verses_text,
+    hybrid_search, import_translation_file, refresh_available_translations,
+    get_display_name, set_display_name, get_translation_order, set_translation_order
 )
 from core.database import get_setting, set_setting
 
@@ -123,6 +127,38 @@ class VerseListModel(QAbstractListModel):
         return -1
 
 
+class _VerseListView(QListView):
+    """QListView that snaps wheel-scroll to row boundaries.
+
+    Without this, the default pixel-based scrolling causes the viewport
+    to alternate between landing on one row and skipping to the next,
+    because the pixel step is not an exact multiple of _ROW_HEIGHT.
+    """
+
+    def wheelEvent(self, event: QWheelEvent):
+        vbar = self.verticalScrollBar()
+        if not vbar or vbar.maximum() == vbar.minimum():
+            super().wheelEvent(event)
+            return
+
+        # Ctrl+wheel = jump half viewport (leave as-is)
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+
+        # Scroll exactly one row per wheel notch.
+        # With uniform item sizes, scrollbar value = row index (not pixels).
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+
+        direction = -1 if delta > 0 else 1
+        current_row = vbar.value()
+        new_row = max(0, current_row + direction)
+        vbar.setValue(new_row)
+        event.accept()
+
+
 class VerseDelegate(QStyledItemDelegate):
     """
     Custom delegate that renders each verse row without needing a
@@ -197,27 +233,190 @@ class VerseDelegate(QStyledItemDelegate):
 
 # ── Translation Button ─────────────────────────────────────────────────────
 
+_DRAG_THRESHOLD = 5  # pixels before drag starts
+
+
 class TranslationButton(QPushButton):
-    """A single translation button in the translation bar."""
+    """A single translation button in the translation bar.
+
+    Supports:
+      - Single-click: browse in this translation
+      - Double-click: broadcast in this translation
+      - Right-click: context menu with Rename
+      - Drag: reorder by dragging to a new position
+    """
 
     single_clicked = pyqtSignal(str)
     double_clicked_signal = pyqtSignal(str)
+    rename_requested = pyqtSignal(str)  # canonical
+    sort_requested = pyqtSignal(str)    # "az" or "za"
 
-    def __init__(self, abbrev: str, parent=None):
-        super().__init__(abbrev, parent)
-        self.abbrev = abbrev
+    def __init__(self, canonical: str, display_name: str = None, parent=None):
+        self.canonical = canonical
+        self.display_name = display_name or canonical
+        super().__init__(self.display_name, parent)
         self._active = False
+        self._drag_start_pos: QPoint | None = None
         self.setStyleSheet(TRANSLATION_BTN_INACTIVE)
-        self.setToolTip(f"Single-click: browse in {abbrev}. Double-click: broadcast in {abbrev}.")
-        self.clicked.connect(lambda: self.single_clicked.emit(self.abbrev))
+        self._update_tooltip()
+        self.clicked.connect(lambda: self.single_clicked.emit(self.canonical))
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+    def _update_tooltip(self):
+        if self.display_name != self.canonical:
+            self.setToolTip(
+                f"{self.display_name} ({self.canonical})\n"
+                f"Single-click: browse  |  Double-click: broadcast\n"
+                f"Right-click: rename  |  Drag: reorder"
+            )
+        else:
+            self.setToolTip(
+                f"Single-click: browse in {self.canonical}\n"
+                f"Double-click: broadcast in {self.canonical}\n"
+                f"Right-click: rename  |  Drag: reorder"
+            )
 
     def mouseDoubleClickEvent(self, event):
-        self.double_clicked_signal.emit(self.abbrev)
+        self.double_clicked_signal.emit(self.canonical)
         super().mouseDoubleClickEvent(event)
 
     def set_active(self, active: bool):
         self._active = active
         self.setStyleSheet(TRANSLATION_BTN_ACTIVE if active else TRANSLATION_BTN_INACTIVE)
+
+    # ── Context Menu (Rename) ────────────────────────────────────────────
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename...")
+        rename_action.triggered.connect(self._on_rename)
+        menu.addSeparator()
+        sort_az = menu.addAction("Sort A \u2192 Z")
+        sort_az.triggered.connect(lambda: self.sort_requested.emit("az"))
+        sort_za = menu.addAction("Sort Z \u2192 A")
+        sort_za.triggered.connect(lambda: self.sort_requested.emit("za"))
+        menu.exec(self.mapToGlobal(pos))
+
+    def _on_rename(self):
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Translation",
+            f"Display name for {self.canonical}:",
+            text=self.display_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            QMessageBox.warning(self, "Invalid Name", "Display name cannot be empty.")
+            return
+        if len(new_name) > 20:
+            QMessageBox.warning(self, "Invalid Name", "Display name must be 20 characters or fewer.")
+            return
+        # Check for duplicates (allow keeping the same name)
+        if new_name != self.display_name:
+            self.display_name = new_name
+            self.setText(new_name)
+            self._update_tooltip()
+            set_display_name(self.canonical, new_name)
+            self.rename_requested.emit(self.canonical)
+
+    # ── Drag & Drop ──────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start_pos is None:
+            super().mouseMoveEvent(event)
+            return
+
+        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() > _DRAG_THRESHOLD:
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData("application/x-translation-canonical", self.canonical.encode())
+            drag.setMimeData(mime)
+            drag.setPixmap(self.grab())
+            drag.setHotSpot(event.position().toPoint())
+            drag.exec(Qt.DropAction.MoveAction)
+            self._drag_start_pos = None
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
+
+
+def _reorder_in_layout(layout, source_canonical: str, target_canonical: str):
+    """Move source_canonical before target_canonical in a QHBoxLayout."""
+    widgets = []
+    stretch_item = None
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item.widget() and isinstance(item.widget(), TranslationButton):
+            widgets.append(item.widget())
+        elif item.spacerItem():
+            stretch_item = item
+
+    # Find positions
+    src_idx = next((i for i, w in enumerate(widgets) if w.canonical == source_canonical), None)
+    tgt_idx = next((i for i, w in enumerate(widgets) if w.canonical == target_canonical), None)
+    if src_idx is None or tgt_idx is None or src_idx == tgt_idx:
+        return
+
+    # Reorder
+    moved = widgets.pop(src_idx)
+    new_tgt = widgets.index(next(w for w in widgets if w.canonical == target_canonical))
+    widgets.insert(new_tgt, moved)
+
+    # Remove stretch and all widgets from layout
+    if stretch_item:
+        layout.removeItem(stretch_item)
+    for w in list(widgets):
+        layout.removeWidget(w)
+
+    # Re-add in new order, then stretch at end
+    for w in widgets:
+        layout.addWidget(w)
+    if stretch_item:
+        layout.addItem(stretch_item)
+
+
+class _DropQWidget(QWidget):
+    """QWidget subclass that accepts drag-and-drop for translation reordering."""
+
+    reorder_done = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-translation-canonical"):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-translation-canonical"):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-translation-canonical"):
+            source_canonical = event.mimeData().data("application/x-translation-canonical").data().decode()
+            # Walk children to find the TranslationButton under cursor
+            target_btn = self.childAt(event.position().toPoint())
+            # childAt might return a non-button child; walk up to find the button
+            while target_btn and not isinstance(target_btn, TranslationButton):
+                target_btn = target_btn.parentWidget()
+            if isinstance(target_btn, TranslationButton) and target_btn.canonical != source_canonical:
+                layout = self.layout()
+                if layout:
+                    _reorder_in_layout(layout, source_canonical, target_btn.canonical)
+                    self.reorder_done.emit()
+            event.acceptProposedAction()
 
 
 # ── Browser Panel ──────────────────────────────────────────────────────────
@@ -244,9 +443,17 @@ class BrowserPanel(QWidget):
         self._highlighted_verse = 1
 
         self._translation_buttons: dict[str, TranslationButton] = {}
+        self._sort_mode: str | None = None  # None, "az", or "za"
 
         if translations is None:
-            translations = list(AVAILABLE_TRANSLATIONS)
+            # Load custom order from settings; fall back to alphabetical
+            saved_order = get_translation_order()
+            if saved_order:
+                # Filter to only versions that exist, append any new ones at end
+                translations = [v for v in saved_order if v in AVAILABLE_TRANSLATIONS]
+                translations += [v for v in AVAILABLE_TRANSLATIONS if v not in translations]
+            else:
+                translations = sorted(AVAILABLE_TRANSLATIONS)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -273,16 +480,20 @@ class BrowserPanel(QWidget):
             QScrollBar:horizontal { height: 0px; }
         """)
 
-        trans_area = QWidget()
+        trans_area = _DropQWidget()
         trans_area.setStyleSheet("background: transparent;")
+        trans_area.reorder_done.connect(self._save_translation_order)
         trans_layout = QHBoxLayout(trans_area)
         trans_layout.setContentsMargins(0, 0, 0, 0)
         trans_layout.setSpacing(6)
 
         for abbrev in translations:
-            btn = TranslationButton(abbrev)
+            display = get_display_name(abbrev)
+            btn = TranslationButton(abbrev, display)
             btn.single_clicked.connect(self._on_translation_single_click)
             btn.double_clicked_signal.connect(self._on_translation_double_click)
+            btn.sort_requested.connect(self._on_sort_translations)
+            btn.rename_requested.connect(lambda _: self._apply_sort())
             trans_layout.addWidget(btn)
             self._translation_buttons[abbrev] = btn
             if abbrev == self._current_translation:
@@ -294,8 +505,8 @@ class BrowserPanel(QWidget):
         toolbar_layout.addWidget(scroll_area, 1)
 
         # Add translation button
-        add_btn = QPushButton("+ Add")
-        add_btn.setStyleSheet(f"""
+        self._add_btn = QPushButton("+ Add")
+        self._add_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 color: {BLUE_500};
@@ -308,9 +519,9 @@ class BrowserPanel(QWidget):
                 color: {WHITE};
             }}
         """)
-        add_btn.setToolTip("Download additional Bible translations from biblelist.netlify.app")
-        add_btn.clicked.connect(lambda: webbrowser.open("https://biblelist.netlify.app/"))
-        toolbar_layout.addWidget(add_btn)
+        self._add_btn.setToolTip("Add a Bible translation from a file or download page")
+        self._add_btn.clicked.connect(self._on_add_translation)
+        toolbar_layout.addWidget(self._add_btn)
 
         # Nav input container
         nav_container = QWidget()
@@ -380,7 +591,7 @@ class BrowserPanel(QWidget):
         self._model = VerseListModel()
         self._delegate = VerseDelegate()
 
-        self.verse_list = QListView()
+        self.verse_list = _VerseListView()
         self.verse_list.setModel(self._model)
         self.verse_list.setItemDelegate(self._delegate)
         self.verse_list.setUniformItemSizes(True)
@@ -484,7 +695,7 @@ class BrowserPanel(QWidget):
         if not query:
             return
 
-        results = search_verses_text(query, self._current_translation, limit=30)
+        results = hybrid_search(query, self._current_translation, limit=30)
         if results:
             for r in results:
                 if "book" not in r:
@@ -503,7 +714,7 @@ class BrowserPanel(QWidget):
             self._load_bible()
             return
 
-        results = search_verses_text(query, self._current_translation, limit=30)
+        results = hybrid_search(query, self._current_translation, limit=30)
         if results:
             for r in results:
                 if "book" not in r:
@@ -514,6 +725,28 @@ class BrowserPanel(QWidget):
             self._model.load_all([])
 
     # ── Translation Switching ──────────────────────────────────────────────
+
+    def _save_translation_order(self):
+        """Persist the current button order to settings.
+
+        Called after drag-and-drop reordering — clears sort mode since
+        the user is now manually controlling order.
+        """
+        self._sort_mode = None  # manual drag overrides auto-sort
+
+        # Find the trans_layout by walking the toolbar's scroll area
+        for scroll in self.findChildren(QScrollArea):
+            widget = scroll.widget()
+            if widget and widget.layout():
+                layout = widget.layout()
+                order = []
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item and item.widget() and isinstance(item.widget(), TranslationButton):
+                        order.append(item.widget().canonical)
+                if order:
+                    set_translation_order(order)
+                return
 
     def _on_translation_single_click(self, abbrev: str):
         """Switch to that translation and navigate to the currently highlighted verse."""
@@ -541,6 +774,144 @@ class BrowserPanel(QWidget):
 
         # Push the highlighted verse to live display
         self.broadcast_in_version.emit(self._current_translation)
+
+    def _on_sort_translations(self, order: str):
+        """Sort translation buttons alphabetically by display name."""
+        self._sort_mode = order
+        self._apply_sort()
+
+    def _apply_sort(self):
+        """Re-apply the current _sort_mode to the translation bar.
+
+        Called after any mutation (rename, add, drag-drop) to enforce
+        the user's chosen sort order. If _sort_mode is None, does nothing.
+        """
+        if not self._sort_mode:
+            return
+
+        from core.bible_service import set_translation_order
+
+        # Find the translation layout
+        scroll_area = None
+        for child in self.findChildren(QScrollArea):
+            if hasattr(child, 'widget') and child.widget():
+                scroll_area = child
+                break
+        if not scroll_area:
+            return
+
+        trans_widget = scroll_area.widget()
+        if not trans_widget:
+            return
+        layout = trans_widget.layout()
+        if not layout:
+            return
+
+        # Gather all buttons and the stretch spacer
+        buttons = []
+        stretch_item = None
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item.widget() and isinstance(item.widget(), TranslationButton):
+                buttons.append(item.widget())
+            elif item.spacerItem():
+                stretch_item = item
+
+        # Sort by display name
+        reverse = (self._sort_mode == "za")
+        buttons.sort(key=lambda b: b.display_name.lower(), reverse=reverse)
+
+        # Remove stretch and all buttons from layout
+        if stretch_item:
+            layout.removeItem(stretch_item)
+        for btn in buttons:
+            layout.removeWidget(btn)
+
+        # Re-add in sorted order, then stretch at end
+        for btn in buttons:
+            layout.addWidget(btn)
+        if stretch_item:
+            layout.addItem(stretch_item)
+
+        # Persist the new order
+        new_order = [btn.canonical for btn in buttons]
+        set_translation_order(new_order)
+
+    # ── Add Translation ─────────────────────────────────────────────────────
+
+    def _on_add_translation(self):
+        """Show the Add Translation dialog and handle import if chosen."""
+        dialog = AddTranslationDialog(self)
+        result = dialog.exec()
+        if result != AddTranslationDialog.DialogCode.Accepted:
+            return
+
+        filepath = dialog.selected_path()
+        if not filepath:
+            return  # user chose "Visit Download Page" (already opened)
+
+        # Import the file in a disabled state
+        self._set_add_button_enabled(False)
+        try:
+            version = import_translation_file(filepath)
+            refresh_available_translations()
+            self._add_translation_button(version)
+            logger.info(f"Translation '{version}' imported successfully")
+        except Exception as e:
+            logger.error(f"Failed to import translation: {e}")
+            QMessageBox.critical(
+                self,
+                "Import Failed",
+                f"Could not import the file:\n\n{e}",
+            )
+        finally:
+            self._set_add_button_enabled(True)
+
+    def _set_add_button_enabled(self, enabled: bool):
+        """Enable/disable the +Add button."""
+        if not hasattr(self, '_add_btn') or self._add_btn is None:
+            return
+        self._add_btn.setEnabled(enabled)
+        self._add_btn.setText("+ Add" if enabled else "Importing...")
+
+    def _add_translation_button(self, abbrev: str):
+        """Dynamically add a new TranslationButton to the toolbar."""
+        if abbrev in self._translation_buttons:
+            return  # already exists
+
+        display = get_display_name(abbrev)
+        btn = TranslationButton(abbrev, display)
+        btn.single_clicked.connect(self._on_translation_single_click)
+        btn.double_clicked_signal.connect(self._on_translation_double_click)
+        btn.sort_requested.connect(self._on_sort_translations)
+        btn.rename_requested.connect(lambda _: self._apply_sort())
+        btn.sort_requested.connect(self._on_sort_translations)
+
+        # Find the scroll area's trans_layout and insert before the stretch
+        scroll_area = None
+        for child in self.findChildren(QScrollArea):
+            if hasattr(child, 'widget') and child.widget():
+                scroll_area = child
+                break
+
+        if scroll_area:
+            trans_widget = scroll_area.widget()
+            if trans_widget:
+                layout = trans_widget.layout()
+                # Insert at the end (before the stretch)
+                count = layout.count()
+                # Remove the stretch, add button, re-add stretch
+                stretch_item = None
+                for i in range(count - 1, -1, -1):
+                    item = layout.itemAt(i)
+                    if item and item.spacerItem():
+                        stretch_item = layout.takeAt(i)
+                        break
+                layout.addWidget(btn)
+                if stretch_item:
+                    layout.addItem(stretch_item)
+
+        self._translation_buttons[abbrev] = btn
 
     # ── Mode Toggle ────────────────────────────────────────────────────────
 

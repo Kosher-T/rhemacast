@@ -30,62 +30,15 @@ import hashlib
 import json
 import os
 import pickle
-import re
 import sqlite3
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 
-
-# ─── Normalization ────────────────────────────────────────────────────────────
-
-# Custom stop-words — deliberately small set to preserve theological vocabulary.
-# Archaic words (thou, hath, unto, thy, ye, hast, doth, etc.) are RETAINED
-# because they are semantically meaningful for Bible search.
-STOP_WORDS = frozenset({"the", "is", "a", "and", "to", "of", "in", "that"})
-
-# Regex: hyphens (‐‑‒–—―), slashes, colons → space
-_PUNCTUATION_TO_SPACE = re.compile(r"[\-\u2010\u2011\u2012\u2013\u2014\u2015/:]")
-
-# Regex: strip all remaining non-alphanumeric except spaces
-_STRIP_NON_ALNUM = re.compile(r"[^a-z0-9\s]")
-
-
-def normalize_text(text: str) -> str:
-    """Normalize a verse text for BM25 tokenization.
-    
-    This function MUST be kept symmetric with the live search normalization
-    in core/search_engine.py. Any change here must be mirrored there.
-    
-    Returns:
-        Normalized, lowercased string with stop-words removed.
-    """
-    # 1. Strip apostrophes (before lowering, so we catch ' and ')
-    text = text.replace("'", "").replace("\u2019", "").replace("\u2018", "")
-    
-    # 2. Replace hyphens/dashes/slashes/colons with spaces
-    text = _PUNCTUATION_TO_SPACE.sub(" ", text)
-    
-    # 3. Lowercase
-    text = text.lower()
-    
-    # 4. Strip remaining non-alphanumeric characters (parentheses, brackets, etc.)
-    text = _STRIP_NON_ALNUM.sub("", text)
-    
-    # 5. Collapse multiple spaces
-    text = " ".join(text.split())
-    
-    return text
-
-
-def tokenize(text: str) -> list[str]:
-    """Tokenize normalized text into words, stripping stop-words.
-    
-    Returns:
-        List of tokens with stop-words removed.
-    """
-    normalized = normalize_text(text)
-    return [w for w in normalized.split() if w not in STOP_WORDS]
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from core.text_utils import normalize_text, tokenize, STOP_WORDS
 
 
 # ─── Database Loading ─────────────────────────────────────────────────────────
@@ -243,6 +196,50 @@ def build_bm25_index(db_path: str, output_dir: str):
     
     # ── Quick smoke test ──────────────────────────────────────────────────
     _smoke_test(bm25, verse_lookup)
+
+    # ── Per-version BM25 indexes ─────────────────────────────────────────
+    _build_per_version_indexes(verses, output_dir)
+
+
+def _build_per_version_indexes(verses: list[dict], output_dir: str):
+    """Build separate BM25 indexes for each translation version.
+
+    Produces per-version pickle pairs for fast browser-panel search:
+      data/indexes/bm25_{VERSION}.pkl
+      data/indexes/verse_lookup_{VERSION}.pkl
+    """
+    from rank_bm25 import BM25Okapi
+
+    # Group verses by version
+    by_version = defaultdict(list)
+    for v in verses:
+        by_version[v["version"]].append(v)
+
+    print(f"\n  ── Per-Version Indexes ({len(by_version)} versions) ──")
+
+    for version, vverses in sorted(by_version.items()):
+        t0 = time.perf_counter()
+
+        v_lookup = [
+            (v["version"], v["book"], v["chapter"], v["verse_num"], v["text"])
+            for v in vverses
+        ]
+        v_tokenized = [tokenize(v["text"]) for v in vverses]
+        v_bm25 = BM25Okapi(v_tokenized)
+
+        bm25_path = os.path.join(output_dir, f"bm25_{version}.pkl")
+        lookup_path = os.path.join(output_dir, f"verse_lookup_{version}.pkl")
+
+        with open(bm25_path, "wb") as f:
+            pickle.dump(v_bm25, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(lookup_path, "wb") as f:
+            pickle.dump(v_lookup, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        elapsed = time.perf_counter() - t0
+        bm25_mb = os.path.getsize(bm25_path) / (1024 * 1024)
+        lookup_mb = os.path.getsize(lookup_path) / (1024 * 1024)
+        print(f"    {version}: {len(vverses):,} verses, "
+              f"{bm25_mb + lookup_mb:.2f} MB, {elapsed:.2f}s")
 
 
 def _smoke_test(bm25, verse_lookup: list):

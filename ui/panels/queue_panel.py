@@ -11,9 +11,9 @@ import asyncio
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QFrame
+    QListWidget, QListWidgetItem, QFrame, QStackedWidget, QToolTip
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 
 from ui.styles import (
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
@@ -21,10 +21,29 @@ from ui.styles import (
     CYAN_400, SLATE_300, SLATE_500, SLATE_600, WHITE, BORDER_SUBTLE
 )
 from core.queues import db_write_queue
+from core.bible_service import get_display_name
 
 logger = logging.getLogger(__name__)
 
 MAX_VISIBLE_ITEMS = 50
+
+
+class _TabButton(QPushButton):
+    """QPushButton that shows a tooltip on hover via QToolTip.showText."""
+
+    def __init__(self, icon: str, tooltip: str, parent=None):
+        super().__init__(icon, parent)
+        self._tooltip_text = tooltip
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        pos = self.mapToGlobal(QPoint(self.width() // 2, self.height()))
+        QToolTip.showText(pos, self._tooltip_text, self)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        QToolTip.hideText()
+        super().leaveEvent(event)
 
 
 class QueueItemWidget(QFrame):
@@ -83,10 +102,12 @@ class QueueItemWidget(QFrame):
 
 
 class QueuePanel(QWidget):
-    """Operator review queue panel."""
+    """Operator review queue panel with sub-tab switching (QUEUE | THEMES)."""
 
     # Emitted when the operator clicks "Show" on a verse
     display_requested = pyqtSignal(dict)
+    # Emitted when operator selects a display theme
+    theme_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,36 +117,107 @@ class QueuePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header
-        header = QWidget()
-        header.setStyleSheet(PANEL_HEADER_STYLE)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 6, 12, 6)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
 
-        # Sub-tabs
-        queue_label = QLabel("QUEUE")
-        queue_label.setStyleSheet(f"""
-            color: {CYAN_400};
-            font-size: 10px; font-weight: 700;
-            background: rgba(34, 211, 238, 0.1);
-            padding: 4px 12px;
-            border-radius: 3px;
-        """)
-        header_layout.addWidget(queue_label)
-        header_layout.addStretch()
+        # ── Vertical tab bar (left side) ──
+        tab_bar = QWidget()
+        tab_bar.setFixedWidth(48)
+        tab_bar.setStyleSheet(PANEL_HEADER_STYLE)
+        tab_layout = QVBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(4, 8, 4, 8)
+        tab_layout.setSpacing(4)
+
+        self._tab_buttons: dict[str, QPushButton] = {}
+        self._active_tab = "queue"
+
+        for tab_name, icon, tooltip in [("queue", "\u2261", "Queue"), ("themes", "\u25C9", "Themes")]:
+            btn = _TabButton(icon, tooltip)
+            btn.setCheckable(True)
+            btn.setChecked(tab_name == "queue")
+            btn.setFixedSize(40, 40)
+            btn.setStyleSheet(self._tab_style(tab_name == "queue"))
+            btn.clicked.connect(lambda checked, n=tab_name: self._switch_tab(n))
+            tab_layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
+            self._tab_buttons[tab_name] = btn
+
+        tab_layout.addStretch()
 
         # Item count
         self.count_label = QLabel("0")
         self.count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px; font-weight: 600;")
-        header_layout.addWidget(self.count_label)
+        tab_layout.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        layout.addWidget(header)
+        body.addWidget(tab_bar)
 
-        # List
+        # ── Stacked content (right side) ──
+        self._stack = QStackedWidget()
+
+        # Queue list (index 0)
         self.list_widget = QListWidget()
         self.list_widget.setSpacing(4)
         self.list_widget.setStyleSheet("QListWidget { padding: 6px; }")
-        layout.addWidget(self.list_widget)
+        self._stack.addWidget(self.list_widget)
+
+        # Themes panel (index 1) — lazy loaded
+        self._themes_panel = None
+        self._themes_index = -1
+
+        body.addWidget(self._stack, 1)
+
+        layout.addLayout(body, 1)
+
+    def _tab_style(self, active: bool) -> str:
+        if active:
+            return f"""
+                QPushButton {{
+                    color: {CYAN_400};
+                    font-size: 11px; font-weight: 700;
+                    background: rgba(34, 211, 238, 0.1);
+                    border-radius: 6px;
+                    border: none;
+                }}
+            """
+        return f"""
+            QPushButton {{
+                color: {SLATE_500};
+                font-size: 11px; font-weight: 700;
+                background: transparent;
+                border-radius: 6px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                color: {WHITE};
+                background: rgba(255, 255, 255, 5);
+            }}
+        """
+
+    def _switch_tab(self, name: str):
+        if name == self._active_tab:
+            return
+
+        # Update button styles
+        for tab_name, btn in self._tab_buttons.items():
+            btn.setChecked(tab_name == name)
+            btn.setStyleSheet(self._tab_style(tab_name == name))
+
+        self._active_tab = name
+
+        if name == "queue":
+            self._stack.setCurrentIndex(0)
+            self.count_label.setVisible(True)
+        elif name == "themes":
+            self._ensure_themes_loaded()
+            self._stack.setCurrentIndex(self._themes_index)
+            self.count_label.setVisible(False)
+
+    def _ensure_themes_loaded(self):
+        if self._themes_panel is None:
+            from ui.panels.themes_panel import ThemesPanel
+            self._themes_panel = ThemesPanel()
+            self._themes_panel.theme_changed.connect(self.theme_changed)
+            self._themes_index = self._stack.addWidget(self._themes_panel)
 
     def add_item(self, data: dict):
         """Add a verse match to the review queue."""
@@ -162,7 +254,7 @@ class QueuePanel(QWidget):
             "type": "display_event",
             "payload": {
                 "action": "operator_approved",
-                "ref": f"[{data.get('version','')}] {data.get('book','')} {data.get('chapter','')}:{data.get('verse_num','')}",
+                "ref": f"[{get_display_name(data.get('version',''))}] {data.get('book','')} {data.get('chapter','')}:{data.get('verse_num','')}",
                 "confidence": data.get("confidence", 0),
                 "timestamp_ms": int(time.time() * 1000)
             }

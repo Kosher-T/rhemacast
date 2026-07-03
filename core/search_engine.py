@@ -8,13 +8,14 @@ Runs Thread 3 for BM25 + FAISS search, RRF fusion, and early exit filtering.
 import time
 import queue
 import logging
-import re
 import numpy as np
 
 from core.queues import queue_b, db_write_queue, push_to_operator
 from core.service_manager import manager, service_active
 from core.model_manager import model_manager
 from core.intent_classifier import intent_classifier
+from core.text_utils import normalize_text, tokenize, STOP_WORDS
+from core.bible_service import get_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -45,25 +46,6 @@ def check_lru_cache(verse_ref: str) -> bool:
         del LRU_CACHE[k]
         
     return False
-
-# ─── Normalization ────────────────────────────────────────────────────────────
-
-STOP_WORDS = frozenset({"the", "is", "a", "and", "to", "of", "in", "that"})
-_PUNCTUATION_TO_SPACE = re.compile(r"[\-\u2010\u2011\u2012\u2013\u2014\u2015/:]")
-_STRIP_NON_ALNUM = re.compile(r"[^a-z0-9\s]")
-
-def normalize_text(text: str) -> str:
-    """Normalize a verse text for BM25 tokenization."""
-    text = text.replace("'", "").replace("\u2019", "").replace("\u2018", "")
-    text = _PUNCTUATION_TO_SPACE.sub(" ", text)
-    text = text.lower()
-    text = _STRIP_NON_ALNUM.sub("", text)
-    return " ".join(text.split())
-
-def tokenize(text: str) -> list[str]:
-    """Tokenize normalized text into words, stripping stop-words."""
-    normalized = normalize_text(text)
-    return [w for w in normalized.split() if w not in STOP_WORDS]
 
 # ─── Search Lanes ────────────────────────────────────────────────────────────
 
@@ -226,7 +208,7 @@ def _search_thread_target():
                 
                 # If high confidence and not ignored, push to operator queue
                 if best["confidence"] >= CONFIDENCE_THRESHOLD and not is_ignored:
-                    ref = f"[{best['version']}] {best['book']} {best['chapter']}:{best['verse']}"
+                    ref = f"[{get_display_name(best['version'])}] {best['book']} {best['chapter']}:{best['verse']}"
                     
                     if not check_lru_cache(ref):
                         # Display Decision Matrix

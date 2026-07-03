@@ -48,6 +48,7 @@ pytest==9.1.0
 pytest-qt==4.5.0
 PyQt6-WebEngine==6.11.0
 PyYAML==6.0.3
+PyStemmer==3.0.0
 rank-bm25==0.2.2
 requests==2.34.2
 rich==15.0.0

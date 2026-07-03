@@ -1,0 +1,36 @@
+{
+    "name": "communion",
+    "label": "Communion",
+    "description": "Deep red for communion services",
+    "author": "RhemaCast",
+    "container": {
+        "background": "rgba(69, 10, 10, 0.6)",
+        "border": "1px solid rgba(239, 68, 68, 0.2)",
+        "border_radius": "24px",
+        "box_shadow": "0 25px 50px -12px rgba(69, 10, 10, 0.8), 0 0 0 1px rgba(239, 68, 68, 0.1) inset",
+        "backdrop_filter": "blur(16px)",
+        "padding": "40px",
+        "max_width": "80%",
+        "min_width": "60%"
+    },
+    "text": {
+        "color": "#f8fafc",
+        "size": "2.5rem",
+        "weight": 800,
+        "line_height": "1.4",
+        "text_shadow": "0 4px 12px rgba(0, 0, 0, 0.4)",
+        "letter_spacing": "-0.02em",
+        "margin_bottom": "24px"
+    },
+    "reference": {
+        "color": "#fca5a5",
+        "size": "1.5rem",
+        "weight": 600,
+        "text_transform": "uppercase",
+        "letter_spacing": "0.1em"
+    },
+    "translation": {
+        "color": "#f87171",
+        "margin_left": "8px"
+    }
+}

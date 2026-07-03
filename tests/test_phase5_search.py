@@ -65,16 +65,16 @@ def test_dynamic_rrf_scaling():
     assert fused_5_lower[0]["confidence"] > fused_15_lower[0]["confidence"]
 
 def test_bm25_normalization_reversible():
-    """Verify symmetric stripping produces identical tokens."""
+    """Verify symmetric stripping and stemming produces identical tokens."""
     raw = "God's love—it is all-encompassing (and great)!"
     norm = normalize_text(raw)
     assert norm == "gods love it is all encompassing and great"
     
     tokens = tokenize(raw)
-    assert "gods" in tokens
+    assert "god" in tokens       # stemmed from "gods"
     assert "love" in tokens
     assert "all" in tokens
-    assert "encompassing" in tokens
+    assert "encompass" in tokens  # stemmed from "encompassing"
     assert "great" in tokens
     # stop words removed
     assert "is" not in tokens
