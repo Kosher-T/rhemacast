@@ -209,20 +209,17 @@ MACRO_BTN_AMBER = f"""
     QPushButton {{
         background-color: rgba(245, 158, 11, 0.9);
         color: {AMBER_900};
-        border-radius: 4px;
-        border-bottom: 3px solid rgb(180, 120, 0);
+        border: none;
+        border-radius: 6px;
         font-weight: 800;
-        font-size: 14px;
-        padding: 4px 16px;
-        margin-top: 0px;
+        font-size: 12px;
+        padding: 4px 10px;
     }}
     QPushButton:hover {{
         background-color: rgba(251, 191, 36, 0.95);
     }}
     QPushButton:pressed {{
         background-color: rgba(217, 119, 6, 0.9);
-        border-bottom: 0px;
-        margin-top: 3px;
     }}
 """
 
@@ -230,28 +227,26 @@ MACRO_BTN_CLEAR = f"""
     QPushButton {{
         background-color: rgba(51, 65, 85, 0.9);
         color: {WHITE};
-        border-radius: 4px;
-        border-bottom: 3px solid rgb(30, 41, 59);
+        border: none;
+        border-radius: 6px;
         font-weight: 700;
-        font-size: 12px;
-        padding: 4px 16px;
-        margin-top: 0px;
+        font-size: 11px;
+        padding: 4px 10px;
     }}
     QPushButton:hover {{
         background-color: rgba(71, 85, 105, 0.9);
     }}
     QPushButton:pressed {{
         background-color: rgba(30, 41, 59, 0.9);
-        border-bottom: 0px;
-        margin-top: 3px;
     }}
 """
 
 # ─── Verse Row Styles ────────────────────────────────────────────────────────
 VERSE_EVEN_BG = "rgba(255, 255, 255, 8)"
 VERSE_ODD_BG = "transparent"
-VERSE_SELECTED_BG = "rgba(59, 130, 246, 0.1)"
+VERSE_SELECTED_BG = "rgba(59, 130, 246, 0.32)"
 VERSE_HOVER_BG = "rgba(59, 130, 246, 0.15)"
+VERSE_SELECTED_TEXT = "#bfdbfe"
 
 # ─── Translation Bar Button ──────────────────────────────────────────────────
 TRANSLATION_BTN_INACTIVE = f"""

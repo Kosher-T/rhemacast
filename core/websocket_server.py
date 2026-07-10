@@ -9,6 +9,7 @@ import asyncio
 import html
 import json
 import logging
+import os
 from typing import Set, Dict, Any
 
 import websockets
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 # State
 connected_clients: Set[WebSocketServerProtocol] = set()
 current_display_state: Dict[str, Any] = {"action": "clear"}
+
+# Display directory path
+DISPLAY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "display")
 
 def get_connected_client_count() -> int:
     """Expose telemetry to UI thread."""
@@ -107,11 +111,15 @@ async def start_servers():
     logger.info(f"Starting Health HTTP server on http://{http_host}:{http_port}/health")
     app = web.Application()
     app.router.add_get('/health', health_handler)
+    # Serve display files for OBS Browser Source
+    app.router.add_static('/', DISPLAY_DIR, show_index=True)
     
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, http_host, http_port)
     await site.start()
+    
+    logger.info(f"Serving display files from {DISPLAY_DIR} on http://{http_host}:{http_port}/")
     
     # Run forever
     await asyncio.Future()

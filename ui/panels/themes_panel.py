@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 class ThemeCard(QFrame):
     """A single theme card in the vertical list."""
 
-    theme_selected = pyqtSignal(str)  # theme name
+    theme_selected = pyqtSignal(str)  # single-click
+    theme_double_clicked = pyqtSignal(str)  # double-click
 
     def __init__(self, theme: dict, parent=None):
         super().__init__(parent)
@@ -113,12 +114,18 @@ class ThemeCard(QFrame):
             self.theme_selected.emit(self.theme_name)
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.theme_double_clicked.emit(self.theme_name)
+        super().mouseDoubleClickEvent(event)
+
 
 class ThemesPanel(QWidget):
     """Vertical theme selector panel — loads themes dynamically from themes/ directory."""
 
     # Emitted when operator selects a theme (theme name)
     theme_changed = pyqtSignal(str)
+    theme_double_clicked = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -146,6 +153,7 @@ class ThemesPanel(QWidget):
         for name, theme in themes.items():
             card = ThemeCard(theme)
             card.theme_selected.connect(self._on_theme_selected)
+            card.theme_double_clicked.connect(self._on_theme_double_clicked)
             self._layout.addWidget(card)
             self._cards[name] = card
 
@@ -161,6 +169,18 @@ class ThemesPanel(QWidget):
 
         self.theme_changed.emit(name)
         logger.info(f"Theme changed to: {name}")
+
+    def _on_theme_double_clicked(self, name: str):
+        # Ensure the theme is selected (set active)
+        if name != self._current_theme:
+            if self._current_theme in self._cards:
+                self._cards[self._current_theme].set_active(False)
+            self._cards[name].set_active(True)
+            self._current_theme = name
+            self.theme_changed.emit(name)
+
+        self.theme_double_clicked.emit(name)
+        logger.info(f"Theme double-clicked: {name}")
 
     @property
     def current_theme(self) -> str:

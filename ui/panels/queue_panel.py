@@ -102,12 +102,24 @@ class QueueItemWidget(QFrame):
 
 
 class QueuePanel(QWidget):
-    """Operator review queue panel with sub-tab switching (QUEUE | THEMES)."""
+    """Operator review queue panel with sub-tab switching (QUEUE | THEMES | SEARCH)."""
 
     # Emitted when the operator clicks "Show" on a verse
     display_requested = pyqtSignal(dict)
-    # Emitted when operator selects a display theme
+    # Emitted when operator selects a display theme (single-click)
     theme_changed = pyqtSignal(str)
+    # Emitted when operator double-clicks a theme
+    theme_double_clicked = pyqtSignal(str)
+    # Emitted when operator sends a search result to schedule
+    verse_to_schedule = pyqtSignal(dict)
+    # Single-click search result → navigate in current browser translation
+    verse_to_navigator = pyqtSignal(dict)
+    # Double-click search result → send to live in current browser translation
+    verse_to_live = pyqtSignal(dict)
+    # Single-click translation badge → navigate in result's translation
+    trans_badge_to_navigator = pyqtSignal(dict)
+    # Double-click translation badge → send to live in result's translation
+    trans_badge_to_live = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -132,7 +144,11 @@ class QueuePanel(QWidget):
         self._tab_buttons: dict[str, QPushButton] = {}
         self._active_tab = "queue"
 
-        for tab_name, icon, tooltip in [("queue", "\u2261", "Queue"), ("themes", "\u25C9", "Themes")]:
+        for tab_name, icon, tooltip in [
+            ("queue", "\u2261", "Queue"),
+            ("themes", "\u25C9", "Themes"),
+            ("search", "\u2315", "Search"),
+        ]:
             btn = _TabButton(icon, tooltip)
             btn.setCheckable(True)
             btn.setChecked(tab_name == "queue")
@@ -163,6 +179,10 @@ class QueuePanel(QWidget):
         # Themes panel (index 1) — lazy loaded
         self._themes_panel = None
         self._themes_index = -1
+
+        # Search panel (index 2) — lazy loaded
+        self._search_panel = None
+        self._search_index = -1
 
         body.addWidget(self._stack, 1)
 
@@ -211,13 +231,35 @@ class QueuePanel(QWidget):
             self._ensure_themes_loaded()
             self._stack.setCurrentIndex(self._themes_index)
             self.count_label.setVisible(False)
+        elif name == "search":
+            self._ensure_search_loaded()
+            self._stack.setCurrentIndex(self._search_index)
+            self.count_label.setVisible(False)
 
     def _ensure_themes_loaded(self):
         if self._themes_panel is None:
             from ui.panels.themes_panel import ThemesPanel
             self._themes_panel = ThemesPanel()
             self._themes_panel.theme_changed.connect(self.theme_changed)
+            self._themes_panel.theme_double_clicked.connect(self.theme_double_clicked)
             self._themes_index = self._stack.addWidget(self._themes_panel)
+
+    def _ensure_search_loaded(self):
+        if self._search_panel is None:
+            from ui.panels.search_panel import SearchPanel
+            self._search_panel = SearchPanel()
+            self._search_panel.verse_to_schedule.connect(self.verse_to_schedule)
+            self._search_panel.verse_to_navigator.connect(self.verse_to_navigator)
+            self._search_panel.verse_to_live.connect(self.verse_to_live)
+            self._search_panel.trans_badge_to_navigator.connect(self.trans_badge_to_navigator)
+            self._search_panel.trans_badge_to_live.connect(self.trans_badge_to_live)
+            self._search_index = self._stack.addWidget(self._search_panel)
+
+    def switch_to_search(self):
+        """Programmatically switch to the search tab and focus the query input."""
+        self._switch_tab("search")
+        if self._search_panel:
+            self._search_panel.focus_query()
 
     def add_item(self, data: dict):
         """Add a verse match to the review queue."""

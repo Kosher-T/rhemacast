@@ -12,7 +12,7 @@ import logging
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFileDialog, QMessageBox, QWidget
+    QFileDialog, QMessageBox, QWidget, QFrame
 )
 from PyQt6.QtCore import Qt
 
@@ -69,16 +69,16 @@ class AddTranslationDialog(QDialog):
         web_btn = self._make_option_button(
             "Visit Download Page",
             "Open biblelist.netlify.app in your browser",
+            on_click=self._on_visit_web,
         )
-        web_btn.clicked.connect(self._on_visit_web)
         layout.addWidget(web_btn)
 
         # Option 2: Import file
         file_btn = self._make_option_button(
             "Import File...",
             "Pick XML, XMM, CSV, or JSON from your file manager",
+            on_click=self._on_import_file,
         )
-        file_btn.clicked.connect(self._on_import_file)
         layout.addWidget(file_btn)
 
         layout.addStretch()
@@ -106,26 +106,41 @@ class AddTranslationDialog(QDialog):
         cancel_row.addWidget(cancel_btn)
         layout.addLayout(cancel_row)
 
-    def _make_option_button(self, title: str, subtitle: str) -> QPushButton:
+    def _make_option_button(self, title: str, subtitle: str, on_click=None) -> QFrame:
         """Create a styled two-line option button."""
-        btn = QPushButton()
-        btn.setFixedHeight(52)
-        btn.setStyleSheet(f"""
-            QPushButton {{
+        frame = QFrame()
+        frame.setFixedHeight(52)
+        frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        frame.setStyleSheet(f"""
+            QFrame {{
                 background: {SLATE_800};
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 6px;
-                text-align: left;
-                padding: 8px 14px;
             }}
-            QPushButton:hover {{
+            QFrame:hover {{
                 border-color: {BLUE_500};
                 background: rgba(59, 130, 246, 0.08);
             }}
         """)
-        btn.setText(f"<b style='color:{WHITE}; font-size:12px;'>{title}</b><br>"
-                    f"<span style='color:{SLATE_500}; font-size:10px;'>{subtitle}</span>")
-        return btn
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(2)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 700; background: transparent; border: none;")
+        layout.addWidget(title_label)
+
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px; background: transparent; border: none;")
+        layout.addWidget(subtitle_label)
+
+        if on_click:
+            def _mousePressEvent(event):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    on_click()
+            frame.mousePressEvent = _mousePressEvent
+
+        return frame
 
     def _on_visit_web(self):
         webbrowser.open(_DOWNLOAD_URL)

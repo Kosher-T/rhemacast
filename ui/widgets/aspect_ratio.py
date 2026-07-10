@@ -34,6 +34,10 @@ class AspectRatioWidget(QWidget):
         """Allow the widget to be shrunk down almost completely by the parent layout."""
         return QSize(self.min_width, max(1, int(self.min_width / self.aspect_ratio)))
 
+    def maximumSizeHint(self) -> QSize:
+        """Return the maximum size hint based on max_width."""
+        return QSize(self.max_width, max(1, int(self.max_width / self.aspect_ratio)))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         

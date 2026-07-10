@@ -26,7 +26,7 @@ from ui.panels.schedule_panel import SchedulePanel
 from ui.panels.queue_panel import QueuePanel
 from ui.panels.browser_panel import BrowserPanel
 from ui.panels.stt_panel import STTPanel
-from ui.widgets.aspect_ratio import AspectRatioWidget
+from ui.panels.live_preview_panel import LivePreviewPanel
 from core.bible_service import get_display_name
 from ui.styles import (
     MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
@@ -36,120 +36,6 @@ from ui.styles import (
 logger = logging.getLogger(__name__)
 
 
-class LiveOutputFrame(QWidget):
-    """Center panel: Live output viewport + macro controls."""
-
-    clear_recall = pyqtSignal()
-    prev_verse = pyqtSignal()
-    next_verse = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(12)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Live indicator (outside the viewport)
-        live_row = QHBoxLayout()
-        live_row.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
-        live_row.setContentsMargins(0, 0, 0, 4)
-        live_dot = QLabel("●")
-        live_dot.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
-        live_label = QLabel("LIVE")
-        live_label.setStyleSheet(f"""
-            color: {RED_500}; font-size: 12px; font-weight: 900;
-            letter-spacing: 3px;
-        """)
-        live_row.addWidget(live_dot)
-        live_row.addWidget(live_label)
-        layout.addLayout(live_row)
-        
-        # ── Live Output Viewport ──
-        self.viewport = QFrame()
-        self.viewport.setObjectName("LiveOutputViewport")
-        self.viewport.setStyleSheet(f"""
-            QFrame#LiveOutputViewport {{
-                background: black;
-                border: 1px solid rgba(239, 68, 68, 0.4);
-                border-radius: 8px;
-            }}
-        """)
-        
-        self.ar_widget = AspectRatioWidget(self.viewport, aspect_ratio=16.0/9.0, min_width=320, max_width=840)
-
-        vp_layout = QVBoxLayout(self.viewport)
-        vp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.output_label = QLabel("LIVE OUTPUT")
-        self.output_label.setStyleSheet(f"""
-            color: rgba(255, 255, 255, 12);
-            font-size: 28px; font-weight: 900;
-            font-style: italic;
-        """)
-        self.output_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vp_layout.addWidget(self.output_label)
-
-        layout.addWidget(self.ar_widget, 1)
-
-        # ── Macro Controls ──
-        controls_container = QWidget()
-        controls = QHBoxLayout(controls_container)
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(12)
-
-        btn_prev = QPushButton("<")
-        btn_prev.setStyleSheet(MACRO_BTN_AMBER)
-        btn_prev.setFixedSize(80, 40)
-        btn_prev.setToolTip("Previous Verse")
-        btn_prev.clicked.connect(self.prev_verse.emit)
-        controls.addWidget(btn_prev)
-
-        _icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "eye-off.svg")
-        self.btn_clear = QPushButton()
-        self.btn_clear.setIcon(QIcon(_icon_path))
-        self.btn_clear.setIconSize(QSize(18, 18))
-        self.btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
-        self.btn_clear.setFixedSize(90, 40)
-        self.btn_clear.setToolTip("Clear screen / Recall last cleared verse")
-        self.btn_clear.clicked.connect(self.clear_recall.emit)
-        controls.addWidget(self.btn_clear)
-
-        btn_next = QPushButton(">")
-        btn_next.setStyleSheet(MACRO_BTN_AMBER)
-        btn_next.setFixedSize(80, 40)
-        btn_next.setToolTip("Next Verse")
-        btn_next.clicked.connect(self.next_verse.emit)
-        controls.addWidget(btn_next)
-
-        macro_wrapper = QHBoxLayout()
-        macro_wrapper.addStretch()
-        macro_wrapper.addWidget(controls_container)
-        macro_wrapper.addStretch()
-        layout.addLayout(macro_wrapper)
-
-    def set_live_text(self, text: str, ref: str):
-        """Update the live output viewport with verse text."""
-        self.output_label.setText(f"{text}\n\n— {ref}")
-        self.output_label.setStyleSheet(f"""
-            color: {WHITE};
-            font-size: 16px; font-weight: 600;
-            font-style: normal;
-            padding: 16px;
-        """)
-        self.output_label.setWordWrap(True)
-
-    def clear_live_output(self):
-        """Reset the live output to its default empty state."""
-        self.output_label.setText("LIVE OUTPUT")
-        self.output_label.setStyleSheet(f"""
-            color: rgba(255, 255, 255, 12);
-            font-size: 28px; font-weight: 900;
-            font-style: italic;
-        """)
-
-
 class PresentationTab(QWidget):
     """The main Presentation workspace tab."""
 
@@ -157,7 +43,8 @@ class PresentationTab(QWidget):
         super().__init__(parent)
         
         # Display state
-        self._current_display = None      # Currently displayed verse dict
+        self._current_display = None      # Currently displayed verse dict (live)
+        self._current_preview = None      # Currently previewed verse dict
         self._last_cleared_display = None  # Last verse before clear (for recall)
         self._is_cleared = True
         self._current_theme = "default"   # Active display theme
@@ -188,11 +75,11 @@ class PresentationTab(QWidget):
         top_splitter.setChildrenCollapsible(False)
 
         self.schedule_panel = SchedulePanel()
-        self.live_output = LiveOutputFrame()
+        self.live_preview = LivePreviewPanel()
         self.stt_panel = STTPanel()
 
         top_splitter.addWidget(wrap_panel(self.schedule_panel))
-        top_splitter.addWidget(self.live_output) # Center panel has its own padding/wrapper logic
+        top_splitter.addWidget(self.live_preview) # Center panel has its own padding/wrapper logic
         top_splitter.addWidget(wrap_panel(self.stt_panel))
 
         # Center panel gets the most space and cannot be collapsed completely
@@ -235,27 +122,76 @@ class PresentationTab(QWidget):
         # Queue panel: "Show" button → broadcast verse to display
         self.queue_panel.display_requested.connect(self._on_display_verse)
         
-        # Queue panel: theme selection → update live display
+        # Queue panel: theme selection → update preview only
         self.queue_panel.theme_changed.connect(self._on_theme_changed)
         
+        # Queue panel: theme double-click → push preview to live with that theme
+        self.queue_panel.theme_double_clicked.connect(self._on_theme_double_click)
+        
         # Live output: clear/recall toggle
-        self.live_output.clear_recall.connect(self._on_clear_recall)
+        self.live_preview.clear_recall.connect(self._on_clear_recall)
         
         # Live output: prev/next verse navigation (uses schedule)
-        self.live_output.prev_verse.connect(self._on_prev_verse)
-        self.live_output.next_verse.connect(self._on_next_verse)
+        self.live_preview.prev_verse.connect(self._on_prev_verse)
+        self.live_preview.next_verse.connect(self._on_next_verse)
         
         # STT panel: transcription start/stop → control Thread 1 + Thread 2
         self.stt_panel.transcription_started.connect(self._on_start_transcription)
         self.stt_panel.transcription_stopped.connect(self._on_stop_transcription)
         
-        # Browser panel: double-click broadcast
+        # Browser panel: single-click → update preview only
+        self.browser_panel.verse_clicked.connect(self._on_verse_single_click)
+        
+        # Browser panel: double-click → update live + preview
         self.browser_panel.broadcast_in_version.connect(self._on_browser_broadcast)
+
+        # Browser panel: Alt+click verse(s) → add to schedule
+        self.browser_panel.verses_to_schedule.connect(self._on_verses_to_schedule)
+
+        # Search panel: send verse to schedule
+        self.queue_panel.verse_to_schedule.connect(self._on_search_to_schedule)
+
+        # Search panel: single-click result → navigate to reference in current translation
+        self.queue_panel.verse_to_navigator.connect(self._on_search_to_navigator)
+
+        # Search panel: double-click result → send to live in current translation
+        self.queue_panel.verse_to_live.connect(self._on_search_to_live)
+
+        # Search panel: single-click translation badge → navigate in result's translation
+        self.queue_panel.trans_badge_to_navigator.connect(self._on_trans_badge_to_navigator)
+
+        # Search panel: double-click translation badge → send to live in result's translation
+        self.queue_panel.trans_badge_to_live.connect(self._on_trans_badge_to_live)
+        
+        # Preview screen: double-click → push to live
+        self.live_preview.preview_double_clicked.connect(self._on_preview_double_click)
+        
+        # Schedule panel: single-click → preview, double-click → live
+        self.schedule_panel.item_clicked.connect(self._on_schedule_click)
+        self.schedule_panel.item_double_clicked.connect(self._on_schedule_double_click)
+
+    def _build_payload(self, text: str, ref: str, version: str, book: str = "",
+                       chapter: str = "", verse: str = "") -> dict:
+        """Build a display payload matching the WS broadcast format."""
+        from core.theme_loader import get_theme
+        theme_data = get_theme(self._current_theme)
+        return {
+            "action": "display",
+            "text": text,
+            "ref": ref,
+            "reference": f"{book} {chapter}:{verse}" if book else ref,
+            "translation": get_display_name(version) if version else "",
+            "book": book,
+            "chapter": str(chapter),
+            "verse": str(verse),
+            "theme": self._current_theme,
+            "theme_data": theme_data,
+        }
 
     def _on_display_verse(self, data: dict):
         """
         Called when operator clicks 'Show' on a queue item.
-        Updates the live output, operator preview, and broadcasts via WebSocket.
+        Updates live output only and broadcasts via WebSocket.
         """
         verse_text = data.get("text", "")
         book = data.get("book", "")
@@ -263,102 +199,279 @@ class PresentationTab(QWidget):
         verse_num = data.get("verse_num", "")
         version = data.get("version", "")
         ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
-        reference = f"{book} {chapter}:{verse_num}"
-        
-        # Update local display state
+
         self._current_display = data
         self._is_cleared = False
-        
-        # Update UI
-        self.live_output.set_live_text(verse_text, ref)
-        self.stt_panel.update_preview(verse_text, ref)
-        
-        # Add to schedule if not already there
-        self.schedule_panel.add_item(ref, version, verse_text)
-        
-        # Broadcast via WebSocket
-        from core.theme_loader import get_theme
-        self._broadcast_to_ws({
-            "action": "display",
-            "text": verse_text,
-            "ref": ref,
-            "reference": reference,
-            "translation": get_display_name(version),
-            "book": book,
-            "chapter": str(chapter),
-            "verse": str(verse_num),
-            "theme": self._current_theme,
-            "theme_data": get_theme(self._current_theme)
-        })
-        
+
+        payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
+        self.live_preview.set_live_payload(payload)
+
+        self._broadcast_to_ws(payload)
+
         logger.info(f"Displaying: {ref}")
 
     def _on_browser_broadcast(self, version: str):
-        """Called when operator double-clicks a translation in the browser panel."""
+        """Called when operator double-clicks a verse in the browser panel. Updates live + preview."""
         verse_data = self.browser_panel.get_selected_verse()
         if not verse_data:
             return
-        
+
         book = self.browser_panel._current_book or ""
         ref = f"[{get_display_name(version)}] {book} {verse_data['chapter']}:{verse_data['verse']}"
-        reference = f"{book} {verse_data['chapter']}:{verse_data['verse']}"
         text = verse_data.get("text", "")
-        
-        self._current_display = {
+
+        verse_dict = {
             "text": text,
             "book": book,
             "chapter": verse_data["chapter"],
             "verse_num": verse_data["verse"],
             "version": version
         }
+        self._current_display = verse_dict
+        self._current_preview = verse_dict
         self._is_cleared = False
-        
-        self.live_output.set_live_text(text, ref)
-        self.stt_panel.update_preview(text, ref)
-        self.schedule_panel.add_item(ref, version, text)
-        
-        from core.theme_loader import get_theme
-        self._broadcast_to_ws({
-            "action": "display",
-            "text": text,
-            "ref": ref,
-            "reference": reference,
-            "translation": get_display_name(version),
-            "book": book,
-            "chapter": str(verse_data["chapter"]),
-            "verse": str(verse_data["verse"]),
-            "theme": self._current_theme,
-            "theme_data": get_theme(self._current_theme)
-        })
-        
+
+        payload = self._build_payload(text, ref, version, book, verse_data["chapter"], verse_data["verse"])
+        self.live_preview.set_live_payload(payload)
+        self.live_preview.set_preview_payload(payload)
+
+        self._broadcast_to_ws(payload)
+
         logger.info(f"Browser broadcast: {ref}")
+
+    def _on_verses_to_schedule(self, verses: list):
+        """Add one or more verses (from Alt+click in browser) to the schedule."""
+        for v in verses:
+            item_data = {
+                "ref": f"{v.get('book', '')} {v.get('chapter', '')}:{v.get('verse', '')}".strip(),
+                "book": v.get("book", ""),
+                "chapter": v.get("chapter", ""),
+                "verse": v.get("verse", ""),
+                "text": v.get("text", ""),
+                "translation": v.get("translation", ""),
+                "theme": v.get("theme", "default"),
+            }
+            self.schedule_panel.add_item(item_data)
+        logger.info(f"Queued {len(verses)} verse(s) to schedule via Alt+click")
+
+    def _on_search_to_schedule(self, data: dict):
+        """Add a search result verse to the schedule."""
+        item_data = {
+            "ref": f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}".strip(),
+            "book": data.get("book", ""),
+            "chapter": data.get("chapter", ""),
+            "verse": data.get("verse_num", ""),
+            "text": data.get("text", ""),
+            "translation": data.get("version", ""),
+            "theme": "default",
+        }
+        self.schedule_panel.add_item(item_data)
+        logger.info(f"Search result sent to schedule: {item_data['ref']}")
+
+    def _on_search_to_navigator(self, data: dict):
+        """Single-click search result → navigate browser to that reference in current translation + update preview with navigator's translation."""
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", ""))
+        verse = str(data.get("verse_num", ""))
+        # Navigate in the current browser translation (don't switch)
+        version = self.browser_panel._current_translation
+        self.browser_panel.navigate_to_reference(book, chapter, verse)
+
+        # Fetch verse text from the CURRENT browser translation (navigator's translation)
+        from core.bible_service import get_verse
+        verse_data = get_verse(version, book, int(chapter), int(verse))
+        text = verse_data.get("text", "") if verse_data else data.get("text", "")
+
+        # Update preview with the navigator's translation
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse}"
+        self._current_preview = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version,
+        }
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self.live_preview.set_preview_payload(payload)
+        logger.info(f"Search → navigator + preview: {book} {chapter}:{verse} [{version}]")
+
+    def _on_search_to_live(self, data: dict):
+        """Double-click search result → send to live in current browser translation (navigator's translation)."""
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", ""))
+        verse_num = str(data.get("verse_num", ""))
+        # Use current browser translation, not the search result's version
+        version = self.browser_panel._current_translation
+        
+        # Fetch verse text from the CURRENT browser translation (navigator's translation)
+        from core.bible_service import get_verse
+        verse_data = get_verse(version, book, int(chapter), int(verse_num))
+        text = verse_data.get("text", "") if verse_data else data.get("text", "")
+        
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+
+        verse_dict = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse_num,
+            "version": version,
+        }
+        self._current_display = verse_dict
+        self._is_cleared = False
+
+        payload = self._build_payload(text, ref, version, book, chapter, verse_num)
+        self.live_preview.set_live_payload(payload)
+        self._broadcast_to_ws(payload)
+        logger.info(f"Search → live: {ref} [{version}]")
+
+    def _on_trans_badge_to_navigator(self, data: dict):
+        """Single-click translation badge → navigate to reference in that translation + update preview."""
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", ""))
+        verse = str(data.get("verse_num", ""))
+        text = data.get("text", "")
+        version = data.get("version", "")
+        self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
+
+        # Also update preview with the verse data in the badge's translation
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse}"
+        self._current_preview = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version,
+        }
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self.live_preview.set_preview_payload(payload)
+        logger.info(f"Badge → navigator + preview: {book} {chapter}:{verse} [{version}]")
+
+    def _on_trans_badge_to_live(self, data: dict):
+        """Double-click translation badge → send to live in that translation."""
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", ""))
+        verse_num = str(data.get("verse_num", ""))
+        text = data.get("text", "")
+        version = data.get("version", "")
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+
+        verse_dict = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse_num,
+            "version": version,
+        }
+        self._current_display = verse_dict
+        self._is_cleared = False
+
+        payload = self._build_payload(text, ref, version, book, chapter, verse_num)
+        self.live_preview.set_live_payload(payload)
+        self._broadcast_to_ws(payload)
+        logger.info(f"Badge → live: {ref}")
+
+    def _on_verse_single_click(self, version: str):
+        """Called when operator single-clicks a verse in the browser. Updates preview only."""
+        verse_data = self.browser_panel.get_selected_verse()
+        if not verse_data:
+            return
+
+        book = self.browser_panel._current_book or ""
+        ref = f"[{get_display_name(version)}] {book} {verse_data['chapter']}:{verse_data['verse']}"
+        text = verse_data.get("text", "")
+
+        self._current_preview = {
+            "text": text,
+            "book": book,
+            "chapter": verse_data["chapter"],
+            "verse_num": verse_data["verse"],
+            "version": version
+        }
+
+        payload = self._build_payload(text, ref, version, book, verse_data["chapter"], verse_data["verse"])
+        self.live_preview.set_preview_payload(payload)
+        logger.info(f"Preview updated: {ref}")
+
+    def _on_preview_double_click(self):
+        """Called when operator double-clicks the preview screen. Pushes preview to live."""
+        if not self._current_preview:
+            return
+
+        data = self._current_preview
+        verse_text = data.get("text", "")
+        book = data.get("book", "")
+        chapter = data.get("chapter", "")
+        verse_num = data.get("verse_num", "")
+        version = data.get("version", "")
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+
+        self._current_display = data
+        self._is_cleared = False
+
+        payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
+        self.live_preview.set_live_payload(payload)
+
+        self._broadcast_to_ws(payload)
+
+        logger.info(f"Preview pushed to live: {ref}")
 
     def _on_clear_recall(self):
         """Toggle between clear and recall of the last displayed verse."""
         if not self._is_cleared and self._current_display:
-            # Clear the screen
             self._last_cleared_display = self._current_display
             self._current_display = None
             self._is_cleared = True
-            
-            self.live_output.clear_live_output()
-            self.stt_panel.clear_preview()
-            
+
+            self.live_preview.clear_live()
+
             self._broadcast_to_ws({"action": "clear"})
             logger.info("Display cleared")
-            
+
         elif self._is_cleared and self._last_cleared_display:
-            # Recall the last cleared verse
             self._on_display_verse(self._last_cleared_display)
             logger.info("Display recalled")
 
     def _on_theme_changed(self, theme_name: str):
-        """Operator selected a new display theme — re-broadcast current verse with new theme."""
+        """Single-click theme: set as default + re-render preview verse with new theme."""
         self._current_theme = theme_name
-        if self._current_display:
-            # Re-display the current verse with the new theme
-            self._on_display_verse(self._current_display)
-        logger.info(f"Theme changed to: {theme_name}")
+        from core.theme_loader import set_current_theme
+        set_current_theme(theme_name)
+        if self._current_preview:
+            data = self._current_preview
+            book = data.get("book", "")
+            chapter = data.get("chapter", "")
+            verse_num = data.get("verse_num", "")
+            version = data.get("version", "")
+            ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+            payload = self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num)
+            self.live_preview.set_preview_payload(payload)
+        logger.info(f"Theme changed to: {theme_name} (preview updated)")
+
+    def _on_theme_double_click(self, theme_name: str):
+        """Double-click theme: set as default + push preview to live with that theme."""
+        self._current_theme = theme_name
+        from core.theme_loader import set_current_theme
+        set_current_theme(theme_name)
+        if self._current_preview:
+            data = self._current_preview
+            verse_text = data.get("text", "")
+            book = data.get("book", "")
+            chapter = data.get("chapter", "")
+            verse_num = data.get("verse_num", "")
+            version = data.get("version", "")
+            ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+
+            self._current_display = data
+            self._is_cleared = False
+
+            payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
+            self.live_preview.set_live_payload(payload)
+            self._broadcast_to_ws(payload)
+
+            logger.info(f"Theme double-clicked: {theme_name}, pushed preview to live")
+        else:
+            logger.info(f"Theme double-clicked: {theme_name} (no preview verse to push)")
 
     def _on_prev_verse(self):
         """Navigate to the previous item in the schedule."""
@@ -384,30 +497,73 @@ class PresentationTab(QWidget):
         self._display_schedule_item(item)
 
     def _display_schedule_item(self, item: dict):
-        """Display a schedule item on the live output."""
+        """Display a schedule item on the live output only."""
         ref = item.get("ref", "")
         text = item.get("text", "")
         version = item.get("translation", "")
-        
-        # Parse reference from "[VERSION] Book Chapter:Verse" format
+
         reference = ref.split("] ", 1)[1] if "] " in ref else ref
-        
+        parts = reference.rsplit(":", 1)
+        book_chapter = parts[0] if len(parts) == 2 else reference
+        verse = parts[1] if len(parts) == 2 else ""
+        book = book_chapter.rsplit(" ", 1)[0] if " " in book_chapter else book_chapter
+        chapter = book_chapter.rsplit(" ", 1)[1] if " " in book_chapter else ""
+
         self._current_display = item
         self._is_cleared = False
-        
-        self.live_output.set_live_text(text, ref)
-        self.stt_panel.update_preview(text, ref)
-        
-        from core.theme_loader import get_theme
-        self._broadcast_to_ws({
-            "action": "display",
+
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self.live_preview.set_live_payload(payload)
+
+        self._broadcast_to_ws(payload)
+
+    def _on_schedule_click(self, data: dict):
+        """Single-click schedule item: update preview only."""
+        ref = data.get("ref", "")
+        book = data.get("book", "")
+        chapter = data.get("chapter", "")
+        verse = data.get("verse", "")
+        text = data.get("text", "")
+        version = data.get("translation", "")
+        theme = data.get("theme", "default")
+
+        self._current_preview = {
             "text": text,
-            "ref": ref,
-            "reference": reference,
-            "translation": get_display_name(version) if version else "",
-            "theme": item.get("theme", "default"),
-            "theme_data": get_theme(item.get("theme", "default"))
-        })
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version
+        }
+
+        from core.theme_loader import get_theme
+        saved_theme = self._current_theme
+        self._current_theme = theme
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self._current_theme = saved_theme
+        self.live_preview.set_preview_payload(payload)
+        logger.info(f"Schedule preview: {ref}")
+
+    def _on_schedule_double_click(self, data: dict):
+        """Double-click schedule item: push to live with its frozen theme."""
+        ref = data.get("ref", "")
+        book = data.get("book", "")
+        chapter = data.get("chapter", "")
+        verse = data.get("verse", "")
+        text = data.get("text", "")
+        version = data.get("translation", "")
+        theme = data.get("theme", "default")
+
+        self._current_display = data
+        self._is_cleared = False
+
+        from core.theme_loader import get_theme
+        saved_theme = self._current_theme
+        self._current_theme = theme
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self._current_theme = saved_theme
+        self.live_preview.set_live_payload(payload)
+        self._broadcast_to_ws(payload)
+        logger.info(f"Schedule live: {ref} (theme: {theme})")
 
     def _on_start_transcription(self):
         """Start audio capture (Thread 1) and STT inference (Thread 2)."""

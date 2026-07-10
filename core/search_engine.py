@@ -88,7 +88,7 @@ def faiss_search(query: str, top_k: int = 5):
         results.append((rank, version, book, chapter, verse_num, float(score), text))
     return results
 
-def rrf_fuse(bm25_results, faiss_results, word_count: int, k: int = 60):
+def rrf_fuse(bm25_results, faiss_results, word_count: int, k: int = 60, dedupe_by_ref: bool = True):
     candidates = {}
     
     for rank, version, book, chapter, verse_num, score, text in bm25_results:
@@ -142,6 +142,18 @@ def rrf_fuse(bm25_results, faiss_results, word_count: int, k: int = 60):
         })
         
     fused.sort(key=lambda x: x["confidence"], reverse=True)
+
+    # Deduplicate by reference (book, chapter, verse) — keep highest confidence version
+    if dedupe_by_ref:
+        seen_refs = set()
+        deduped = []
+        for r in fused:
+            ref_key = (r["book"], r["chapter"], r["verse_num"])
+            if ref_key not in seen_refs:
+                seen_refs.add(ref_key)
+                deduped.append(r)
+        fused = deduped
+        
     return fused
 
 # ─── Thread Target ───────────────────────────────────────────────────────────

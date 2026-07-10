@@ -24,6 +24,18 @@ _THEMES_DIR = Path(__file__).resolve().parent.parent / "themes"
 # Cache: name -> theme dict
 _cache: dict[str, dict] = {}
 _loaded = False
+_current_theme: str = "default"
+
+
+def set_current_theme(name: str):
+    """Set the globally active theme name."""
+    global _current_theme
+    _current_theme = name
+
+
+def get_current_theme_name() -> str:
+    """Return the globally active theme name."""
+    return _current_theme
 
 
 def _load_all():

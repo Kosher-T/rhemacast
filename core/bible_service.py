@@ -396,16 +396,49 @@ def _import_xml(filepath: str) -> str:
 
 
 def _import_csv(filepath: str) -> str:
-    """Convert CSV to JSON. Returns JSON path."""
+    """Convert CSV to JSON. Returns JSON path.
+
+    Handles two CSV formats:
+      1. Standard: columns book, chapter, verse, text (and optional version)
+      2. Reference-based: first column is "Reference" (e.g. "Genesis 1:1"),
+         second column is the verse text. Version derived from filename.
+    """
+    import re as _re
+
     versions: dict = {}
     with open(filepath, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+
+        # Detect reference-based format (e.g. BSB.csv: "Reference,Berean Standard Bible")
+        is_ref_format = len(fieldnames) >= 2 and fieldnames[0].strip().lower() == "reference"
+
         for row in reader:
-            ver = row.get("version", os.path.splitext(os.path.basename(filepath))[0]).upper()
-            book = row["book"]
-            chap = str(row["chapter"])
-            verse = str(row["verse"])
-            text = row["text"].strip()
+            if is_ref_format:
+                # Parse "Genesis 1:1" → book="Genesis", chapter="1", verse="1"
+                ref_raw = row[fieldnames[0]].strip()
+                text_col = fieldnames[1].strip()
+                text = row.get(text_col, "").strip()
+                if not text:
+                    continue
+
+                # Match: "Book Name Ch:V" or "Book Name Ch:V-Range"
+                m = _re.match(r"^(.+?)\s+(\d+):(\d+)", ref_raw)
+                if not m:
+                    continue
+                book = m.group(1).strip()
+                chap = m.group(2)
+                verse = m.group(3)
+
+                # Version from filename (e.g. BSB.csv → "BSB")
+                ver = os.path.splitext(os.path.basename(filepath))[0].upper()
+            else:
+                # Standard format: book, chapter, verse, text columns
+                ver = row.get("version", os.path.splitext(os.path.basename(filepath))[0]).upper()
+                book = row["book"]
+                chap = str(row["chapter"])
+                verse = str(row["verse"])
+                text = row["text"].strip()
 
             if ver not in versions:
                 versions[ver] = {"translation": ver, "books": {}}

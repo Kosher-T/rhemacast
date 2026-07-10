@@ -15,6 +15,7 @@ import threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QTimer
 
 from ui.main_window import MainWindow
 from ui.styles import APP_STYLESHEET
@@ -72,9 +73,16 @@ class RhemaCastApp(QApplication):
             self.queue_worker.new_item.connect(pres_tab.queue_panel.add_item)
         self.queue_worker.start()
         
-        # Hardware Telemetry Worker: polls GPU/RAM → status bar
+        # Hardware Telemetry Worker: polls GPU/RAM → status bar + settings tab
         self.hw_worker = HardwareTelemetryWorker(self)
         self.hw_worker.telemetry_update.connect(self.main_window.status_bar.update_hardware)
+        # Connect to settings tab GPU section once it's lazy-loaded
+        settings_tab = self.main_window._tabs.get("SETTINGS")
+        if settings_tab:
+            def _connect_hw_to_settings():
+                if hasattr(settings_tab, 'update_gpu_hardware'):
+                    self.hw_worker.telemetry_update.connect(settings_tab.update_gpu_hardware)
+            QTimer.singleShot(500, _connect_hw_to_settings)
         self.hw_worker.start()
         
         # Transcript Stream Worker: reads from transcript_ui_queue → STT panel

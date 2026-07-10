@@ -172,3 +172,37 @@ def register_hardware_monitor_thread():
         max_restarts=3,
         critical=False  # Graceful degrade
     )
+
+
+# Module-level singleton for UI polling (used by settings tab sidebar)
+_singleton_monitor = None
+
+def get_hardware_info() -> dict:
+    """Returns current GPU + RAM metrics. Called by settings tab sidebar every 2s."""
+    global _singleton_monitor
+    if _singleton_monitor is None:
+        _singleton_monitor = HardwareMonitor()
+    
+    info = {}
+    gpu = _singleton_monitor.poll_gpu()
+    if gpu:
+        info["vram_used_mb"] = gpu.get("gpu_vram_used_mb", 0)
+        info["temperature_c"] = gpu.get("gpu_temp_c", 0)
+        info["gpu_util_pct"] = gpu.get("gpu_util_pct", 0)
+        info["is_throttled"] = gpu.get("is_throttled", False)
+    
+    # VRAM total from NVML
+    try:
+        import pynvml
+        if _singleton_monitor.nvml_available:
+            mem = pynvml.nvmlDeviceGetMemoryInfo(_singleton_monitor.gpu_handle)
+            info["vram_total_mb"] = mem.total / (1024 * 1024)
+    except Exception:
+        info["vram_total_mb"] = info.get("vram_used_mb", 0)
+    
+    ram = _singleton_monitor.poll_ram()
+    if ram:
+        info["ram_available_mb"] = ram.get("ram_available_mb", 0)
+        info["ram_percent"] = ram.get("ram_percent", 0)
+    
+    return info

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListView, QLineEdit, QFrame, QScrollArea, QStackedWidget,
     QStyleOptionViewItem, QStyledItemDelegate, QStyle, QMessageBox,
-    QMenu, QInputDialog
+    QMenu, QInputDialog, QAbstractItemView
 )
 from PyQt6.QtGui import QIcon, QWheelEvent, QFontMetrics, QDrag, QAction, QCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint
@@ -26,7 +26,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstract
 from ui.styles import (
     PANEL_BODY_STYLE, SLATE_300, SLATE_500, BLUE_500,
     TRANSLATION_BTN_INACTIVE, TRANSLATION_BTN_ACTIVE,
-    VERSE_EVEN_BG, VERSE_ODD_BG, VERSE_SELECTED_BG, VERSE_HOVER_BG,
+    VERSE_EVEN_BG, VERSE_ODD_BG, VERSE_SELECTED_BG, VERSE_HOVER_BG, VERSE_SELECTED_TEXT,
     BORDER_SUBTLE, SLATE_950, WHITE
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
@@ -130,10 +130,44 @@ class VerseListModel(QAbstractListModel):
 class _VerseListView(QListView):
     """QListView that snaps wheel-scroll to row boundaries.
 
-    Without this, the default pixel-based scrolling causes the viewport
-    to alternate between landing on one row and skipping to the next,
-    because the pixel step is not an exact multiple of _ROW_HEIGHT.
+    Supports multi-select (Ctrl/Shift+click). Alt+Left-click queues the
+    verse(s) under the cursor into the schedule.
     """
+
+    verse_alt_clicked = pyqtSignal(list)  # list of verse dicts
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Intercept Alt+click on the viewport before QListView sees it.
+
+        This prevents Qt from starting a rubber-band selection while still
+        letting normal (non-Alt) clicks flow through.
+        """
+        if (obj is self.viewport() and
+                event.type() == event.Type.MouseButtonPress and
+                event.button() == Qt.MouseButton.LeftButton and
+                event.modifiers() & Qt.KeyboardModifier.AltModifier):
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                model = self.model()
+                selected = self.selectionModel().selectedRows()
+                if index in selected and selected:
+                    targets = selected
+                else:
+                    targets = [index]
+                verses = []
+                for sel_idx in targets:
+                    verse = model.verse_at(sel_idx.row()) if hasattr(model, 'verse_at') else None
+                    if verse:
+                        verses.append(verse)
+                if verses:
+                    self.verse_alt_clicked.emit(verses)
+            return True  # consumed — do not let QListView start rubber-band
+        return super().eventFilter(obj, event)
 
     def wheelEvent(self, event: QWheelEvent):
         vbar = self.verticalScrollBar()
@@ -217,7 +251,8 @@ class VerseDelegate(QStyledItemDelegate):
 
         # Verse text
         text_rect = option.rect.adjusted(68, 0, -8, 0)
-        painter.setPen(QPen(QColor(SLATE_300)))
+        text_color = VERSE_SELECTED_TEXT if is_selected else SLATE_300
+        painter.setPen(QPen(QColor(text_color)))
         font.setPixelSize(12)
         font.setBold(False)
         painter.setFont(font)
@@ -426,6 +461,11 @@ class BrowserPanel(QWidget):
 
     # Emitted when operator double-clicks a translation
     broadcast_in_version = pyqtSignal(str)
+    # Emitted when operator single-clicks a verse (for preview update)
+    verse_clicked = pyqtSignal(str)
+    # Emitted when operator Alt+clicks verse(s) to queue them into the schedule.
+    # Payload is a list of verse dicts (book/chapter/verse/text/translation/theme).
+    verses_to_schedule = pyqtSignal(list)
 
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
@@ -592,6 +632,7 @@ class BrowserPanel(QWidget):
         self._delegate = VerseDelegate()
 
         self.verse_list = _VerseListView()
+        self.verse_list._translation = self._current_translation
         self.verse_list.setModel(self._model)
         self.verse_list.setItemDelegate(self._delegate)
         self.verse_list.setUniformItemSizes(True)
@@ -605,6 +646,7 @@ class BrowserPanel(QWidget):
         """)
         self.verse_list.clicked.connect(self._on_verse_clicked)
         self.verse_list.doubleClicked.connect(self._on_verse_double_clicked)
+        self.verse_list.verse_alt_clicked.connect(self._on_verse_alt_clicked)
         layout.addWidget(self.verse_list)
 
         # ── Load entire bible + highlight Genesis 1:1 ──
@@ -634,15 +676,24 @@ class BrowserPanel(QWidget):
         self._update_navigator()
 
     def _set_highlight(self, book: str, chapter: int, verse: int):
-        """Update the highlighted verse state and select it in the list (no scroll)."""
-        self._highlighted_book = book
-        self._highlighted_chapter = chapter
-        self._highlighted_verse = verse
+        """Update the highlighted verse state and move the current index to it.
+
+        Used for programmatic navigation (predictive input, initial load) where
+        the list selection should follow. Does NOT call this from a click
+        handler — setCurrentIndex would wipe a multi-selection.
+        """
+        self._store_highlight(book, chapter, verse)
 
         row = self._model.find_row(book, chapter, verse)
         if row >= 0:
             index = self._model.index(row)
             self.verse_list.setCurrentIndex(index)
+
+    def _store_highlight(self, book: str, chapter: int, verse: int):
+        """Store the highlighted verse state without touching the view/selection."""
+        self._highlighted_book = book
+        self._highlighted_chapter = chapter
+        self._highlighted_verse = verse
 
     def _scroll_to_highlight(self):
         """Scroll the currently highlighted verse to the top of the viewport."""
@@ -664,13 +715,18 @@ class BrowserPanel(QWidget):
     # ── Verse Interaction ──────────────────────────────────────────────────
 
     def _on_verse_clicked(self, index: QModelIndex):
-        """Single click: highlight the verse and update the navigator."""
+        """Single click: highlight the verse, update navigator, and update preview.
+
+        Uses _store_highlight (not _set_highlight) so that Ctrl/Shift multi-select
+        is not wiped by setCurrentIndex.
+        """
         verse = self._model.verse_at(index.row())
         if not verse:
             return
 
-        self._set_highlight(verse["book"], verse["chapter"], verse["verse"])
+        self._store_highlight(verse["book"], verse["chapter"], verse["verse"])
         self._update_navigator()
+        self.verse_clicked.emit(self._current_translation)
 
     def _on_verse_double_clicked(self, index: QModelIndex):
         """Double click: broadcast the verse."""
@@ -678,9 +734,25 @@ class BrowserPanel(QWidget):
         if not verse:
             return
 
-        self._set_highlight(verse["book"], verse["chapter"], verse["verse"])
+        self._store_highlight(verse["book"], verse["chapter"], verse["verse"])
         self._update_navigator()
         self.broadcast_in_version.emit(self._current_translation)
+
+    def _on_verse_alt_clicked(self, verses: list):
+        """Alt+click: queue the selected verse(s) into the schedule."""
+        from core.theme_loader import get_current_theme_name
+        payload = []
+        for v in verses:
+            payload.append({
+                "book": v.get("book", ""),
+                "chapter": v.get("chapter", ""),
+                "verse": v.get("verse", ""),
+                "text": v.get("text", ""),
+                "translation": self._current_translation,
+                "theme": get_current_theme_name(),
+            })
+        if payload:
+            self.verses_to_schedule.emit(payload)
 
     # ── Navigation ─────────────────────────────────────────────────────────
 
@@ -688,6 +760,29 @@ class BrowserPanel(QWidget):
         """Handle predictive input navigation → scroll to and highlight the verse."""
         self._set_highlight(book, chapter, verse)
         self._scroll_to_highlight()
+
+    def navigate_to_reference(self, book: str, chapter: str, verse: str,
+                              translation: str = None):
+        """Navigate the browser to a specific reference, optionally switching translation.
+
+        Used by search panel to jump to a result. If *translation* is provided and
+        differs from the current one, switches translation first.
+        """
+        if translation and translation != self._current_translation:
+            # Switch translation
+            for name, btn in self._translation_buttons.items():
+                btn.set_active(name == translation)
+            self._current_translation = translation
+            self.verse_list._translation = translation
+            self.predictive_input.set_translation(translation)
+            set_setting("bible.last_translation", translation)
+            self._load_bible()
+
+        chap_int = int(chapter) if chapter else 1
+        verse_int = int(verse) if verse else 1
+        self._set_highlight(book, chap_int, verse_int)
+        self._scroll_to_highlight()
+        self._update_navigator()
 
     def _on_search_submitted(self):
         """Handle natural language search via FTS/LIKE on bible.db."""
@@ -753,6 +848,7 @@ class BrowserPanel(QWidget):
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        self.verse_list._translation = abbrev
         self.predictive_input.set_translation(abbrev)
 
         # Persist the selected translation
@@ -766,6 +862,7 @@ class BrowserPanel(QWidget):
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
+        self.verse_list._translation = abbrev
         self.predictive_input.set_translation(abbrev)
         set_setting("bible.last_translation", abbrev)
 

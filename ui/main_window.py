@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
 from ui.styles import (
@@ -17,7 +17,10 @@ from ui.styles import (
     WHITE, SLATE_400, EMERALD_500, RED_500, BORDER_SUBTLE
 )
 from ui.tabs.presentation_tab import PresentationTab
+from ui.tabs.library_tab import LibraryTab
+from ui.tabs.settings_tab import SettingsTab
 from ui.widgets.status_bar import StatusBar
+
 
 class ChromeTab(QPushButton):
     """Custom button acting as a Chrome-style tab."""
@@ -46,6 +49,7 @@ class ChromeTab(QPushButton):
                 color: {WHITE};
             }}
         """)
+
 
 class FramelessTitleBar(QWidget):
     """Custom title bar implementing dragging and Chrome tabs."""
@@ -161,6 +165,7 @@ class FramelessTitleBar(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._toggle_maximize()
 
+
 class PlaceholderTab(QWidget):
     """A lazy-loaded tab placeholder that instantiates its true widget on first show."""
     def __init__(self, init_func, parent=None):
@@ -186,6 +191,7 @@ class PlaceholderTab(QWidget):
             self.layout.addWidget(widget)
             self._loaded = True
         super().showEvent(event)
+
 
 class MainWindow(QMainWindow):
     """Main application window."""
@@ -357,9 +363,9 @@ class MainWindow(QMainWindow):
         # Add tabs (name -> widget_init_function)
         tabs_config = [
             ("PRESENTATION", lambda: PresentationTab()),
-            ("LIBRARY", lambda: QWidget()), # Mocks for now
+            ("LIBRARY", lambda: LibraryTab()),
             ("HISTORY", lambda: QWidget()),
-            ("SETTINGS", lambda: QWidget()),
+            ("SETTINGS", lambda: SettingsTab()),
             ("THEME DESIGNER", self._init_theme_designer)
         ]
         
@@ -397,6 +403,9 @@ class MainWindow(QMainWindow):
         for btn_name, btn in self._tab_buttons.items():
             btn.setChecked(btn_name == name)
             
+        # Hide sub-toolbar for tabs that don't need it
+        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS"))
+            
         # Switch stack
         self.stack.setCurrentIndex(index)
         
@@ -433,7 +442,150 @@ class MainWindow(QMainWindow):
             
         return widget
 
+    def event(self, e):
+        # Qt's QShortcutOverride event intercepts F1 for "What's This?" help.
+        # By accepting it here without triggering the action, we let the normal
+        # keyPress flow reach our global event filter (KeyboardHandler) instead.
+        from PyQt6.QtCore import QEvent as _QE
+        if (e.type() == _QE.Type.ShortcutOverride
+                and e.key() == Qt.Key.Key_F1):
+            e.accept()
+            return True
+        return super().event(e)
+
     def _setup_hotkeys(self):
+        """Setup hotkeys from saved bindings or defaults."""
+        self._load_hotkey_bindings()
+        self._create_shortcuts()
+        
+        # Connect to SettingsTab's HotkeyEditor for live updates
+        settings_tab = self._tabs.get("SETTINGS")
+        if settings_tab:
+            # Wait for lazy load
+            def _on_settings_loaded():
+                if hasattr(settings_tab, '_hotkey_editor'):
+                    settings_tab._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
+            QTimer.singleShot(100, _on_settings_loaded)
+
+    def _load_hotkey_bindings(self):
+        """Load saved bindings from settings database."""
+        from core.database import get_setting
+        import json
+        saved = get_setting("hotkeys.bindings", "{}")
+        try:
+            self._hotkey_bindings = json.loads(saved)
+        except Exception:
+            self._hotkey_bindings = {}
+        
+        # Defaults
+        defaults = {
+            "display_verse": "F5",
+            "clear_recall": "F6",
+            "open_search": "Ctrl+Shift+S",
+            "next_verse": "Right",
+            "prev_verse": "Left",
+            "toggle_transcription": "F7",
+            "add_to_schedule": "Alt+Return",
+            "double_click": "D",
+        }
+        for action, key in defaults.items():
+            if action not in self._hotkey_bindings:
+                self._hotkey_bindings[action] = key
+
+    def _create_shortcuts(self):
+        """Create QShortcuts from current bindings."""
+        # Clear existing shortcuts
+        for shortcut in getattr(self, '_shortcuts', []):
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self._shortcuts = []
+        
+        # Map action IDs to handler methods
+        action_handlers = {
+            "display_verse": self._hotkey_display,
+            "clear_recall": self._hotkey_clear,
+            "open_search": self._hotkey_search,
+            "next_verse": self._hotkey_next_verse,
+            "prev_verse": self._hotkey_prev_verse,
+            "toggle_transcription": self._hotkey_toggle_transcription,
+            "add_to_schedule": self._hotkey_add_to_schedule,
+            "double_click": self._hotkey_double_click,
+        }
+        
+        for action_id, key in self._hotkey_bindings.items():
+            if action_id in action_handlers and key:
+                shortcut = QShortcut(QKeySequence(key), self)
+                shortcut.activated.connect(action_handlers[action_id])
+                self._shortcuts.append(shortcut)
+
+    def _on_hotkey_bindings_changed(self, bindings: dict):
+        """Called when user changes bindings in Settings."""
+        self._hotkey_bindings = bindings
+        self._create_shortcuts()
+
+    def _hotkey_next_verse(self):
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "live_preview"):
+            pres_tab.live_preview.next_verse.emit()
+
+    def _hotkey_prev_verse(self):
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "live_preview"):
+            pres_tab.live_preview.prev_verse.emit()
+
+    def _hotkey_toggle_transcription(self):
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "stt_panel"):
+            if pres_tab.stt_panel.is_recording:
+                pres_tab.stt_panel.transcription_stopped.emit()
+            else:
+                pres_tab.stt_panel.transcription_started.emit()
+
+    def _hotkey_add_to_schedule(self):
+        """Add current browser selection to schedule."""
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            # Trigger Alt+click behavior programmatically
+            pass
+
+    def _hotkey_double_click(self):
+        """Simulate a mouse double-click at the current cursor position."""
+        from PyQt6.QtGui import QCursor, QMouseEvent
+        from PyQt6.QtCore import Qt as QtCore, QCoreApplication
+        import time
+        
+        pos = QCursor.pos()
+        
+        # Double click = two quick click events + double click event
+        for _ in range(2):
+            press = QMouseEvent(
+                QMouseEvent.Type.MouseButtonPress,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier
+            )
+            release = QMouseEvent(
+                QMouseEvent.Type.MouseButtonRelease,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier
+            )
+            QCoreApplication.sendEvent(QCoreApplication.instance(), press)
+            QCoreApplication.sendEvent(QCoreApplication.instance(), release)
+            time.sleep(0.01)
+        
+        double_click = QMouseEvent(
+            QMouseEvent.Type.MouseButtonDblClick,
+            pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        )
+        QCoreApplication.sendEvent(QCoreApplication.instance(), double_click)
+
+    def _setup_hotkeys_old(self):
         # Default bindings (F1-F12)
         # Display: F5, Clear: F6
         self.shortcut_display = QShortcut(QKeySequence("F5"), self)
@@ -441,6 +593,10 @@ class MainWindow(QMainWindow):
         
         self.shortcut_clear = QShortcut(QKeySequence("F6"), self)
         self.shortcut_clear.activated.connect(self._hotkey_clear)
+
+        # Advanced Search: Ctrl+Shift+S
+        self.shortcut_search = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+        self.shortcut_search.activated.connect(self._hotkey_search)
 
     def _hotkey_display(self):
         # Trigger display action (e.g. from the selected item in the queue)
@@ -450,8 +606,16 @@ class MainWindow(QMainWindow):
         # Trigger clear/recall
         # The presentation tab handles this logic, we could signal it
         pres_tab = self._tabs.get("PRESENTATION")
-        if pres_tab and hasattr(pres_tab, "live_output"):
-            pres_tab.live_output.clear_recall.emit()
+        if pres_tab and hasattr(pres_tab, "live_preview"):
+            pres_tab.live_preview.clear_recall.emit()
+
+    def _hotkey_search(self):
+        # Switch to Presentation tab, then to Search sub-tab
+        pres_idx = 0  # PRESENTATION is the first tab
+        self._switch_tab(pres_idx, "PRESENTATION")
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "queue_panel"):
+            pres_tab.queue_panel.switch_to_search()
 
     def _toggle_service(self):
         """Toggle the backend service threads on/off."""

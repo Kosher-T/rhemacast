@@ -1,18 +1,17 @@
 """
 ui/panels/stt_panel.py
 
-Right panel: STT transcript monitor + operator preview.
+Right panel: STT transcript monitor.
 Shows live transcription output from Thread 2.
 Emits transcription_started/stopped signals for backend control.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QFrame, QSplitter
+    QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ui.widgets.aspect_ratio import AspectRatioWidget
 from ui.styles import (
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
     EMERALD_400, EMERALD_500, SLATE_100, SLATE_400, SLATE_500,
@@ -21,7 +20,7 @@ from ui.styles import (
 
 
 class STTPanel(QWidget):
-    """STT Monitor + Operator Preview panel (right side)."""
+    """STT Monitor panel (right side)."""
 
     transcription_started = pyqtSignal()
     transcription_stopped = pyqtSignal()
@@ -35,17 +34,7 @@ class STTPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Vertical Splitter: STT on top, Preview on bottom ──
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
-
-        # ── STT Section ──
-        stt_container = QWidget()
-        stt_layout = QVBoxLayout(stt_container)
-        stt_layout.setContentsMargins(0, 0, 0, 0)
-        stt_layout.setSpacing(0)
-
-        # Header
+        # ── Header ──
         header = QWidget()
         header.setStyleSheet(PANEL_HEADER_STYLE)
         header_layout = QHBoxLayout(header)
@@ -75,7 +64,7 @@ class STTPanel(QWidget):
         self.transcribe_btn.clicked.connect(self._toggle_transcription)
         header_layout.addWidget(self.transcribe_btn)
 
-        stt_layout.addWidget(header)
+        layout.addWidget(header)
 
         # Transcript output
         self.transcript_view = QTextEdit()
@@ -95,63 +84,7 @@ class STTPanel(QWidget):
             f'<p style="color: {EMERALD_400}; opacity: 0.6; font-style: italic;">'
             '🟢 // Audio Stream Ready</p>'
         )
-        stt_layout.addWidget(self.transcript_view)
-
-        splitter.addWidget(stt_container)
-
-        # ── Preview Section ──
-        preview_container = QWidget()
-        preview_layout = QVBoxLayout(preview_container)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(0)
-
-        preview_header = QWidget()
-        preview_header.setStyleSheet(f"""
-            border-top: 1px solid {BORDER_SUBTLE};
-            padding: 6px 12px;
-        """)
-        preview_header_layout = QHBoxLayout(preview_header)
-        preview_header_layout.setContentsMargins(12, 4, 12, 4)
-        preview_title = QLabel("OPERATOR PREVIEW")
-        preview_title.setStyleSheet(f"""
-            color: {SLATE_500}; font-size: 9px; font-weight: 700;
-            letter-spacing: 2px;
-        """)
-        preview_header_layout.addWidget(preview_title)
-        preview_layout.addWidget(preview_header, 0) # stretch=0
-
-        # Preview viewport
-        self.preview_frame = QFrame()
-        self.preview_frame.setObjectName("OperatorPreviewViewport")
-        self.preview_frame.setStyleSheet(f"""
-            QFrame#OperatorPreviewViewport {{
-                background: black;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                border-radius: 6px;
-                margin: 8px;
-            }}
-        """)
-        
-        self.preview_ar_widget = AspectRatioWidget(self.preview_frame, aspect_ratio=16.0/9.0, min_width=160, max_width=540)
-
-        preview_inner = QVBoxLayout(self.preview_frame)
-        preview_inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.preview_label = QLabel("PREVIEW")
-        self.preview_label.setStyleSheet(f"""
-            color: rgba(255, 255, 255, 12);
-            font-size: 18px; font-weight: 900;
-            font-style: italic; letter-spacing: 4px;
-        """)
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_inner.addWidget(self.preview_label)
-
-        preview_layout.addWidget(self.preview_ar_widget, 1) # stretch=1
-        splitter.addWidget(preview_container)
-
-        # Default ratio: 70% STT, 30% Preview
-        splitter.setSizes([350, 150])
-        layout.addWidget(splitter)
+        layout.addWidget(self.transcript_view)
 
     def _toggle_transcription(self):
         self._is_transcribing = not self._is_transcribing
@@ -197,22 +130,3 @@ class STTPanel(QWidget):
     def append_transcript(self, text: str):
         """Append a new transcript chunk to the monitor."""
         self.transcript_view.append(f'<p style="color: {SLATE_100};">{text}</p>')
-
-    def update_preview(self, text: str, ref: str):
-        """Update the operator preview with the current display state."""
-        self.preview_label.setText(f"{text}\n\n— {ref}")
-        self.preview_label.setStyleSheet(f"""
-            color: {WHITE};
-            font-size: 13px; font-weight: 600;
-            font-style: normal; letter-spacing: 0px;
-            padding: 12px;
-        """)
-
-    def clear_preview(self):
-        """Reset the preview to its default state."""
-        self.preview_label.setText("PREVIEW")
-        self.preview_label.setStyleSheet(f"""
-            color: rgba(255, 255, 255, 12);
-            font-size: 18px; font-weight: 900;
-            font-style: italic; letter-spacing: 4px;
-        """)
