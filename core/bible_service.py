@@ -185,6 +185,52 @@ def get_verse_count(version: str, book: str, chapter: int) -> int:
         return 0
 
 
+def get_next_verse(version: str, book: str, chapter: int, verse: int) -> Optional[Dict]:
+    """Return the verse immediately after the given reference in canonical order."""
+    try:
+        conn = _get_connection()
+        cursor = conn.execute(
+            "SELECT book, chapter, verse_num, text FROM verses "
+            "WHERE version = ? AND id > ("
+            "  SELECT id FROM verses "
+            "  WHERE version = ? AND book = ? AND chapter = ? AND verse_num = ?"
+            ") ORDER BY id ASC LIMIT 1",
+            (version.upper(), version.upper(), book, chapter, verse)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {"book": row["book"], "chapter": row["chapter"],
+                    "verse": row["verse_num"], "text": row["text"]}
+        return None
+    except Exception as e:
+        logger.error(f"Failed to query next verse: {e}")
+        return None
+
+
+def get_prev_verse(version: str, book: str, chapter: int, verse: int) -> Optional[Dict]:
+    """Return the verse immediately before the given reference in canonical order."""
+    try:
+        conn = _get_connection()
+        cursor = conn.execute(
+            "SELECT book, chapter, verse_num, text FROM verses "
+            "WHERE version = ? AND id < ("
+            "  SELECT id FROM verses "
+            "  WHERE version = ? AND book = ? AND chapter = ? AND verse_num = ?"
+            ") ORDER BY id DESC LIMIT 1",
+            (version.upper(), version.upper(), book, chapter, verse)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {"book": row["book"], "chapter": row["chapter"],
+                    "verse": row["verse_num"], "text": row["text"]}
+        return None
+    except Exception as e:
+        logger.error(f"Failed to query prev verse: {e}")
+        return None
+
+
 def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> List[Dict]:
     """
     Simple FTS5 search on verse text within a specific translation.
@@ -196,6 +242,10 @@ def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> Lis
     try:
         conn = _get_connection()
         
+        # Use raw query for FTS5 - let it handle stopwords naturally
+        # Phrase matching breaks with stopwords since they're removed during indexing
+        fts_query = query.strip()
+        
         # Try FTS5 first (verses_fts table exists in bible.db)
         try:
             cursor = conn.execute(
@@ -205,7 +255,7 @@ def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> Lis
                 "WHERE fts.text MATCH ? AND v.version = ? "
                 "ORDER BY rank "
                 "LIMIT ?",
-                (query, version.upper(), limit)
+                (fts_query, version.upper(), limit)
             )
             results = [
                 {"chapter": row["chapter"], "verse": row["verse_num"],
@@ -333,7 +383,9 @@ def hybrid_search(query: str, version: str = "KJV", limit: int = 20) -> List[Dic
             "book": r["book"],
             "chapter": r["chapter"],
             "verse": r["verse_num"],
+            "verse_num": r["verse_num"],
             "text": r["text"],
+            "confidence": r["confidence"],
         })
     return results
 

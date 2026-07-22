@@ -31,6 +31,12 @@ def set_current_theme(name: str):
     """Set the globally active theme name."""
     global _current_theme
     _current_theme = name
+    # Persist to settings
+    try:
+        from core.database import set_setting
+        set_setting("display.last_theme", name)
+    except Exception:
+        pass
 
 
 def get_current_theme_name() -> str:
@@ -60,6 +66,17 @@ def _load_all():
 
     _loaded = True
     logger.info(f"Loaded {len(_cache)} themes: {list(_cache.keys())}")
+
+    # Load saved theme from settings
+    try:
+        from core.database import get_setting
+        saved = get_setting("display.last_theme")
+        if saved and saved in _cache:
+            global _current_theme
+            _current_theme = saved
+            logger.info(f"Loaded saved theme: {saved}")
+    except Exception:
+        pass
 
 
 def get_theme(name: str) -> Optional[dict]:

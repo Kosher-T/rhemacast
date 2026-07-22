@@ -156,12 +156,11 @@ def test_startup_checks_critical_fail():
     can_boot, results = validator.run_all_checks()
     assert can_boot is False
     
-def test_websocket_reject_remote():
-    """Attempt WebSocket connection from non-localhost; verify connection rejected."""
-    # We check that the websocket host is hardcoded to localhost in the source
+def test_websocket_allow_remote():
+    """Verify WebSocket host is configured to allow remote connections (0.0.0.0)."""
     with open("core/websocket_server.py") as f:
         content = f.read()
-    assert 'ws_host = "127.0.0.1"' in content
+    assert 'ws_host = "0.0.0.0"' in content
 
 def test_html_sanitization():
     """Inject XSS payload into scripture text; verify it's escaped before broadcast."""

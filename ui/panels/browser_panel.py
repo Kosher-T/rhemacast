@@ -130,11 +130,8 @@ class VerseListModel(QAbstractListModel):
 class _VerseListView(QListView):
     """QListView that snaps wheel-scroll to row boundaries.
 
-    Supports multi-select (Ctrl/Shift+click). Alt+Left-click queues the
-    verse(s) under the cursor into the schedule.
+    Supports multi-select (Ctrl/Shift+click).
     """
-
-    verse_alt_clicked = pyqtSignal(list)  # list of verse dicts
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -142,31 +139,6 @@ class _VerseListView(QListView):
         self.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        """Intercept Alt+click on the viewport before QListView sees it.
-
-        This prevents Qt from starting a rubber-band selection while still
-        letting normal (non-Alt) clicks flow through.
-        """
-        if (obj is self.viewport() and
-                event.type() == event.Type.MouseButtonPress and
-                event.button() == Qt.MouseButton.LeftButton and
-                event.modifiers() & Qt.KeyboardModifier.AltModifier):
-            index = self.indexAt(event.position().toPoint())
-            if index.isValid():
-                model = self.model()
-                selected = self.selectionModel().selectedRows()
-                if index in selected and selected:
-                    targets = selected
-                else:
-                    targets = [index]
-                verses = []
-                for sel_idx in targets:
-                    verse = model.verse_at(sel_idx.row()) if hasattr(model, 'verse_at') else None
-                    if verse:
-                        verses.append(verse)
-                if verses:
-                    self.verse_alt_clicked.emit(verses)
-            return True  # consumed — do not let QListView start rubber-band
         return super().eventFilter(obj, event)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -463,9 +435,10 @@ class BrowserPanel(QWidget):
     broadcast_in_version = pyqtSignal(str)
     # Emitted when operator single-clicks a verse (for preview update)
     verse_clicked = pyqtSignal(str)
-    # Emitted when operator Alt+clicks verse(s) to queue them into the schedule.
-    # Payload is a list of verse dicts (book/chapter/verse/text/translation/theme).
-    verses_to_schedule = pyqtSignal(list)
+    # Emitted when Enter is pressed in the navigator → push to live
+    navigator_push = pyqtSignal(str, str, str)
+    # Emitted when translation changes (for FTS search panel)
+    translation_changed = pyqtSignal(str)
 
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
@@ -602,6 +575,7 @@ class BrowserPanel(QWidget):
         self.predictive_input = PredictiveScriptureInput()
         self.predictive_input.setStyleSheet("background: transparent; border: none;")
         self.predictive_input.navigate_requested.connect(self._on_navigate_requested)
+        self.predictive_input.push_requested.connect(self._on_navigator_push)
         self.predictive_input.set_translation(self._current_translation)
         self.nav_stack.addWidget(self.predictive_input)
 
@@ -633,6 +607,7 @@ class BrowserPanel(QWidget):
 
         self.verse_list = _VerseListView()
         self.verse_list._translation = self._current_translation
+
         self.verse_list.setModel(self._model)
         self.verse_list.setItemDelegate(self._delegate)
         self.verse_list.setUniformItemSizes(True)
@@ -646,7 +621,6 @@ class BrowserPanel(QWidget):
         """)
         self.verse_list.clicked.connect(self._on_verse_clicked)
         self.verse_list.doubleClicked.connect(self._on_verse_double_clicked)
-        self.verse_list.verse_alt_clicked.connect(self._on_verse_alt_clicked)
         layout.addWidget(self.verse_list)
 
         # ── Load entire bible + highlight Genesis 1:1 ──
@@ -738,28 +712,16 @@ class BrowserPanel(QWidget):
         self._update_navigator()
         self.broadcast_in_version.emit(self._current_translation)
 
-    def _on_verse_alt_clicked(self, verses: list):
-        """Alt+click: queue the selected verse(s) into the schedule."""
-        from core.theme_loader import get_current_theme_name
-        payload = []
-        for v in verses:
-            payload.append({
-                "book": v.get("book", ""),
-                "chapter": v.get("chapter", ""),
-                "verse": v.get("verse", ""),
-                "text": v.get("text", ""),
-                "translation": self._current_translation,
-                "theme": get_current_theme_name(),
-            })
-        if payload:
-            self.verses_to_schedule.emit(payload)
-
     # ── Navigation ─────────────────────────────────────────────────────────
 
     def _on_navigate_requested(self, book: str, chapter: int, verse: int):
         """Handle predictive input navigation → scroll to and highlight the verse."""
         self._set_highlight(book, chapter, verse)
         self._scroll_to_highlight()
+
+    def _on_navigator_push(self, book: str, chapter: int, verse: int):
+        """Handle Enter in navigator → push the verse to live."""
+        self.navigator_push.emit(book, str(chapter), str(verse))
 
     def navigate_to_reference(self, book: str, chapter: str, verse: str,
                               translation: str = None):
@@ -857,6 +819,12 @@ class BrowserPanel(QWidget):
         # Reload the entire bible in the new translation
         self._load_bible()
 
+        # Update preview with the highlighted verse in the new translation
+        self.verse_clicked.emit(self._current_translation)
+
+        # Notify FTS search panel
+        self.translation_changed.emit(self._current_translation)
+
     def _on_translation_double_click(self, abbrev: str):
         """Double-click: switch translation, navigate to highlighted verse, push to live."""
         for name, btn in self._translation_buttons.items():
@@ -871,6 +839,9 @@ class BrowserPanel(QWidget):
 
         # Push the highlighted verse to live display
         self.broadcast_in_version.emit(self._current_translation)
+
+        # Notify FTS search panel
+        self.translation_changed.emit(self._current_translation)
 
     def _on_sort_translations(self, order: str):
         """Sort translation buttons alphabetically by display name."""

@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
-from PyQt6.QtCore import Qt, QPoint, QTimer
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
 from ui.styles import (
@@ -168,10 +168,13 @@ class FramelessTitleBar(QWidget):
 
 class PlaceholderTab(QWidget):
     """A lazy-loaded tab placeholder that instantiates its true widget on first show."""
+    loaded = pyqtSignal(object)  # emits the real widget once loaded
+
     def __init__(self, init_func, parent=None):
         super().__init__(parent)
         self.init_func = init_func
         self._loaded = False
+        self.real_widget = None
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -186,10 +189,12 @@ class PlaceholderTab(QWidget):
         if not self._loaded:
             # Instantiate the real widget
             widget = self.init_func()
+            self.real_widget = widget
             self.layout.removeWidget(self.loading_label)
             self.loading_label.deleteLater()
             self.layout.addWidget(widget)
             self._loaded = True
+            self.loaded.emit(widget)
         super().showEvent(event)
 
 
@@ -282,8 +287,16 @@ class MainWindow(QMainWindow):
         sep = QLabel("|")
         sep.setStyleSheet(f"color: {SLATE_600}; font-size: 11px; margin: 0 4px;")
         sub_layout.addWidget(sep)
+
+        # Schedule button — shows dropdown of available schedules
+        self.schedule_btn = QPushButton("Schedule")
+        self.schedule_btn.setStyleSheet(_greyed_btn_style)
+        self.schedule_btn.setEnabled(True)
+        self.schedule_btn.setToolTip("Load a schedule (click) or show schedule menu (hold)")
+        self.schedule_btn.clicked.connect(self._show_schedule_menu)
+        sub_layout.addWidget(self.schedule_btn)
         
-        for text in ["Schedule", "Remote", "Live Sync"]:
+        for text in ["Remote", "Live Sync"]:
             btn = QPushButton(text)
             btn.setStyleSheet(_greyed_btn_style)
             btn.setEnabled(False)
@@ -377,6 +390,9 @@ class MainWindow(QMainWindow):
             else:
                 # Other tabs are lazy-loaded Placeholders
                 content = PlaceholderTab(init_func)
+                # Connect hotkey editor when Settings tab finishes loading
+                if name == "SETTINGS":
+                    content.loaded.connect(self._on_settings_tab_loaded)
                 
             self.stack.addWidget(content)
             self._tabs[name] = content
@@ -408,6 +424,11 @@ class MainWindow(QMainWindow):
             
         # Switch stack
         self.stack.setCurrentIndex(index)
+
+    def _on_settings_tab_loaded(self, widget):
+        """Connect hotkey editor signal once the Settings tab finishes lazy-loading."""
+        if hasattr(widget, '_hotkey_editor'):
+            widget._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
         
     def _init_theme_designer(self) -> QWidget:
         # Phase 9.5: Theme Designer (Minimal Viable Version)
@@ -443,12 +464,15 @@ class MainWindow(QMainWindow):
         return widget
 
     def event(self, e):
-        # Qt's QShortcutOverride event intercepts F1 for "What's This?" help.
-        # By accepting it here without triggering the action, we let the normal
-        # keyPress flow reach our global event filter (KeyboardHandler) instead.
+        # Qt intercepts F1 for "What's This?" help. During hotkey capture mode,
+        # accept the ShortcutOverride so the key reaches our KeyboardHandler
+        # instead of being eaten by Qt's help system. During normal operation,
+        # let it through so QShortcut can match it.
         from PyQt6.QtCore import QEvent as _QE
+        from ui.widgets.hotkey_editor import KeyboardHandler
         if (e.type() == _QE.Type.ShortcutOverride
-                and e.key() == Qt.Key.Key_F1):
+                and e.key() == Qt.Key.Key_F1
+                and KeyboardHandler._target is not None):
             e.accept()
             return True
         return super().event(e)
@@ -458,14 +482,11 @@ class MainWindow(QMainWindow):
         self._load_hotkey_bindings()
         self._create_shortcuts()
         
-        # Connect to SettingsTab's HotkeyEditor for live updates
-        settings_tab = self._tabs.get("SETTINGS")
-        if settings_tab:
-            # Wait for lazy load
-            def _on_settings_loaded():
-                if hasattr(settings_tab, '_hotkey_editor'):
-                    settings_tab._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
-            QTimer.singleShot(100, _on_settings_loaded)
+        # Connect to KeyboardHandler capture signals to disable shortcuts during capture
+        from ui.widgets.hotkey_editor import KeyboardHandler
+        KeyboardHandler._instance = KeyboardHandler()
+        KeyboardHandler._instance.capture_started.connect(self._disable_shortcuts)
+        KeyboardHandler._instance.capture_finished.connect(self._enable_shortcuts)
 
     def _load_hotkey_bindings(self):
         """Load saved bindings from settings database."""
@@ -479,9 +500,9 @@ class MainWindow(QMainWindow):
         
         # Defaults
         defaults = {
-            "display_verse": "F5",
             "clear_recall": "F6",
-            "open_search": "Ctrl+Shift+S",
+            "fts_search": "Ctrl+Shift+F",
+            "fuzzy_search": "Ctrl+Shift+S",
             "next_verse": "Right",
             "prev_verse": "Left",
             "toggle_transcription": "F7",
@@ -502,9 +523,9 @@ class MainWindow(QMainWindow):
         
         # Map action IDs to handler methods
         action_handlers = {
-            "display_verse": self._hotkey_display,
             "clear_recall": self._hotkey_clear,
-            "open_search": self._hotkey_search,
+            "fts_search": self._hotkey_fts_search,
+            "fuzzy_search": self._hotkey_fuzzy_search,
             "next_verse": self._hotkey_next_verse,
             "prev_verse": self._hotkey_prev_verse,
             "toggle_transcription": self._hotkey_toggle_transcription,
@@ -522,6 +543,16 @@ class MainWindow(QMainWindow):
         """Called when user changes bindings in Settings."""
         self._hotkey_bindings = bindings
         self._create_shortcuts()
+
+    def _disable_shortcuts(self):
+        """Disable all shortcuts during hotkey capture."""
+        for shortcut in getattr(self, '_shortcuts', []):
+            shortcut.setEnabled(False)
+
+    def _enable_shortcuts(self):
+        """Re-enable all shortcuts after hotkey capture."""
+        for shortcut in getattr(self, '_shortcuts', []):
+            shortcut.setEnabled(True)
 
     def _hotkey_next_verse(self):
         pres_tab = self._tabs.get("PRESENTATION")
@@ -542,65 +573,53 @@ class MainWindow(QMainWindow):
                 pres_tab.stt_panel.transcription_started.emit()
 
     def _hotkey_add_to_schedule(self):
-        """Add current browser selection to schedule."""
+        """Add the currently highlighted browser verse to schedule."""
         pres_tab = self._tabs.get("PRESENTATION")
-        if pres_tab and hasattr(pres_tab, "browser_panel"):
-            # Trigger Alt+click behavior programmatically
-            pass
+        if pres_tab and hasattr(pres_tab, "browser_panel") and hasattr(pres_tab, "schedule_panel"):
+            browser = pres_tab.browser_panel
+            verse_data = browser.get_selected_verse()
+            if verse_data:
+                item_data = {
+                    "ref": f"{verse_data.get('book', '')} {verse_data.get('chapter', '')}:{verse_data.get('verse', '')}".strip(),
+                    "book": verse_data.get("book", ""),
+                    "chapter": verse_data.get("chapter", ""),
+                    "verse": verse_data.get("verse", ""),
+                    "text": verse_data.get("text", ""),
+                    "translation": verse_data.get("translation", browser._current_translation),
+                    "theme": verse_data.get("theme", "default"),
+                }
+                pres_tab.schedule_panel.add_item(item_data)
 
     def _hotkey_double_click(self):
         """Simulate a mouse double-click at the current cursor position."""
-        from PyQt6.QtGui import QCursor, QMouseEvent
-        from PyQt6.QtCore import Qt as QtCore, QCoreApplication
-        import time
-        
-        pos = QCursor.pos()
-        
-        # Double click = two quick click events + double click event
-        for _ in range(2):
-            press = QMouseEvent(
-                QMouseEvent.Type.MouseButtonPress,
-                pos,
+        from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt as QtCore, QPointF
+
+        global_point = QCursor.pos()
+        target = QApplication.widgetAt(global_point)
+        if not target:
+            return
+
+        local_pos = QPointF(target.mapFromGlobal(global_point))
+        global_pos = QPointF(global_point)
+        device = QPointingDevice.primaryPointingDevice()
+
+        def _make_event(event_type):
+            return QMouseEvent(
+                event_type,
+                local_pos,
+                global_pos,
                 Qt.MouseButton.LeftButton,
                 Qt.MouseButton.LeftButton,
-                Qt.KeyboardModifier.NoModifier
+                Qt.KeyboardModifier.NoModifier,
+                device,
             )
-            release = QMouseEvent(
-                QMouseEvent.Type.MouseButtonRelease,
-                pos,
-                Qt.MouseButton.LeftButton,
-                Qt.MouseButton.LeftButton,
-                Qt.KeyboardModifier.NoModifier
-            )
-            QCoreApplication.sendEvent(QCoreApplication.instance(), press)
-            QCoreApplication.sendEvent(QCoreApplication.instance(), release)
-            time.sleep(0.01)
-        
-        double_click = QMouseEvent(
-            QMouseEvent.Type.MouseButtonDblClick,
-            pos,
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier
-        )
-        QCoreApplication.sendEvent(QCoreApplication.instance(), double_click)
 
-    def _setup_hotkeys_old(self):
-        # Default bindings (F1-F12)
-        # Display: F5, Clear: F6
-        self.shortcut_display = QShortcut(QKeySequence("F5"), self)
-        self.shortcut_display.activated.connect(self._hotkey_display)
-        
-        self.shortcut_clear = QShortcut(QKeySequence("F6"), self)
-        self.shortcut_clear.activated.connect(self._hotkey_clear)
-
-        # Advanced Search: Ctrl+Shift+S
-        self.shortcut_search = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
-        self.shortcut_search.activated.connect(self._hotkey_search)
-
-    def _hotkey_display(self):
-        # Trigger display action (e.g. from the selected item in the queue)
-        pass
+        QApplication.sendEvent(target, _make_event(QMouseEvent.Type.MouseButtonPress))
+        QApplication.sendEvent(target, _make_event(QMouseEvent.Type.MouseButtonRelease))
+        QApplication.sendEvent(target, _make_event(QMouseEvent.Type.MouseButtonDblClick))
+        QApplication.sendEvent(target, _make_event(QMouseEvent.Type.MouseButtonRelease))
 
     def _hotkey_clear(self):
         # Trigger clear/recall
@@ -609,13 +628,119 @@ class MainWindow(QMainWindow):
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.clear_recall.emit()
 
-    def _hotkey_search(self):
-        # Switch to Presentation tab, then to Search sub-tab
+    def _hotkey_fuzzy_search(self):
+        # Switch to Presentation tab, then to Fuzzy Search sub-tab
         pres_idx = 0  # PRESENTATION is the first tab
         self._switch_tab(pres_idx, "PRESENTATION")
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "queue_panel"):
-            pres_tab.queue_panel.switch_to_search()
+            pres_tab.queue_panel.switch_to_fuzzy_search()
+
+    def _hotkey_fts_search(self):
+        # Switch to Presentation tab, then to FTS Search sub-tab
+        pres_idx = 0  # PRESENTATION is the first tab
+        self._switch_tab(pres_idx, "PRESENTATION")
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "queue_panel"):
+            pres_tab.queue_panel.switch_to_fts_search()
+
+    def _open_schedules_folder(self):
+        """Open the schedules folder in the system file manager."""
+        from pathlib import Path
+        import subprocess
+        import sys
+        schedules_dir = Path(__file__).resolve().parent.parent / "data" / "schedules"
+        schedules_dir.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(str(schedules_dir))
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(schedules_dir)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(schedules_dir)], check=False)
+
+    def _show_schedule_menu(self):
+        """Show dropdown menu of available schedules."""
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction
+        from pathlib import Path
+
+        # Get schedule panel from PresentationTab
+        pres_tab = self._tabs.get("PRESENTATION")
+        if not pres_tab or not hasattr(pres_tab, "schedule_panel"):
+            return
+
+        schedule_panel = pres_tab.schedule_panel
+        schedules = schedule_panel.list_schedules()
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {SLATE_950};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px;
+            }}
+            QMenu::item:selected {{
+                background: rgba(255, 255, 255, 0.1);
+            }}
+        """)
+
+        if not schedules:
+            action = menu.addAction("No schedules found")
+            action.setEnabled(False)
+        else:
+            for name, path in schedules:
+                action = menu.addAction(name)
+                action.triggered.connect(lambda checked, p=str(path): self._load_schedule(p))
+
+        # Separator before New
+        menu.addSeparator()
+
+        # New schedule option
+        new_action = menu.addAction("New")
+        new_action.triggered.connect(lambda: self._new_schedule())
+
+        menu.exec(self.schedule_btn.mapToGlobal(
+            self.schedule_btn.rect().bottomLeft()
+        ))
+
+    def _load_schedule(self, file_path: str):
+        """Load a schedule file."""
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "schedule_panel"):
+            pres_tab.schedule_panel.load_schedule(file_path)
+
+    def _new_schedule(self):
+        """Start a new empty schedule, prompting to save if current has items."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        pres_tab = self._tabs.get("PRESENTATION")
+        if not pres_tab or not hasattr(pres_tab, "schedule_panel"):
+            return
+
+        schedule_panel = pres_tab.schedule_panel
+
+        # If current schedule has items and unsaved changes, prompt to save
+        if schedule_panel.list_widget.count() > 0 and schedule_panel.is_modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "The current schedule has unsaved changes. Save before starting a new schedule?",
+                QMessageBox.StandardButton.Save |
+                QMessageBox.StandardButton.Discard |
+                QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                if not schedule_panel.save_schedule():
+                    return  # User cancelled save dialog
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return
+
+        # Clear the schedule
+        schedule_panel.clear_all(silent=True)
 
     def _toggle_service(self):
         """Toggle the backend service threads on/off."""

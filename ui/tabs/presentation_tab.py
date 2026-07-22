@@ -47,10 +47,10 @@ class PresentationTab(QWidget):
         self._current_preview = None      # Currently previewed verse dict
         self._last_cleared_display = None  # Last verse before clear (for recall)
         self._is_cleared = True
-        self._current_theme = "default"   # Active display theme
-        
-        # Schedule navigation index
-        self._schedule_index = -1
+
+        # Load saved theme from settings
+        from core.database import get_setting
+        self._current_theme = get_setting("display.last_theme", "default")   # Active display theme
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(4, 4, 4, 4)
@@ -145,8 +145,11 @@ class PresentationTab(QWidget):
         # Browser panel: double-click → update live + preview
         self.browser_panel.broadcast_in_version.connect(self._on_browser_broadcast)
 
-        # Browser panel: Alt+click verse(s) → add to schedule
-        self.browser_panel.verses_to_schedule.connect(self._on_verses_to_schedule)
+        # Browser panel: Enter in navigator → push to live
+        self.browser_panel.navigator_push.connect(self._on_navigator_push)
+
+        # Browser panel: translation changed → update FTS search panel
+        self.browser_panel.translation_changed.connect(self._on_translation_changed)
 
         # Search panel: send verse to schedule
         self.queue_panel.verse_to_schedule.connect(self._on_search_to_schedule)
@@ -169,6 +172,13 @@ class PresentationTab(QWidget):
         # Schedule panel: single-click → preview, double-click → live
         self.schedule_panel.item_clicked.connect(self._on_schedule_click)
         self.schedule_panel.item_double_clicked.connect(self._on_schedule_double_click)
+
+        # Schedule filing: prompt save on modification, restore last schedule
+        self.schedule_panel.schedule_modified.connect(self._on_schedule_modified)
+        self.schedule_panel.schedule_loaded.connect(self._on_schedule_loaded)
+
+        # Restore last schedule on startup
+        self._restore_last_schedule()
 
     def _build_payload(self, text: str, ref: str, version: str, book: str = "",
                        chapter: str = "", verse: str = "") -> dict:
@@ -239,20 +249,36 @@ class PresentationTab(QWidget):
 
         logger.info(f"Browser broadcast: {ref}")
 
-    def _on_verses_to_schedule(self, verses: list):
-        """Add one or more verses (from Alt+click in browser) to the schedule."""
-        for v in verses:
-            item_data = {
-                "ref": f"{v.get('book', '')} {v.get('chapter', '')}:{v.get('verse', '')}".strip(),
-                "book": v.get("book", ""),
-                "chapter": v.get("chapter", ""),
-                "verse": v.get("verse", ""),
-                "text": v.get("text", ""),
-                "translation": v.get("translation", ""),
-                "theme": v.get("theme", "default"),
-            }
-            self.schedule_panel.add_item(item_data)
-        logger.info(f"Queued {len(verses)} verse(s) to schedule via Alt+click")
+    def _on_navigator_push(self, book: str, chapter: str, verse: str):
+        """Enter in navigator → fetch verse and push to live."""
+        from core.bible_service import get_verse
+        version = self.browser_panel._current_translation
+        verse_data = get_verse(version, book, int(chapter), int(verse))
+        if not verse_data:
+            return
+
+        text = verse_data.get("text", "")
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse}"
+
+        verse_dict = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version
+        }
+        self._current_display = verse_dict
+        self._is_cleared = False
+
+        payload = self._build_payload(text, ref, version, book, chapter, verse)
+        self.live_preview.set_live_payload(payload)
+        self.live_preview.set_preview_payload(payload)
+        self._broadcast_to_ws(payload)
+        logger.info(f"Navigator push: {ref}")
+
+    def _on_translation_changed(self, version: str):
+        """Browser panel translation changed → update FTS search panel."""
+        self.queue_panel.set_translation(version)
 
     def _on_search_to_schedule(self, data: dict):
         """Add a search result verse to the schedule."""
@@ -449,12 +475,12 @@ class PresentationTab(QWidget):
         logger.info(f"Theme changed to: {theme_name} (preview updated)")
 
     def _on_theme_double_click(self, theme_name: str):
-        """Double-click theme: set as default + push preview to live with that theme."""
+        """Double-click theme: set as default + re-render the live verse with that theme."""
         self._current_theme = theme_name
         from core.theme_loader import set_current_theme
         set_current_theme(theme_name)
-        if self._current_preview:
-            data = self._current_preview
+        if self._current_display:
+            data = self._current_display
             verse_text = data.get("text", "")
             book = data.get("book", "")
             chapter = data.get("chapter", "")
@@ -462,39 +488,95 @@ class PresentationTab(QWidget):
             version = data.get("version", "")
             ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
 
-            self._current_display = data
-            self._is_cleared = False
-
             payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
             self.live_preview.set_live_payload(payload)
             self._broadcast_to_ws(payload)
-
-            logger.info(f"Theme double-clicked: {theme_name}, pushed preview to live")
+            logger.info(f"Theme double-clicked: {theme_name}, live re-rendered")
         else:
-            logger.info(f"Theme double-clicked: {theme_name} (no preview verse to push)")
+            logger.info(f"Theme double-clicked: {theme_name} (no live verse to re-render)")
 
     def _on_prev_verse(self):
-        """Navigate to the previous item in the schedule."""
-        schedule = self.schedule_panel.get_schedule()
-        if not schedule:
-            return
-        
-        self._schedule_index = max(0, self._schedule_index - 1)
-        item = schedule[self._schedule_index]
-        
-        # Construct a display-compatible dict from the schedule item
-        self._display_schedule_item(item)
+        """Show the previous Bible verse relative to what's currently live."""
+        logger.info("_on_prev_verse called")
+        try:
+            if not self._current_display:
+                logger.info("prev_verse: nothing displayed")
+                return
+
+            version = self._current_display.get("version", "") or self._current_display.get("translation", "")
+            book = self._current_display.get("book", "")
+            chapter = self._current_display.get("chapter", "")
+            verse = self._current_display.get("verse_num", "") or self._current_display.get("verse", "")
+            if not book or not chapter or not verse or not version:
+                logger.info(f"prev_verse: incomplete display data: {self._current_display}")
+                return
+
+            chapter = int(chapter)
+            verse = int(verse)
+
+            from core.bible_service import get_prev_verse
+            prev = get_prev_verse(version, book, chapter, verse)
+            if not prev:
+                logger.info(f"prev_verse: already at first verse")
+                return
+
+            self._navigate_to_bible_verse(prev, version)
+        except Exception as e:
+            logger.error(f"prev_verse failed: {e}", exc_info=True)
 
     def _on_next_verse(self):
-        """Navigate to the next item in the schedule."""
-        schedule = self.schedule_panel.get_schedule()
-        if not schedule:
-            return
-        
-        self._schedule_index = min(len(schedule) - 1, self._schedule_index + 1)
-        item = schedule[self._schedule_index]
-        
-        self._display_schedule_item(item)
+        """Show the next Bible verse relative to what's currently live."""
+        logger.info("_on_next_verse called")
+        try:
+            if not self._current_display:
+                logger.info("next_verse: nothing displayed")
+                return
+
+            version = self._current_display.get("version", "") or self._current_display.get("translation", "")
+            book = self._current_display.get("book", "")
+            chapter = self._current_display.get("chapter", "")
+            verse = self._current_display.get("verse_num", "") or self._current_display.get("verse", "")
+            if not book or not chapter or not verse or not version:
+                logger.info(f"next_verse: incomplete display data: {self._current_display}")
+                return
+
+            chapter = int(chapter)
+            verse = int(verse)
+
+            from core.bible_service import get_next_verse
+            nxt = get_next_verse(version, book, chapter, verse)
+            if not nxt:
+                logger.info(f"next_verse: already at last verse")
+                return
+
+            self._navigate_to_bible_verse(nxt, version)
+        except Exception as e:
+            logger.error(f"next_verse failed: {e}", exc_info=True)
+
+    def _navigate_to_bible_verse(self, verse_data: dict, version: str):
+        """Display a Bible verse on live + preview and update the browser navigator."""
+        book = verse_data.get("book", "")
+        chapter = str(verse_data.get("chapter", ""))
+        verse_num = str(verse_data.get("verse", ""))
+        text = verse_data.get("text", "")
+
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+
+        self._current_display = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse_num,
+            "version": version,
+        }
+        self._is_cleared = False
+
+        payload = self._build_payload(text, ref, version, book, chapter, verse_num)
+        self.live_preview.set_live_payload(payload)
+        self._broadcast_to_ws(payload)
+
+        self.browser_panel.navigate_to_reference(book, chapter, verse_num, translation=version)
+        logger.info(f"Prev/Next → {ref}")
 
     def _display_schedule_item(self, item: dict):
         """Display a schedule item on the live output only."""
@@ -518,7 +600,7 @@ class PresentationTab(QWidget):
         self._broadcast_to_ws(payload)
 
     def _on_schedule_click(self, data: dict):
-        """Single-click schedule item: update preview only."""
+        """Single-click schedule item: navigate to verse in browser + update preview."""
         ref = data.get("ref", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
@@ -526,6 +608,9 @@ class PresentationTab(QWidget):
         text = data.get("text", "")
         version = data.get("translation", "")
         theme = data.get("theme", "default")
+
+        # Navigate browser to this verse
+        self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
 
         self._current_preview = {
             "text": text,
@@ -544,7 +629,7 @@ class PresentationTab(QWidget):
         logger.info(f"Schedule preview: {ref}")
 
     def _on_schedule_double_click(self, data: dict):
-        """Double-click schedule item: push to live with its frozen theme."""
+        """Double-click schedule item: navigate to verse + push to live with its frozen theme."""
         ref = data.get("ref", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
@@ -552,6 +637,9 @@ class PresentationTab(QWidget):
         text = data.get("text", "")
         version = data.get("translation", "")
         theme = data.get("theme", "default")
+
+        # Navigate browser to this verse
+        self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
 
         self._current_display = data
         self._is_cleared = False
@@ -617,3 +705,28 @@ class PresentationTab(QWidget):
             t.start()
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")
+
+    # ── Schedule Filing ──────────────────────────────────────────────
+
+    def _on_schedule_modified(self):
+        """Prompt user when schedule has unsaved changes."""
+        from PyQt6.QtWidgets import QMessageBox
+        # Just log for now; the panel tracks modification state
+        logger.info("Schedule modified — unsaved changes")
+
+    def _on_schedule_loaded(self, file_path: str):
+        """Called when a schedule file is loaded."""
+        from core.database import set_setting
+        set_setting("display.last_schedule", file_path)
+        logger.info(f"Schedule loaded: {file_path}")
+
+    def _restore_last_schedule(self):
+        """Restore the last used schedule on startup."""
+        from core.database import get_setting
+        last_path = get_setting("display.last_schedule", "")
+        if last_path and os.path.exists(last_path):
+            try:
+                self.schedule_panel.load_schedule(last_path)
+                logger.info(f"Restored last schedule: {last_path}")
+            except Exception as e:
+                logger.warning(f"Could not restore last schedule: {e}")

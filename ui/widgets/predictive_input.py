@@ -41,6 +41,7 @@ class BookInput(QLineEdit):
 
     advance_to_chapter = pyqtSignal()
     book_resolved = pyqtSignal(str)
+    push = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,6 +75,12 @@ class BookInput(QLineEdit):
         text = event.text()
 
         if key == Qt.Key.Key_Space or key == Qt.Key.Key_Right:
+            # In book input: if the last typed character is 1-3,
+            # insert a space so the user can type "2 Chronicles", "3 John", etc.
+            if self._typed and self._typed[-1] in "123":
+                self._typed += " "
+                self._update_prediction()
+                return
             if self.text().strip():
                 self.book_resolved.emit(self.text().strip())
                 self.advance_to_chapter.emit()
@@ -91,7 +98,15 @@ class BookInput(QLineEdit):
         if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
             if self.text().strip():
                 self.book_resolved.emit(self.text().strip())
-                self.advance_to_chapter.emit()
+                self.push.emit()
+                self.clearFocus()
+            return
+
+        if key == Qt.Key.Key_Control or key == Qt.Key.Key_Shift or key == Qt.Key.Key_Alt:
+            return
+
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and text.lower() == "a":
+            self.selectAll()
             return
 
         if not text or not (text.isalpha() or text.isdigit()):
@@ -143,6 +158,7 @@ class NumericInput(QLineEdit):
 
     advance = pyqtSignal()
     retreat = pyqtSignal()
+    push = pyqtSignal()
 
     def __init__(self, placeholder: str, parent=None, auto_size=True, max_value=None):
         super().__init__(parent)
@@ -206,7 +222,15 @@ class NumericInput(QLineEdit):
             return
 
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.advance.emit()
+            self.push.emit()
+            self.clearFocus()
+            return
+
+        if key == Qt.Key.Key_Control or key == Qt.Key.Key_Shift or key == Qt.Key.Key_Alt:
+            return
+
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and text.lower() == "a":
+            self.selectAll()
             return
 
         if text and text.isdigit():
@@ -235,6 +259,7 @@ class PredictiveScriptureInput(QWidget):
     """
 
     navigate_requested = pyqtSignal(str, int, int)
+    push_requested = pyqtSignal(str, int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -271,6 +296,7 @@ class PredictiveScriptureInput(QWidget):
         self.book_input = BookInput()
         self.book_input.setStyleSheet(field_style)
         self.book_input.advance_to_chapter.connect(self._advance_to_chapter)
+        self.book_input.push.connect(self._on_push)
         self.book_input.textChanged.connect(self._try_live_navigate)
         layout.addWidget(self.book_input)
 
@@ -280,6 +306,7 @@ class PredictiveScriptureInput(QWidget):
         self.chapter_input = NumericInput("Ch", max_value=self._chapter_max)
         self.chapter_input.setStyleSheet(field_style)
         self.chapter_input.advance.connect(self._advance_to_verse)
+        self.chapter_input.push.connect(self._on_push)
         self.chapter_input.retreat.connect(self.book_input._on_focus_arrived)
         self.chapter_input.textChanged.connect(self._try_live_navigate)
         layout.addWidget(self.chapter_input)
@@ -297,6 +324,7 @@ class PredictiveScriptureInput(QWidget):
         self.verse_input.setStyleSheet(field_style)
         self.verse_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.verse_input.advance.connect(self._on_navigate)
+        self.verse_input.push.connect(self._on_push)
         self.verse_input.retreat.connect(self._retreat_to_chapter)
         self.verse_input.textChanged.connect(self._try_live_navigate)
         layout.addWidget(self.verse_input)
@@ -343,6 +371,18 @@ class PredictiveScriptureInput(QWidget):
 
         if book and chapter:
             self.navigate_requested.emit(
+                book,
+                int(chapter) if chapter else 1,
+                int(verse) if verse else 1
+            )
+
+    def _on_push(self):
+        book = self.book_input.text().strip()
+        chapter = self.chapter_input.text().strip()
+        verse = self.verse_input.text().strip()
+
+        if book and chapter:
+            self.push_requested.emit(
                 book,
                 int(chapter) if chapter else 1,
                 int(verse) if verse else 1

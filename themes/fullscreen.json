@@ -1,6 +1,6 @@
 {
-    "name": "default",
-    "label": "Standard",
+    "name": "fullscreen",
+    "label": "Full Screen",
     "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
     "author": "RhemaCast",
     "container": {

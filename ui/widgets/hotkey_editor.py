@@ -76,6 +76,12 @@ class HotkeyCaptureButton(QPushButton):
         self._update_text()
         KeyboardHandler.install(self)
 
+    def event(self, e):
+        if self._capturing and e.type() == QEvent.Type.KeyPress:
+            self._handle_key_capture(e)
+            return True
+        return super().event(e)
+
     def keyPressEvent(self, event: QKeyEvent):
         if self._capturing:
             self._handle_key_capture(event)
@@ -251,6 +257,8 @@ class KeyboardHandler(QWidget):
     
     _instance = None
     _target = None
+    capture_started = pyqtSignal()
+    capture_finished = pyqtSignal()
     
     @classmethod
     def install(cls, target):
@@ -259,6 +267,7 @@ class KeyboardHandler(QWidget):
         cls._target = target
         from PyQt6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(cls._instance)
+        cls._instance.capture_started.emit()
     
     @classmethod
     def uninstall(cls, target):
@@ -267,7 +276,7 @@ class KeyboardHandler(QWidget):
             if cls._instance:
                 from PyQt6.QtWidgets import QApplication
                 QApplication.instance().removeEventFilter(cls._instance)
-                cls._instance = None
+                cls._instance.capture_finished.emit()
     
     def eventFilter(self, obj, event):
         if self._target and hasattr(self._target, '_capturing') and self._target._capturing:
@@ -435,9 +444,9 @@ class HotkeyEditor(QWidget):
 
         # Define default actions
         self._default_bindings = {
-            "display_verse": ("Display Verse", "Send selected verse to live display", "F5"),
             "clear_recall": ("Clear / Recall", "Clear live display or recall last verse", "F6"),
-            "open_search": ("Advanced Search", "Open advanced search panel", "Ctrl+Shift+S"),
+            "fts_search": ("FTS Search", "Open FTS5+BM25 search across 6 translations", "Ctrl+Shift+F"),
+            "fuzzy_search": ("Fuzzy Search", "Open semantic/FAISS search panel", "Ctrl+Shift+S"),
             "next_verse": ("Next", "Navigate to next scheduled verse", "Right"),
             "prev_verse": ("Previous", "Navigate to previous scheduled verse", "Left"),
             "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7"),

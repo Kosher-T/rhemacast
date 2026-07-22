@@ -1,7 +1,7 @@
 {
-    "name": "default",
-    "label": "Standard",
-    "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
+    "name": "reference",
+    "label": "Reference",
+    "description": "Fixed 1920x420 centered reference display with transparent background and auto-resizing text",
     "author": "RhemaCast",
     "container": {
         "background": "transparent",
@@ -13,7 +13,7 @@
         "max_width": "1920px",
         "min_width": "1920px",
         "width": "1920px",
-        "height": "1080px",
+        "height": "640px",
         "display": "flex",
         "flex_direction": "column",
         "justify_content": "center",
@@ -25,14 +25,14 @@
     },
     "text": {
         "color": "#ffffff",
-        "size": "48px",
-        "min_size": "55px",
-        "max_size": "68px",
+        "size": "55px",
+        "min_size": "50px",
+        "max_size": "65px",
         "weight": 700,
-        "line_height": "1.1",
-        "text_shadow": "0 2px 16px rgba(0, 0, 0, 0.6)",
-        "letter_spacing": "-0.02em",
-        "margin_bottom": "24px"
+        "line_height": "1.2",
+        "text_shadow": "none",
+        "letter_spacing": "-0.01em",
+        "margin_bottom": "12px"
     },
     "reference": {
         "color": "#cccccc",

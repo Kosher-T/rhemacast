@@ -143,5 +143,18 @@ class ModelManager:
             logger.critical(f"Failed to load FAISS index: {e}")
             raise StartupCheckError(f"FAISS index corrupted: {e}")
 
+    def preload_search(self):
+        """Preload search indexes + embedding model in a background thread."""
+        import threading
+        def _worker():
+            try:
+                self._load_indexes()
+                self._load_embedding()
+                logger.info("Search preload complete.")
+            except Exception as e:
+                logger.error(f"Search preload failed: {e}")
+        thread = threading.Thread(target=_worker, name="SearchPreload", daemon=True)
+        thread.start()
+
 # Global singleton
 model_manager = ModelManager()

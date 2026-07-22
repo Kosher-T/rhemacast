@@ -148,7 +148,7 @@ class StartupValidator:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
             # Try to bind to the port. If we can, it's free.
-            s.bind(('127.0.0.1', 8765))
+            s.bind(('0.0.0.0', 8765))
             s.close()
             self._add_result("WebSocket Port", CheckStatus.PASS, "Port 8765 is free.", True)
         except OSError:

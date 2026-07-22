@@ -97,11 +97,11 @@ async def health_handler(request: web.Request) -> web.Response:
 
 async def start_servers():
     """Starts both the WebSocket and HTTP Health servers."""
-    # SECURITY: Bind strictly to localhost (127.0.0.1) to reject remote connections
-    ws_host = "127.0.0.1"
+    # SECURITY: Bind to 0.0.0.0 to allow remote connections from the local network
+    ws_host = "0.0.0.0"
     ws_port = 8765
     
-    http_host = "127.0.0.1"
+    http_host = "0.0.0.0"
     http_port = 8766
 
     logger.info(f"Starting WebSocket server on ws://{ws_host}:{ws_port}")

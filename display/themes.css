@@ -12,15 +12,17 @@ body, html {
     background: transparent !important; /* MUST be transparent for OBS overlay */
     font-family: 'Inter', sans-serif;
     display: flex;
-    align-items: flex-end; /* Align to bottom for lower-thirds style */
+    align-items: var(--rc-vertical-align, flex-end); /* Align to bottom for lower-thirds, center for reference */
     justify-content: center;
-    padding-bottom: 80px;
+    padding-bottom: var(--rc-padding-bottom, 80px);
 }
 
 /* Glassmorphism Container — defaults, overridden by theme via JS */
 #container {
     max-width: var(--rc-max-width, 80%);
     min-width: var(--rc-min-width, 60%);
+    width: var(--rc-width, auto);
+    height: var(--rc-height, auto);
     padding: var(--rc-padding, 40px);
     border-radius: var(--rc-border-radius, 24px);
     background: var(--rc-container-bg, rgba(15, 23, 42, 0.6));
@@ -28,6 +30,11 @@ body, html {
     -webkit-backdrop-filter: var(--rc-backdrop-filter, blur(16px));
     border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
     box-shadow: var(--rc-container-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset);
+    
+    display: var(--rc-container-display, block);
+    flex-direction: var(--rc-container-flex-direction, column);
+    justify-content: var(--rc-container-justify-content, flex-start);
+    align-items: var(--rc-container-align-items, stretch);
     
     transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), 
                 transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
@@ -51,6 +58,17 @@ body, html {
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
     letter-spacing: var(--rc-text-letter-spacing, -0.02em);
+    min-font-size: var(--rc-text-min-size, 4px);
+    max-font-size: var(--rc-text-max-size, 300px);
+}
+
+.verse-num {
+    font-size: 0.6em;
+    font-weight: 700;
+    opacity: 0.7;
+    vertical-align: top;
+    margin-right: 0.15em;
+    line-height: 1;
 }
 
 #verse-ref {

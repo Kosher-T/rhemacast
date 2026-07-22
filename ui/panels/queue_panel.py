@@ -147,7 +147,8 @@ class QueuePanel(QWidget):
         for tab_name, icon, tooltip in [
             ("queue", "\u2261", "Queue"),
             ("themes", "\u25C9", "Themes"),
-            ("search", "\u2315", "Search"),
+            ("fts_search", "\u2315", "FTS Search"),
+            ("fuzzy", "\u2318", "Fuzzy Search"),
         ]:
             btn = _TabButton(icon, tooltip)
             btn.setCheckable(True)
@@ -180,9 +181,13 @@ class QueuePanel(QWidget):
         self._themes_panel = None
         self._themes_index = -1
 
-        # Search panel (index 2) — lazy loaded
-        self._search_panel = None
-        self._search_index = -1
+        # FTS Search panel (index 2) — lazy loaded
+        self._fts_search_panel = None
+        self._fts_search_index = -1
+
+        # Fuzzy Search panel (index 3) — lazy loaded
+        self._fuzzy_search_panel = None
+        self._fuzzy_search_index = -1
 
         body.addWidget(self._stack, 1)
 
@@ -193,8 +198,8 @@ class QueuePanel(QWidget):
             return f"""
                 QPushButton {{
                     color: {CYAN_400};
-                    font-size: 11px; font-weight: 700;
-                    background: rgba(34, 211, 238, 0.1);
+                font-size: 20px; font-weight: 700;
+                background: rgba(34, 211, 238, 0.1);
                     border-radius: 6px;
                     border: none;
                 }}
@@ -202,7 +207,7 @@ class QueuePanel(QWidget):
         return f"""
             QPushButton {{
                 color: {SLATE_500};
-                font-size: 11px; font-weight: 700;
+                font-size: 20px; font-weight: 700;
                 background: transparent;
                 border-radius: 6px;
                 border: none;
@@ -231,9 +236,13 @@ class QueuePanel(QWidget):
             self._ensure_themes_loaded()
             self._stack.setCurrentIndex(self._themes_index)
             self.count_label.setVisible(False)
-        elif name == "search":
-            self._ensure_search_loaded()
-            self._stack.setCurrentIndex(self._search_index)
+        elif name == "fts_search":
+            self._ensure_fts_search_loaded()
+            self._stack.setCurrentIndex(self._fts_search_index)
+            self.count_label.setVisible(False)
+        elif name == "fuzzy":
+            self._ensure_fuzzy_search_loaded()
+            self._stack.setCurrentIndex(self._fuzzy_search_index)
             self.count_label.setVisible(False)
 
     def _ensure_themes_loaded(self):
@@ -244,22 +253,44 @@ class QueuePanel(QWidget):
             self._themes_panel.theme_double_clicked.connect(self.theme_double_clicked)
             self._themes_index = self._stack.addWidget(self._themes_panel)
 
-    def _ensure_search_loaded(self):
-        if self._search_panel is None:
-            from ui.panels.search_panel import SearchPanel
-            self._search_panel = SearchPanel()
-            self._search_panel.verse_to_schedule.connect(self.verse_to_schedule)
-            self._search_panel.verse_to_navigator.connect(self.verse_to_navigator)
-            self._search_panel.verse_to_live.connect(self.verse_to_live)
-            self._search_panel.trans_badge_to_navigator.connect(self.trans_badge_to_navigator)
-            self._search_panel.trans_badge_to_live.connect(self.trans_badge_to_live)
-            self._search_index = self._stack.addWidget(self._search_panel)
+    def _ensure_fts_search_loaded(self):
+        if self._fts_search_panel is None:
+            from ui.panels.fts_search_panel import FtsSearchPanel
+            self._fts_search_panel = FtsSearchPanel()
+            self._fts_search_panel.verse_to_schedule.connect(self.verse_to_schedule)
+            self._fts_search_panel.verse_to_navigator.connect(self.verse_to_navigator)
+            self._fts_search_panel.verse_to_live.connect(self.verse_to_live)
+            self._fts_search_panel.trans_badge_to_navigator.connect(self.trans_badge_to_navigator)
+            self._fts_search_panel.trans_badge_to_live.connect(self.trans_badge_to_live)
+            self._fts_search_index = self._stack.addWidget(self._fts_search_panel)
 
-    def switch_to_search(self):
-        """Programmatically switch to the search tab and focus the query input."""
-        self._switch_tab("search")
-        if self._search_panel:
-            self._search_panel.focus_query()
+    def _ensure_fuzzy_search_loaded(self):
+        if self._fuzzy_search_panel is None:
+            from ui.panels.search_panel import SearchPanel
+            self._fuzzy_search_panel = SearchPanel()
+            self._fuzzy_search_panel.verse_to_schedule.connect(self.verse_to_schedule)
+            self._fuzzy_search_panel.verse_to_navigator.connect(self.verse_to_navigator)
+            self._fuzzy_search_panel.verse_to_live.connect(self.verse_to_live)
+            self._fuzzy_search_panel.trans_badge_to_navigator.connect(self.trans_badge_to_navigator)
+            self._fuzzy_search_panel.trans_badge_to_live.connect(self.trans_badge_to_live)
+            self._fuzzy_search_index = self._stack.addWidget(self._fuzzy_search_panel)
+
+    def switch_to_fts_search(self):
+        """Programmatically switch to the FTS search tab and focus the query input."""
+        self._switch_tab("fts_search")
+        if self._fts_search_panel:
+            self._fts_search_panel.focus_query()
+
+    def switch_to_fuzzy_search(self):
+        """Programmatically switch to the fuzzy search tab and focus the query input."""
+        self._switch_tab("fuzzy")
+        if self._fuzzy_search_panel:
+            self._fuzzy_search_panel.focus_query()
+
+    def set_translation(self, version: str):
+        """Forward translation change to the FTS search panel."""
+        if self._fts_search_panel:
+            self._fts_search_panel.set_translation(version)
 
     def add_item(self, data: dict):
         """Add a verse match to the review queue."""

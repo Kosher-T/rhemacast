@@ -47,9 +47,16 @@ def _boot_background_services():
         from core.websocket_server import run_server_thread
         ws_thread = threading.Thread(target=run_server_thread, name="WebSocket-Server", daemon=True)
         ws_thread.start()
-        logger.info("WebSocket server started on ws://127.0.0.1:8765")
+        logger.info("WebSocket server started on ws://0.0.0.0:8765")
     except Exception as e:
         logger.error(f"Failed to start WebSocket server: {e}")
+
+    # Preload search indexes + embedding model in background
+    try:
+        from core.model_manager import model_manager
+        model_manager.preload_search()
+    except Exception as e:
+        logger.error(f"Failed to start search preload: {e}")
 
 
 class RhemaCastApp(QApplication):

@@ -33,13 +33,17 @@ body {
     width: 1920px; height: 1080px; overflow: hidden;
     background: #000;
     font-family: 'Inter', sans-serif;
-    display: flex; align-items: flex-end; justify-content: center;
-    padding-bottom: 80px;
+    display: flex;
+    align-items: var(--rc-vertical-align, flex-end);
+    justify-content: center;
+    padding-bottom: var(--rc-padding-bottom, 80px);
     transform-origin: 0 0;
 }
 #container {
     max-width: var(--rc-max-width, 80%);
     min-width: var(--rc-min-width, 60%);
+    width: var(--rc-width, auto);
+    height: var(--rc-height, auto);
     padding: var(--rc-padding, 40px);
     border-radius: var(--rc-border-radius, 24px);
     background: var(--rc-container-bg, rgba(15, 23, 42, 0.6));
@@ -47,6 +51,12 @@ body {
     -webkit-backdrop-filter: var(--rc-backdrop-filter, blur(16px));
     border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
     box-shadow: var(--rc-container-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset);
+
+    display: var(--rc-container-display, block);
+    flex-direction: var(--rc-container-flex-direction, column);
+    justify-content: var(--rc-container-justify-content, flex-start);
+    align-items: var(--rc-container-align-items, stretch);
+
     transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
                 transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
     opacity: 1; transform: translateY(0) scale(1);
@@ -63,7 +73,19 @@ body {
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
     letter-spacing: var(--rc-text-letter-spacing, -0.02em);
+    min-font-size: var(--rc-text-min-size, 4px);
+    max-font-size: var(--rc-text-max-size, 300px);
 }
+
+.verse-num {
+    font-size: 0.6em;
+    font-weight: 700;
+    opacity: 0.7;
+    vertical-align: top;
+    margin-right: 0.15em;
+    line-height: 1;
+}
+
 #verse-ref {
     font-size: var(--rc-ref-size, 1.5rem);
     font-weight: var(--rc-ref-weight, 600);
@@ -93,34 +115,39 @@ body {
 <script>
 const container = document.getElementById("container");
 const verseText = document.getElementById("verse-text");
+const verseRef = document.getElementById("verse-ref");
 const verseRefText = document.getElementById("verse-ref-text");
 const verseRefTranslation = document.getElementById("verse-ref-translation");
 
-let socket = null;
-let isConnecting = false;
-
-function connect() {
-    if (isConnecting || (socket && socket.readyState === WebSocket.OPEN)) return;
-    isConnecting = true;
-    socket = new WebSocket("ws://127.0.0.1:8765");
-    socket.onopen = () => { isConnecting = false; };
-    socket.onmessage = (e) => {
-        try { handlePayload(JSON.parse(e.data)); } catch(err) {}
-    };
-    socket.onclose = () => {
-        isConnecting = false; socket = null;
-        setTimeout(connect, 2000);
-    };
-    socket.onerror = () => { socket.close(); };
+function resetTheme() {
+    const root = document.documentElement;
+    const props = [
+        "--rc-container-bg", "--rc-container-border", "--rc-border-radius",
+        "--rc-container-shadow", "--rc-backdrop-filter", "--rc-padding",
+        "--rc-max-width", "--rc-min-width", "--rc-width", "--rc-height",
+        "--rc-container-display", "--rc-container-flex-direction",
+        "--rc-container-justify-content", "--rc-container-align-items",
+        "--rc-vertical-align", "--rc-padding-bottom",
+        "--rc-text-color", "--rc-text-size", "--rc-text-weight",
+        "--rc-text-line-height", "--rc-text-shadow", "--rc-text-letter-spacing",
+        "--rc-text-margin-bottom", "--rc-text-min-size", "--rc-text-max-size",
+        "--rc-ref-color", "--rc-ref-size", "--rc-ref-weight",
+        "--rc-ref-text-transform", "--rc-ref-letter-spacing",
+        "--rc-translation-color", "--rc-translation-margin-left"
+    ];
+    props.forEach(p => root.style.removeProperty(p));
 }
 
 function applyTheme(theme) {
     if (!theme) return;
+    resetTheme();
     const root = document.documentElement;
     const c = theme.container || {};
     const t = theme.text || {};
     const r = theme.reference || {};
     const tr = theme.translation || {};
+    const b = theme.body || {};
+
     if (c.background)    root.style.setProperty("--rc-container-bg", c.background);
     if (c.border)        root.style.setProperty("--rc-container-border", c.border);
     if (c.border_radius) root.style.setProperty("--rc-border-radius", c.border_radius);
@@ -129,6 +156,16 @@ function applyTheme(theme) {
     if (c.padding)       root.style.setProperty("--rc-padding", c.padding);
     if (c.max_width)     root.style.setProperty("--rc-max-width", c.max_width);
     if (c.min_width)     root.style.setProperty("--rc-min-width", c.min_width);
+    if (c.width)         root.style.setProperty("--rc-width", c.width);
+    if (c.height)        root.style.setProperty("--rc-height", c.height);
+    if (c.display)       root.style.setProperty("--rc-container-display", c.display);
+    if (c.flex_direction) root.style.setProperty("--rc-container-flex-direction", c.flex_direction);
+    if (c.justify_content) root.style.setProperty("--rc-container-justify-content", c.justify_content);
+    if (c.align_items)   root.style.setProperty("--rc-container-align-items", c.align_items);
+
+    if (b.vertical_align) root.style.setProperty("--rc-vertical-align", b.vertical_align);
+    if (b.padding_bottom) root.style.setProperty("--rc-padding-bottom", b.padding_bottom);
+
     if (t.color)         root.style.setProperty("--rc-text-color", t.color);
     if (t.size)          root.style.setProperty("--rc-text-size", t.size);
     if (t.weight)        root.style.setProperty("--rc-text-weight", t.weight);
@@ -136,13 +173,57 @@ function applyTheme(theme) {
     if (t.text_shadow)   root.style.setProperty("--rc-text-shadow", t.text_shadow);
     if (t.letter_spacing) root.style.setProperty("--rc-text-letter-spacing", t.letter_spacing);
     if (t.margin_bottom) root.style.setProperty("--rc-text-margin-bottom", t.margin_bottom);
+    if (t.min_size)      root.style.setProperty("--rc-text-min-size", t.min_size);
+    if (t.max_size)      root.style.setProperty("--rc-text-max-size", t.max_size);
+
     if (r.color)         root.style.setProperty("--rc-ref-color", r.color);
     if (r.size)          root.style.setProperty("--rc-ref-size", r.size);
     if (r.weight)        root.style.setProperty("--rc-ref-weight", r.weight);
     if (r.text_transform) root.style.setProperty("--rc-ref-text-transform", r.text_transform);
     if (r.letter_spacing) root.style.setProperty("--rc-ref-letter-spacing", r.letter_spacing);
+
     if (tr.color)        root.style.setProperty("--rc-translation-color", tr.color);
     if (tr.margin_left)  root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
+
+    autoFitText();
+}
+
+function autoFitText() {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
+
+    if (!containerH || isNaN(containerH)) {
+        verseText.style.fontSize = '';
+        return;
+    }
+
+    if (!verseText.textContent.trim()) return;
+
+    // Get min/max font size from theme
+    const minFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-min-size')) || 4;
+    const maxFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-max-size')) || 300;
+
+    let lo = minFontSize, hi = maxFontSize;
+    while (hi - lo > 0.5) {
+        const mid = (lo + hi) / 2;
+        verseText.style.fontSize = mid + 'px';
+
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
+
+        if (totalH <= containerH) { lo = mid; } else { hi = mid; }
+    }
+
+    verseText.style.fontSize = Math.floor(lo) + 'px';
+}
+
+function extractVerseNumber(reference) {
+    // Extract verse number from formats like "ESTHER 5:9" or "ESTHER 5:9 GSV"
+    const match = reference.match(/(\d+:\d+)$/);
+    if (match) {
+        return match[1].split(':').pop(); // Get just the verse number
+    }
+    return null;
 }
 
 function handlePayload(data) {
@@ -151,25 +232,45 @@ function handlePayload(data) {
         return;
     }
     if (data.action === "display") {
-        if (data.text) verseText.innerHTML = data.text;
+        // Update scripture text
+        if (data.text) {
+            let verseTextContent = data.text;
+            // Prepend verse number if reference is available
+            const refText = data.reference || (data.book && data.chapter && data.verse 
+                ? data.book + " " + data.chapter + ":" + data.verse 
+                : null);
+            const verseNum = extractVerseNumber(refText);
+            if (verseNum) {
+                verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
+            }
+            verseText.innerHTML = verseTextContent;
+        }
+        
+        // Update reference and translation as separate elements
         if (data.reference) {
             verseRefText.innerHTML = data.reference;
         } else if (data.book && data.chapter && data.verse) {
             verseRefText.innerHTML = data.book + " " + data.chapter + ":" + data.verse;
         }
-        if (data.translation) verseRefTranslation.innerHTML = data.translation;
+        
+        if (data.translation) {
+            verseRefTranslation.innerHTML = data.translation;
+        }
+        
+        // Legacy: if only ref is provided (no reference/translation), parse it
         if (!data.reference && !data.translation && data.ref) {
             const m = data.ref.match(/^\[([^\]]+)\]\s*(.+)$/);
             if (m) { verseRefTranslation.innerHTML = m[1]; verseRefText.innerHTML = m[2]; }
             else { verseRefText.innerHTML = data.ref; }
         }
+        
         if (data.theme_data) { applyTheme(data.theme_data); document.body.className = ""; }
         else if (data.theme) { document.body.className = "theme-" + data.theme; }
         container.classList.remove("hidden");
+        autoFitText();
     }
 }
 
-// Scale 1920x1080 virtual canvas to fit actual widget size
 const VIRTUAL_W = 1920, VIRTUAL_H = 1080;
 function resizeCanvas() {
     const w = window.innerWidth, h = window.innerHeight;

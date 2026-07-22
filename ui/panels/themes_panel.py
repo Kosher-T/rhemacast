@@ -141,10 +141,6 @@ class ThemesPanel(QWidget):
 
         self._layout.addStretch()
 
-        # Mark default as active
-        if "default" in self._cards:
-            self._cards["default"].set_active(True)
-
     def _load_themes(self):
         """Load all themes from the theme loader and create cards."""
         from core.theme_loader import get_all_themes
@@ -157,6 +153,13 @@ class ThemesPanel(QWidget):
             self._layout.addWidget(card)
             self._cards[name] = card
 
+        # Load saved theme from settings
+        from core.database import get_setting
+        saved_theme = get_setting("display.last_theme", "default")
+        if saved_theme in self._cards:
+            self._cards[saved_theme].set_active(True)
+            self._current_theme = saved_theme
+
     def _on_theme_selected(self, name: str):
         if name == self._current_theme:
             return
@@ -166,6 +169,10 @@ class ThemesPanel(QWidget):
             self._cards[self._current_theme].set_active(False)
         self._cards[name].set_active(True)
         self._current_theme = name
+
+        # Save theme to settings
+        from core.database import set_setting
+        set_setting("display.last_theme", name)
 
         self.theme_changed.emit(name)
         logger.info(f"Theme changed to: {name}")
@@ -177,6 +184,11 @@ class ThemesPanel(QWidget):
                 self._cards[self._current_theme].set_active(False)
             self._cards[name].set_active(True)
             self._current_theme = name
+
+            # Save theme to settings
+            from core.database import set_setting
+            set_setting("display.last_theme", name)
+
             self.theme_changed.emit(name)
 
         self.theme_double_clicked.emit(name)

@@ -14,12 +14,16 @@ Interactions:
   - Multi-select via Ctrl/Shift click for batch operations
 """
 
+import json
 import logging
+import os
 import time
+from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QFrame, QAbstractItemView, QMenu, QLineEdit, QSizePolicy, QApplication
+    QFrame, QAbstractItemView, QMenu, QLineEdit, QSizePolicy, QApplication,
+    QFileDialog, QMessageBox, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
 
@@ -32,14 +36,35 @@ logger = logging.getLogger(__name__)
 
 _DOUBLE_CLICK_THRESHOLD_MS = 400
 
+# Schedules directory
+_SCHEDULES_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "schedules"
+
+# Small button style for schedule header
+_header_btn_style = f"""
+    QPushButton {{
+        background: transparent;
+        color: {SLATE_400};
+        border: 1px solid {BORDER_SUBTLE};
+        border-radius: 3px;
+        padding: 2px 6px;
+        font-size: 11px;
+    }}
+    QPushButton:hover {{
+        background: rgba(255, 255, 255, 0.05);
+        color: {WHITE};
+    }}
+"""
+
 
 class ScheduleItem(QFrame):
     """A single schedule row — displays reference and translation."""
 
     clicked = pyqtSignal()
     double_clicked = pyqtSignal()
+    delete_requested = pyqtSignal()
     rename_requested = pyqtSignal()
     theme_change_requested = pyqtSignal(str)
+    renamed = pyqtSignal()  # Emitted when rename is confirmed
     delete_requested = pyqtSignal()
 
     def __init__(self, data: dict, parent=None):
@@ -147,6 +172,7 @@ class ScheduleItem(QFrame):
             self._ref_label.setText(new_name)
         self._edit.setVisible(False)
         self._ref_label.setVisible(True)
+        self.renamed.emit()
 
     def mousePressEvent(self, event):
         if self._editing:
@@ -239,10 +265,14 @@ class SchedulePanel(QWidget):
     item_theme_changed = pyqtSignal(str, str)
     item_renamed = pyqtSignal(str, str)
     items_deleted = pyqtSignal(list)
+    schedule_modified = pyqtSignal()  # Emitted when schedule changes
+    schedule_loaded = pyqtSignal(str)  # Emitted with file path when loaded
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
+        self._modified = False
+        self._current_file = None  # Path to currently loaded/saved schedule file
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -252,10 +282,18 @@ class SchedulePanel(QWidget):
         header.setStyleSheet(PANEL_HEADER_STYLE)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 6, 12, 6)
-        title = QLabel("Schedule")
-        title.setStyleSheet(PANEL_HEADER_LABEL_STYLE)
-        header_layout.addWidget(title)
+        self._title_label = QLabel("Schedule")
+        self._title_label.setStyleSheet(PANEL_HEADER_LABEL_STYLE)
+        header_layout.addWidget(self._title_label)
         header_layout.addStretch()
+
+        # Save button
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setStyleSheet(_header_btn_style)
+        self._save_btn.setToolTip("Save schedule to file")
+        self._save_btn.clicked.connect(lambda: self.save_schedule())
+        header_layout.addWidget(self._save_btn)
+
         layout.addWidget(header)
 
         self.list_widget = QListWidget()
@@ -273,6 +311,9 @@ class SchedulePanel(QWidget):
         self.list_widget.viewport().installEventFilter(self)
         layout.addWidget(self.list_widget)
 
+        # Ensure schedules directory exists
+        _SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+
     def add_item(self, data: dict):
         """Add a verse to the schedule."""
         item_widget = ScheduleItem(data)
@@ -281,6 +322,7 @@ class SchedulePanel(QWidget):
         item_widget.rename_requested.connect(lambda: self._start_rename(item_widget))
         item_widget.theme_change_requested.connect(lambda theme: self._change_theme(item_widget, theme))
         item_widget.delete_requested.connect(lambda: self._delete_item_widget(item_widget))
+        item_widget.renamed.connect(self._mark_modified)
 
         list_item = QListWidgetItem()
         list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
@@ -294,6 +336,8 @@ class SchedulePanel(QWidget):
         item_widget.setProperty("selected", list_item.isSelected())
         item_widget.style().unpolish(item_widget)
         item_widget.style().polish(item_widget)
+
+        self._mark_modified()
 
     def get_schedule(self) -> list:
         """Return all schedule items as dicts."""
@@ -331,13 +375,15 @@ class SchedulePanel(QWidget):
             widget = item.data(Qt.ItemDataRole.UserRole + 1)
             if widget:
                 widget.deleteLater()
+            self._mark_modified()
 
     def _change_theme(self, item_widget: ScheduleItem, theme: str):
         item_widget.set_theme(theme)
         self.item_theme_changed.emit(str(id(item_widget)), theme)
+        self._mark_modified()
 
     def _on_rows_moved(self):
-        pass
+        self._mark_modified()
 
     def _sync_selection_state(self):
         """Sync ScheduleItem's 'selected' property with QListWidget's selection."""
@@ -405,19 +451,7 @@ class SchedulePanel(QWidget):
         
         if deleted_data:
             self.items_deleted.emit(deleted_data)
-
-    def _delete_item_widget(self, item_widget: ScheduleItem):
-        """Delete a specific schedule item widget (from context menu)."""
-        list_item = self._find_list_item_for_widget(item_widget)
-        if list_item:
-            row = self.list_widget.row(list_item)
-            item = self.list_widget.takeItem(row)
-            data = item.data(Qt.ItemDataRole.UserRole)
-            if data:
-                self.items_deleted.emit([data])
-            widget = item.data(Qt.ItemDataRole.UserRole + 1)
-            if widget:
-                widget.deleteLater()
+            self._mark_modified()
 
     def _sync_selection_state(self):
         """Sync the visual selected state of all schedule item widgets."""
@@ -502,3 +536,138 @@ class SchedulePanel(QWidget):
             if widget:
                 widgets.append(widget)
         return widgets
+
+    # ── Schedule Filing ──────────────────────────────────────────────
+
+    def _update_title(self):
+        """Update the header title to show current schedule name."""
+        if self._current_file:
+            name = Path(self._current_file).stem
+            if self._modified:
+                name += " *"
+        else:
+            name = "Schedule"
+        self._title_label.setText(name)
+
+    def _mark_modified(self):
+        """Mark the schedule as modified."""
+        if not self._modified:
+            self._modified = True
+            self._update_title()
+            self.schedule_modified.emit()
+
+    @property
+    def is_modified(self) -> bool:
+        return self._modified
+
+    @property
+    def current_file(self) -> str | None:
+        return self._current_file
+
+    def get_schedule_data(self) -> list:
+        """Return schedule items as a list of dicts for serialization."""
+        items = []
+        for i in range(self.list_widget.count()):
+            data = self.list_widget.item(i).data(Qt.ItemDataRole.UserRole)
+            if data:
+                # Copy to avoid mutating the live data
+                items.append(dict(data))
+        return items
+
+    def save_schedule(self, file_path: str = None) -> bool:
+        """Save the current schedule to a JSON file. Returns True on success."""
+        if file_path is None:
+            file_path = self._current_file
+
+        if file_path is None:
+            # No file yet — prompt user
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Schedule", str(_SCHEDULES_DIR),
+                "Schedule Files (*.json);;All Files (*)"
+            )
+            if not file_path:
+                return False  # User cancelled
+            if not file_path.endswith(".json"):
+                file_path += ".json"
+
+        try:
+            data = {
+                "version": 1,
+                "items": self.get_schedule_data()
+            }
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            self._current_file = file_path
+            self._modified = False
+            self._update_title()
+            logger.info(f"Schedule saved to: {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save schedule: {e}")
+            QMessageBox.critical(self, "Save Error", f"Could not save schedule:\n{e}")
+            return False
+
+    def load_schedule(self, file_path: str = None) -> bool:
+        """Load a schedule from a JSON file. Returns True on success."""
+        if file_path is None:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Open Schedule", str(_SCHEDULES_DIR),
+                "Schedule Files (*.json);;All Files (*)"
+            )
+            if not file_path:
+                return False  # User cancelled
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            items = data.get("items", []) if isinstance(data, dict) else data
+
+            # Clear existing schedule
+            self.clear_all(silent=True)
+
+            # Load items
+            for item_data in items:
+                self.add_item(item_data)
+
+            self._current_file = file_path
+            self._modified = False
+            self._update_title()
+            self.schedule_loaded.emit(file_path)
+            logger.info(f"Schedule loaded from: {file_path} ({len(items)} items)")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load schedule: {e}")
+            QMessageBox.critical(self, "Load Error", f"Could not load schedule:\n{e}")
+            return False
+
+    def clear_all(self, silent: bool = False):
+        """Clear all schedule items."""
+        if not silent and self._modified:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "The current schedule has unsaved changes. Clear anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+        self.list_widget.clear()
+        self._modified = False
+        self._current_file = None
+        self._update_title()
+
+    def list_schedules(self) -> list:
+        """Return list of available schedule files sorted by last modified (newest first)."""
+        _SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+        files = []
+        for f in _SCHEDULES_DIR.glob("*.json"):
+            try:
+                mtime = f.stat().st_mtime
+                files.append((f.name, f, mtime))
+            except OSError:
+                continue
+        # Sort by modification time, newest first
+        files.sort(key=lambda x: x[2], reverse=True)
+        return [(name, path) for name, path, _ in files]

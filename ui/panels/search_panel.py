@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QFrame, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QWheelEvent
 
 from ui.styles import (
     PANEL_BODY_STYLE, SHOW_BTN_STYLE,
@@ -24,6 +25,28 @@ logger = logging.getLogger(__name__)
 
 # Delay (ms) to distinguish single-click from double-click
 _CLICK_DELAY = 250
+
+
+class _SearchResultsList(QListWidget):
+    """QListWidget that scrolls exactly one row per wheel notch."""
+
+    def wheelEvent(self, event: QWheelEvent):
+        vbar = self.verticalScrollBar()
+        if not vbar or vbar.maximum() == vbar.minimum():
+            super().wheelEvent(event)
+            return
+
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+
+        direction = -1 if delta > 0 else 1
+        new_row = max(0, vbar.value() + direction)
+        vbar.setValue(new_row)
 
 
 class _TransBadge(QLabel):
@@ -242,7 +265,7 @@ class SearchPanel(QWidget):
         layout.addWidget(self.status_label)
 
         # ── Results list ──
-        self.results_list = QListWidget()
+        self.results_list = _SearchResultsList()
         self.results_list.setSpacing(4)
         self.results_list.setStyleSheet(f"""
             QListWidget {{
@@ -270,8 +293,24 @@ class SearchPanel(QWidget):
         """Ensure search indexes are loaded. Returns True if ready."""
         from core.model_manager import model_manager
 
-        if model_manager.bm25_index is not None and model_manager.faiss_index is not None:
+        if (model_manager.bm25_index is not None
+                and model_manager.faiss_index is not None
+                and model_manager.embedding_model is not None):
             return True
+
+        # Models are being loaded in background — wait
+        if model_manager.bm25_index is None or model_manager.embedding_model is None:
+            self.status_label.setText("Search model still loading, please wait...")
+            QApplication.processEvents()
+            import time
+            for _ in range(80):  # up to 8 seconds
+                if (model_manager.bm25_index is not None
+                        and model_manager.faiss_index is not None
+                        and model_manager.embedding_model is not None):
+                    return True
+                time.sleep(0.1)
+            # If still not loaded, try loading on main thread as fallback
+            logger.warning("Background preload did not finish in time, loading on main thread")
 
         self.status_label.setText("Loading search indexes...")
         QApplication.processEvents()
