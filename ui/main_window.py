@@ -29,6 +29,9 @@ class ChromeTab(QPushButton):
         self.setCheckable(True)
         self.setChecked(is_active)
         self.setFixedHeight(34)
+        self.setAccessibleName(text)
+        # self.setAccessibleRole(Qt.AccessibleRole.PageTab)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         self.setStyleSheet(f"""
             QPushButton {{
@@ -52,18 +55,17 @@ class ChromeTab(QPushButton):
 
 
 class FramelessTitleBar(QWidget):
-    """Custom title bar implementing dragging and Chrome tabs."""
+    """Custom title bar implementing dragging and Chrome tabs.
+    
+    Uses native window frame when possible for accessibility.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
         self.setFixedHeight(42)
         self.setObjectName("FramelessTitleBar")
-        self.setStyleSheet(f"""
-            QWidget#FramelessTitleBar {{
-                background-color: {CHROME_BG};
-                border-bottom: 1px solid rgba(0, 0, 0, 0.4);
-            }}
-        """)
+        self.setAccessibleName("Window title bar")
+        # self.setAccessibleRole(Qt.AccessibleRole.TitleBar)
         
         self._drag_pos = None
         
@@ -73,7 +75,8 @@ class FramelessTitleBar(QWidget):
         
         # Logo
         logo = QLabel("RhemaCast")
-        logo.setStyleSheet(f"""
+        logo.setAccessibleName("Application name")
+        logo.setStyleSheet("""
             color: #60a5fa;
             font-size: 13px;
             font-weight: 800;
@@ -105,16 +108,22 @@ class FramelessTitleBar(QWidget):
         """
         
         min_btn = QPushButton("—")
+        min_btn.setAccessibleName("Minimize")
+        # min_btn.setAccessibleRole(Qt.AccessibleRole.Button)
         min_btn.setFixedSize(44, 32)
         min_btn.setStyleSheet(ctrl_style)
         min_btn.clicked.connect(self.parent_window.showMinimized)
         
         max_btn = QPushButton("□")
+        max_btn.setAccessibleName("Maximize")
+        # max_btn.setAccessibleRole(Qt.AccessibleRole.Button)
         max_btn.setFixedSize(44, 32)
         max_btn.setStyleSheet(ctrl_style)
         max_btn.clicked.connect(self._toggle_maximize)
         
         close_btn = QPushButton("✕")
+        close_btn.setAccessibleName("Close")
+        # close_btn.setAccessibleRole(Qt.AccessibleRole.Button)
         close_btn.setFixedSize(48, 32)
         close_btn.setStyleSheet(f"""
             QPushButton {{
@@ -204,11 +213,19 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # Accessibility
+        self.setWindowTitle("RhemaCast — Sermon Transcription & Verse Display")
+        self.setAccessibleName("RhemaCast Main Window")
+        self.setAccessibleDescription("Live sermon transcription with verse suggestion and OBS broadcast")
+        
         # Frameless window configuration
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(1024, 768)
         self.resize(1280, 800)
+        
+        # Focus policy for keyboard navigation
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # Main container with styling
         self.container = QWidget()
@@ -345,6 +362,10 @@ class MainWindow(QMainWindow):
         # Setup Hotkeys
         self._setup_hotkeys()
         
+        # Install app-wide event filter for Alt+Click (add to schedule)
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
+        
         # Phase 10: Operator Consent Gate at boot
         self._check_offline_queue()
 
@@ -462,6 +483,16 @@ class MainWindow(QMainWindow):
             layout.addWidget(fallback, 1)
             
         return widget
+
+    def eventFilter(self, obj, event):
+        """App-wide event filter: intercept Alt+Click for add-to-schedule."""
+        from PyQt6.QtCore import QEvent as _QE
+        if event.type() == _QE.Type.MouseButtonPress:
+            if (event.button() == Qt.MouseButton.LeftButton
+                    and event.modifiers() & Qt.KeyboardModifier.AltModifier):
+                self._hotkey_add_to_schedule()
+                return True  # consume — don't let Qt do alt-click text selection
+        return super().eventFilter(obj, event)
 
     def event(self, e):
         # Qt intercepts F1 for "What's This?" help. During hotkey capture mode,
@@ -586,7 +617,7 @@ class MainWindow(QMainWindow):
                     "verse": verse_data.get("verse", ""),
                     "text": verse_data.get("text", ""),
                     "translation": verse_data.get("translation", browser._current_translation),
-                    "theme": verse_data.get("theme", "default"),
+                    "theme": pres_tab._current_theme,
                 }
                 pres_tab.schedule_panel.add_item(item_data)
 

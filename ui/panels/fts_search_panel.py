@@ -222,6 +222,8 @@ class FtsSearchPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
+        self.setAccessibleName("FTS Search Panel")
+        self.setAccessibleDescription("Search Bible verses across 6 translations using FTS5 full-text search")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -245,6 +247,8 @@ class FtsSearchPanel(QWidget):
         # Search input
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("Search all translations...")
+        self.query_input.setAccessibleName("FTS search query")
+        self.query_input.setAccessibleDescription("Type a Bible verse reference or text to search across all translations")
         self.query_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {SLATE_800};
@@ -263,12 +267,18 @@ class FtsSearchPanel(QWidget):
 
         # Results list
         self.results_list = _FtsResultsList()
+        self.results_list.setAccessibleName("FTS search results")
+        self.results_list.setAccessibleDescription("List of Bible verse search results ordered by relevance")
         self.results_list.setSpacing(2)
         self.results_list.setStyleSheet(f"""
             QListWidget {{
                 background: transparent;
                 border: none;
                 padding: 0;
+            }}
+            QListWidget::item:focus {{
+                outline: 2px solid {CYAN_400};
+                outline-offset: -2px;
             }}
             QScrollBar:vertical {{
                 background: transparent;
@@ -288,6 +298,7 @@ class FtsSearchPanel(QWidget):
 
         # Status label
         self.status_label = QLabel("")
+        self.status_label.setAccessibleName("Search status")
         self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px;")
         layout.addWidget(self.status_label)
 

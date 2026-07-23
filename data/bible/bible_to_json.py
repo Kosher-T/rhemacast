@@ -38,6 +38,17 @@ except ImportError:
     print("[WARN] lxml not found, falling back to stdlib xml.etree (slower).")
 
 
+# ─── Canonical book names (66-book Protestant Bible) ─────────────────────────
+# Maps common variants to the canonical form used across all translations.
+BOOK_NAME_ALIASES = {
+    "Psalm": "Psalms",
+}
+
+def normalize_book_name(name: str) -> str:
+    """Normalize a book name to its canonical form."""
+    return BOOK_NAME_ALIASES.get(name, name)
+
+
 # ─── Canonical book ordering (1-66) for number-only formats like Amplified ────
 BOOK_NAMES_BY_NUMBER = {
     1: "Genesis", 2: "Exodus", 3: "Leviticus", 4: "Numbers", 5: "Deuteronomy",
@@ -118,7 +129,7 @@ def parse_xmlbible(root) -> dict:
     """Parse XMLBIBLE format (ESV, NLT): BIBLEBOOK > CHAPTER > VERS."""
     books = {}
     for book_el in root.iter("BIBLEBOOK"):
-        book_name = book_el.get("bname", f"Book_{book_el.get('bnumber', '?')}")
+        book_name = normalize_book_name(book_el.get("bname", f"Book_{book_el.get('bnumber', '?')}"))
         chapters = {}
         for chap_el in book_el.iter("CHAPTER"):
             chap_num = chap_el.get("cnumber")
@@ -137,7 +148,7 @@ def parse_bcv(root) -> dict:
     """Parse bible > b > c > v format (NKJV .xmm, NIV)."""
     books = {}
     for book_el in root.iter("b"):
-        book_name = book_el.get("n", "Unknown")
+        book_name = normalize_book_name(book_el.get("n", "Unknown"))
         chapters = {}
         for chap_el in book_el.iter("c"):
             chap_num = chap_el.get("n")
@@ -166,7 +177,7 @@ def parse_osis(root) -> dict:
     # Find all book-level divs
     for div in root.findall(".//osis:div[@type='book']", ns):
         osis_id = div.get("osisID", "")
-        book_name = OSIS_TO_NAME.get(osis_id, osis_id)
+        book_name = normalize_book_name(OSIS_TO_NAME.get(osis_id, osis_id))
         chapters = {}
 
         for chap_el in div.findall("osis:chapter", ns):
@@ -193,7 +204,7 @@ def parse_amplified(root) -> dict:
     books = {}
     for book_el in root.iter("book"):
         book_num = int(book_el.get("number", 0))
-        book_name = BOOK_NAMES_BY_NUMBER.get(book_num, f"Book_{book_num}")
+        book_name = normalize_book_name(BOOK_NAMES_BY_NUMBER.get(book_num, f"Book_{book_num}"))
         chapters = {}
         for chap_el in book_el.iter("chapter"):
             chap_num = chap_el.get("number")

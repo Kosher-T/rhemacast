@@ -35,6 +35,9 @@ class _TabButton(QPushButton):
         super().__init__(icon, parent)
         self._tooltip_text = tooltip
         self.setMouseTracking(True)
+        self.setAccessibleName(tooltip)
+        self.setAccessibleDescription(f"Switch to {tooltip} panel")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def enterEvent(self, event):
         pos = self.mapToGlobal(QPoint(self.width() // 2, self.height()))
@@ -44,6 +47,14 @@ class _TabButton(QPushButton):
     def leaveEvent(self, event):
         QToolTip.hideText()
         super().leaveEvent(event)
+
+    def keyPressEvent(self, event):
+        """Allow Space/Enter to activate tab."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.click()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 class QueueItemWidget(QFrame):
@@ -56,6 +67,9 @@ class QueueItemWidget(QFrame):
         super().__init__(parent)
         self.data = data
         self.setStyleSheet(QUEUE_ITEM_STYLE)
+        self.setAccessibleName(f"Queue item: {data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}")
+        self.setAccessibleDescription(f"Confidence {data.get('confidence', 0):.0f}%. Press Enter to show, Delete to reject.")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -86,19 +100,34 @@ class QueueItemWidget(QFrame):
 
         # Show
         show_btn = QPushButton("Show")
+        show_btn.setAccessibleName("Show verse")
+        show_btn.setAccessibleDescription("Broadcast this verse to the live display output")
         show_btn.setStyleSheet(SHOW_BTN_STYLE)
-        show_btn.setToolTip("Broadcast this verse to the live display output")
+        show_btn.setToolTip("Broadcast this verse to the live display output (Enter)")
         show_btn.setFixedWidth(50)
         show_btn.clicked.connect(lambda: self.show_clicked.emit(self.data))
         layout.addWidget(show_btn)
 
         # Reject
         reject_btn = QPushButton("✕")
+        reject_btn.setAccessibleName("Reject verse")
+        reject_btn.setAccessibleDescription("Discard this suggestion from the queue")
         reject_btn.setStyleSheet(REJECT_BTN_STYLE)
-        reject_btn.setToolTip("Discard this suggestion from the queue")
+        reject_btn.setToolTip("Discard this suggestion from the queue (Delete)")
         reject_btn.setFixedWidth(28)
         reject_btn.clicked.connect(lambda: self.reject_clicked.emit(self.data))
         layout.addWidget(reject_btn)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard navigation for accessibility."""
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            self.show_clicked.emit(self.data)
+            event.accept()
+        elif event.key() == Qt.Key.Key_Delete:
+            self.reject_clicked.emit(self.data)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 class QueuePanel(QWidget):
@@ -142,19 +171,18 @@ class QueuePanel(QWidget):
         tab_layout.setSpacing(4)
 
         self._tab_buttons: dict[str, QPushButton] = {}
-        self._active_tab = "queue"
+        self._active_tab = "themes"
 
         for tab_name, icon, tooltip in [
-            ("queue", "\u2261", "Queue"),
             ("themes", "\u25C9", "Themes"),
             ("fts_search", "\u2315", "FTS Search"),
             ("fuzzy", "\u2318", "Fuzzy Search"),
         ]:
             btn = _TabButton(icon, tooltip)
             btn.setCheckable(True)
-            btn.setChecked(tab_name == "queue")
+            btn.setChecked(tab_name == "themes")
             btn.setFixedSize(40, 40)
-            btn.setStyleSheet(self._tab_style(tab_name == "queue"))
+            btn.setStyleSheet(self._tab_style(tab_name == "themes"))
             btn.clicked.connect(lambda checked, n=tab_name: self._switch_tab(n))
             tab_layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
             self._tab_buttons[tab_name] = btn
@@ -171,7 +199,7 @@ class QueuePanel(QWidget):
         # ── Stacked content (right side) ──
         self._stack = QStackedWidget()
 
-        # Queue list (index 0)
+        # Queue list (index 0) — hidden, kept for backward compatibility
         self.list_widget = QListWidget()
         self.list_widget.setSpacing(4)
         self.list_widget.setStyleSheet("QListWidget { padding: 6px; }")
@@ -188,6 +216,11 @@ class QueuePanel(QWidget):
         # Fuzzy Search panel (index 3) — lazy loaded
         self._fuzzy_search_panel = None
         self._fuzzy_search_index = -1
+
+        # Start on themes panel (index 1)
+        self._ensure_themes_loaded()
+        self._stack.setCurrentIndex(self._themes_index)
+        self.count_label.setVisible(False)
 
         body.addWidget(self._stack, 1)
 

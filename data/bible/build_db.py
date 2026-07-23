@@ -27,6 +27,16 @@ import time
 from datetime import datetime, timezone
 
 
+# ─── Book name normalization (must match bible_to_json.py) ───────────────────
+BOOK_NAME_ALIASES = {
+    "Psalm": "Psalms",
+}
+
+def normalize_book_name(name: str) -> str:
+    """Normalize a book name to its canonical form."""
+    return BOOK_NAME_ALIASES.get(name, name)
+
+
 # ─── Schema ──────────────────────────────────────────────────────────────────
 
 SCHEMA_SQL = """
@@ -95,9 +105,10 @@ def load_json_to_db(json_path: str, conn: sqlite3.Connection) -> tuple[str, int]
     # Batch insert all verses
     rows = []
     for book_name, chapters in books.items():
+        normalized_book = normalize_book_name(book_name)
         for chap_num, verses in chapters.items():
             for verse_num, text in verses.items():
-                rows.append((version, book_name, int(chap_num), int(verse_num), text.strip()))
+                rows.append((version, normalized_book, int(chap_num), int(verse_num), text.strip()))
 
     conn.executemany(
         "INSERT INTO verses (version, book, chapter, verse_num, text) VALUES (?, ?, ?, ?, ?)",

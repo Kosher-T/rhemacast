@@ -28,3 +28,6 @@ data/vosk-model-small-en-us
 .env
 .svg
 AGENTS.md
+PRODUCT.md
+opencode.json
+.opencode/

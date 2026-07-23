@@ -16,11 +16,11 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListView, QLineEdit, QFrame, QScrollArea, QStackedWidget,
+    QListView, QFrame, QScrollArea,
     QStyleOptionViewItem, QStyledItemDelegate, QStyle, QMessageBox,
     QMenu, QInputDialog, QAbstractItemView
 )
-from PyQt6.QtGui import QIcon, QWheelEvent, QFontMetrics, QDrag, QAction, QCursor
+from PyQt6.QtGui import QWheelEvent, QFontMetrics, QDrag, QCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint
 
 from ui.styles import (
@@ -32,8 +32,8 @@ from ui.styles import (
 from ui.widgets.predictive_input import PredictiveScriptureInput
 from ui.dialogs.add_translation_dialog import AddTranslationDialog
 from core.bible_service import (
-    AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses, search_verses_text,
-    hybrid_search, import_translation_file, refresh_available_translations,
+    AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses,
+    import_translation_file, refresh_available_translations,
     get_display_name, set_display_name, get_translation_order, set_translation_order
 )
 from core.database import get_setting, set_setting
@@ -120,7 +120,6 @@ class VerseListModel(QAbstractListModel):
 
     def find_row(self, book: str, chapter: int, verse: int) -> int:
         """Binary-ish scan for the row matching book/chapter/verse. Returns -1 if not found."""
-        target = f"{book} {chapter}:{verse}"
         for i, v in enumerate(self._verses):
             if v["book"] == book and v["chapter"] == chapter and v["verse"] == verse:
                 return i
@@ -238,7 +237,10 @@ class VerseDelegate(QStyledItemDelegate):
         return QSize(0, _ROW_HEIGHT)
 
 
-# ── Translation Button ─────────────────────────────────────────────────────
+# ── Virtualized Translation List ─────────────────────────────────────────────
+
+
+# ── Translation Button (Legacy - kept for drag/drop compatibility) ──────────────────────────
 
 _DRAG_THRESHOLD = 5  # pixels before drag starts
 
@@ -269,6 +271,9 @@ class TranslationButton(QPushButton):
         self.clicked.connect(lambda: self.single_clicked.emit(self.canonical))
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self.setAccessibleName(f"Translation: {self.display_name}")
+        self.setAccessibleDescription("Single-click to browse, double-click to broadcast, right-click for options")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def _update_tooltip(self):
         if self.display_name != self.canonical:
@@ -292,7 +297,7 @@ class TranslationButton(QPushButton):
         self._active = active
         self.setStyleSheet(TRANSLATION_BTN_ACTIVE if active else TRANSLATION_BTN_INACTIVE)
 
-    # ── Context Menu (Rename) ────────────────────────────────────────────
+    # ── Context Menu (Rename) ────────────────────────────────────────────────────
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
@@ -329,7 +334,7 @@ class TranslationButton(QPushButton):
             set_display_name(self.canonical, new_name)
             self.rename_requested.emit(self.canonical)
 
-    # ── Drag & Drop ──────────────────────────────────────────────────────
+    # ── Drag & Drop ────────────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -337,21 +342,18 @@ class TranslationButton(QPushButton):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._drag_start_pos is None:
-            super().mouseMoveEvent(event)
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
             return
-
-        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() > _DRAG_THRESHOLD:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setData("application/x-translation-canonical", self.canonical.encode())
-            drag.setMimeData(mime)
-            drag.setPixmap(self.grab())
-            drag.setHotSpot(event.position().toPoint())
-            drag.exec(Qt.DropAction.MoveAction)
-            self._drag_start_pos = None
-
-        super().mouseMoveEvent(event)
+        if self._drag_start_pos is None:
+            return
+        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() < _DRAG_THRESHOLD:
+            return
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData("application/x-translation-canonical", self.canonical.encode())
+        drag.setMimeData(mime)
+        drag.setPixmap(self.grab())
+        drag.exec(Qt.DropAction.MoveAction)
 
     def mouseReleaseEvent(self, event):
         self._drag_start_pos = None
@@ -517,25 +519,6 @@ class BrowserPanel(QWidget):
 
         toolbar_layout.addWidget(scroll_area, 1)
 
-        # Add translation button
-        self._add_btn = QPushButton("+ Add")
-        self._add_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {BLUE_500};
-                font-size: 10px;
-                font-weight: 700;
-                border: none;
-                padding: 4px 8px;
-            }}
-            QPushButton:hover {{
-                color: {WHITE};
-            }}
-        """)
-        self._add_btn.setToolTip("Add a Bible translation from a file or download page")
-        self._add_btn.clicked.connect(self._on_add_translation)
-        toolbar_layout.addWidget(self._add_btn)
-
         # Nav input container
         nav_container = QWidget()
         nav_container.setStyleSheet(f"""
@@ -546,57 +529,14 @@ class BrowserPanel(QWidget):
         nav_layout.setContentsMargins(8, 4, 8, 4)
         nav_layout.setSpacing(8)
 
-        # Toggle Mode Button
-        _assets = os.path.join(os.path.dirname(__file__), "..", "assets")
-        self._icon_search = QIcon(os.path.join(_assets, "search.svg"))
-        self._icon_book = QIcon(os.path.join(_assets, "book.svg"))
-        self.mode_toggle_btn = QPushButton()
-        self.mode_toggle_btn.setIcon(self._icon_search)
-        self.mode_toggle_btn.setIconSize(QSize(18, 18))
-        self.mode_toggle_btn.setFixedSize(28, 28)
-        self.mode_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {BLUE_500};
-                border: none;
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background: rgba(59, 130, 246, 0.2);
-            }}
-        """)
-        self.mode_toggle_btn.clicked.connect(self._toggle_nav_mode)
-        nav_layout.addWidget(self.mode_toggle_btn)
-
-        # Stacked widget: Predictive Input vs Natural Language Search
-        self.nav_stack = QStackedWidget()
-
-        # Mode 0: Predictive Input
+        # Predictive Scripture Input
         self.predictive_input = PredictiveScriptureInput()
         self.predictive_input.setStyleSheet("background: transparent; border: none;")
         self.predictive_input.navigate_requested.connect(self._on_navigate_requested)
         self.predictive_input.push_requested.connect(self._on_navigator_push)
         self.predictive_input.set_translation(self._current_translation)
-        self.nav_stack.addWidget(self.predictive_input)
+        nav_layout.addWidget(self.predictive_input)
 
-        # Mode 1: Natural Language Search
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("SEARCH: keywords...")
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: transparent;
-                color: {WHITE};
-                border: none;
-                font-size: 11px;
-            }}
-        """)
-        self.search_input.returnPressed.connect(self._on_search_submitted)
-        self.search_input.textChanged.connect(self._on_search_text_changed)
-        self.nav_stack.addWidget(self.search_input)
-
-        nav_layout.addWidget(self.nav_stack, 1)
-
-        nav_container.setFixedWidth(300)
         toolbar_layout.addWidget(nav_container)
 
         layout.addWidget(toolbar)
@@ -670,13 +610,13 @@ class BrowserPanel(QWidget):
         self._highlighted_verse = verse
 
     def _scroll_to_highlight(self):
-        """Scroll the currently highlighted verse to the top of the viewport."""
+        """Scroll the currently highlighted verse into view (centered if off-screen)."""
         row = self._model.find_row(
             self._highlighted_book, self._highlighted_chapter, self._highlighted_verse
         )
         if row >= 0:
             index = self._model.index(row)
-            self.verse_list.scrollTo(index, QListView.ScrollHint.PositionAtTop)
+            self.verse_list.scrollTo(index, QListView.ScrollHint.EnsureVisible)
 
     def _update_navigator(self):
         """Update the predictive input fields to reflect the highlighted verse."""
@@ -745,41 +685,6 @@ class BrowserPanel(QWidget):
         self._set_highlight(book, chap_int, verse_int)
         self._scroll_to_highlight()
         self._update_navigator()
-
-    def _on_search_submitted(self):
-        """Handle natural language search via FTS/LIKE on bible.db."""
-        query = self.search_input.text().strip()
-        if not query:
-            return
-
-        results = hybrid_search(query, self._current_translation, limit=30)
-        if results:
-            for r in results:
-                if "book" not in r:
-                    r["book"] = self._highlighted_book
-            self._model.load_all(results)
-            self.verse_list.scrollTo(self._model.index(0), QListView.ScrollHint.PositionAtTop)
-            logger.info(f"Search '{query}' returned {len(results)} results")
-        else:
-            self._model.load_all([])
-            logger.info(f"Search '{query}' returned no results")
-
-    def _on_search_text_changed(self, text: str):
-        """Live search on every keypress; restore Bible when empty."""
-        query = text.strip()
-        if not query:
-            self._load_bible()
-            return
-
-        results = hybrid_search(query, self._current_translation, limit=30)
-        if results:
-            for r in results:
-                if "book" not in r:
-                    r["book"] = self._highlighted_book
-            self._model.load_all(results)
-            self.verse_list.scrollTo(self._model.index(0), QListView.ScrollHint.PositionAtTop)
-        else:
-            self._model.load_all([])
 
     # ── Translation Switching ──────────────────────────────────────────────
 
@@ -943,7 +848,7 @@ class BrowserPanel(QWidget):
         self._add_btn.setText("+ Add" if enabled else "Importing...")
 
     def _add_translation_button(self, abbrev: str):
-        """Dynamically add a new TranslationButton to the toolbar."""
+        """Dynamically add a new translation button to the scroll area."""
         if abbrev in self._translation_buttons:
             return  # already exists
 
@@ -953,54 +858,22 @@ class BrowserPanel(QWidget):
         btn.double_clicked_signal.connect(self._on_translation_double_click)
         btn.sort_requested.connect(self._on_sort_translations)
         btn.rename_requested.connect(lambda _: self._apply_sort())
-        btn.sort_requested.connect(self._on_sort_translations)
-
-        # Find the scroll area's trans_layout and insert before the stretch
-        scroll_area = None
-        for child in self.findChildren(QScrollArea):
-            if hasattr(child, 'widget') and child.widget():
-                scroll_area = child
-                break
-
-        if scroll_area:
-            trans_widget = scroll_area.widget()
-            if trans_widget:
-                layout = trans_widget.layout()
-                # Insert at the end (before the stretch)
-                count = layout.count()
-                # Remove the stretch, add button, re-add stretch
-                stretch_item = None
-                for i in range(count - 1, -1, -1):
-                    item = layout.itemAt(i)
-                    if item and item.spacerItem():
-                        stretch_item = layout.takeAt(i)
-                        break
-                layout.addWidget(btn)
-                if stretch_item:
-                    layout.addItem(stretch_item)
-
         self._translation_buttons[abbrev] = btn
 
-    # ── Mode Toggle ────────────────────────────────────────────────────────
-
-    def _toggle_nav_mode(self):
-        """Switch between Predictive Scripture Nav and Natural Language Search."""
-        current_idx = self.nav_stack.currentIndex()
-        if current_idx == 0:
-            self.nav_stack.setCurrentIndex(1)
-            self.mode_toggle_btn.setIcon(self._icon_book)
-            self.mode_toggle_btn.setToolTip("Switch to Book/Chapter/Verse navigation")
-            self.search_input.setFocus()
-        else:
-            self.nav_stack.setCurrentIndex(0)
-            self.mode_toggle_btn.setIcon(self._icon_search)
-            self.mode_toggle_btn.setToolTip("Switch to Natural Language Search")
-            self.predictive_input.set_values(
-                self._highlighted_book,
-                self._highlighted_chapter,
-                self._highlighted_verse
-            )
-            self._load_bible()
+        # Find the trans_layout inside the scroll area
+        for scroll in self.findChildren(QScrollArea):
+            widget = scroll.widget()
+            if widget and widget.layout():
+                layout = widget.layout()
+                # Insert before the stretch spacer
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item and item.spacerItem():
+                        layout.insertWidget(i, btn)
+                        return
+                # No stretch found, just add at end
+                layout.addWidget(btn)
+                return
 
     # ── Public Accessors ───────────────────────────────────────────────────
 

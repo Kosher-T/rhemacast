@@ -47,6 +47,8 @@ class PresentationTab(QWidget):
         self._current_preview = None      # Currently previewed verse dict
         self._last_cleared_display = None  # Last verse before clear (for recall)
         self._is_cleared = True
+        self._prev_verse_data = None      # Previous verse (for Prev button)
+        self._next_verse_data = None      # Next verse (for Next button)
 
         # Load saved theme from settings
         from core.database import get_setting
@@ -218,6 +220,9 @@ class PresentationTab(QWidget):
 
         self._broadcast_to_ws(payload)
 
+        if book and chapter and verse_num and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
+
         logger.info(f"Displaying: {ref}")
 
     def _on_browser_broadcast(self, version: str):
@@ -247,6 +252,12 @@ class PresentationTab(QWidget):
 
         self._broadcast_to_ws(payload)
 
+        if book and version:
+            ch = verse_data.get("chapter", "")
+            vs = verse_data.get("verse", "")
+            if ch and vs:
+                self._update_verse_neighbors(version, book, int(ch), int(vs))
+
         logger.info(f"Browser broadcast: {ref}")
 
     def _on_navigator_push(self, book: str, chapter: str, verse: str):
@@ -274,6 +285,7 @@ class PresentationTab(QWidget):
         self.live_preview.set_live_payload(payload)
         self.live_preview.set_preview_payload(payload)
         self._broadcast_to_ws(payload)
+        self._update_verse_neighbors(version, book, int(chapter), int(verse))
         logger.info(f"Navigator push: {ref}")
 
     def _on_translation_changed(self, version: str):
@@ -289,26 +301,24 @@ class PresentationTab(QWidget):
             "verse": data.get("verse_num", ""),
             "text": data.get("text", ""),
             "translation": data.get("version", ""),
-            "theme": "default",
+            "theme": self._current_theme,
         }
         self.schedule_panel.add_item(item_data)
         logger.info(f"Search result sent to schedule: {item_data['ref']}")
 
     def _on_search_to_navigator(self, data: dict):
-        """Single-click search result → navigate browser to that reference in current translation + update preview with navigator's translation."""
+        """Single-click search result → navigate browser to that reference in current translation + update preview."""
         book = data.get("book", "")
         chapter = str(data.get("chapter", ""))
         verse = str(data.get("verse_num", ""))
-        # Navigate in the current browser translation (don't switch)
         version = self.browser_panel._current_translation
         self.browser_panel.navigate_to_reference(book, chapter, verse)
 
-        # Fetch verse text from the CURRENT browser translation (navigator's translation)
+        # Fetch verse text from the CURRENT browser translation
         from core.bible_service import get_verse
         verse_data = get_verse(version, book, int(chapter), int(verse))
-        text = verse_data.get("text", "") if verse_data else data.get("text", "")
+        text = verse_data.get("text", "") if verse_data else ""
 
-        # Update preview with the navigator's translation
         ref = f"[{get_display_name(version)}] {book} {chapter}:{verse}"
         self._current_preview = {
             "text": text,
@@ -349,6 +359,8 @@ class PresentationTab(QWidget):
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self.live_preview.set_live_payload(payload)
         self._broadcast_to_ws(payload)
+        if book and chapter and verse_num and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
         logger.info(f"Search → live: {ref} [{version}]")
 
     def _on_trans_badge_to_navigator(self, data: dict):
@@ -395,6 +407,8 @@ class PresentationTab(QWidget):
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self.live_preview.set_live_payload(payload)
         self._broadcast_to_ws(payload)
+        if book and chapter and verse_num and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
         logger.info(f"Badge → live: {ref}")
 
     def _on_verse_single_click(self, version: str):
@@ -439,6 +453,9 @@ class PresentationTab(QWidget):
         self.live_preview.set_live_payload(payload)
 
         self._broadcast_to_ws(payload)
+
+        if book and chapter and verse_num and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
 
         logger.info(f"Preview pushed to live: {ref}")
 
@@ -496,65 +513,39 @@ class PresentationTab(QWidget):
             logger.info(f"Theme double-clicked: {theme_name} (no live verse to re-render)")
 
     def _on_prev_verse(self):
-        """Show the previous Bible verse relative to what's currently live."""
+        """Show the previous Bible verse from the stored neighbor."""
         logger.info("_on_prev_verse called")
-        try:
-            if not self._current_display:
-                logger.info("prev_verse: nothing displayed")
-                return
-
-            version = self._current_display.get("version", "") or self._current_display.get("translation", "")
-            book = self._current_display.get("book", "")
-            chapter = self._current_display.get("chapter", "")
-            verse = self._current_display.get("verse_num", "") or self._current_display.get("verse", "")
-            if not book or not chapter or not verse or not version:
-                logger.info(f"prev_verse: incomplete display data: {self._current_display}")
-                return
-
-            chapter = int(chapter)
-            verse = int(verse)
-
-            from core.bible_service import get_prev_verse
-            prev = get_prev_verse(version, book, chapter, verse)
-            if not prev:
-                logger.info(f"prev_verse: already at first verse")
-                return
-
-            self._navigate_to_bible_verse(prev, version)
-        except Exception as e:
-            logger.error(f"prev_verse failed: {e}", exc_info=True)
+        if not self._prev_verse_data:
+            logger.info("prev_verse: no previous verse")
+            return
+        prev = self._prev_verse_data
+        version = prev.get("version", "") or self._current_display.get("version", "") if self._current_display else ""
+        self._navigate_to_bible_verse(prev, version, skip_navigator=True)
 
     def _on_next_verse(self):
-        """Show the next Bible verse relative to what's currently live."""
+        """Show the next Bible verse from the stored neighbor."""
         logger.info("_on_next_verse called")
+        if not self._next_verse_data:
+            logger.info("next_verse: no next verse")
+            return
+        nxt = self._next_verse_data
+        version = nxt.get("version", "") or self._current_display.get("version", "") if self._current_display else ""
+        self._navigate_to_bible_verse(nxt, version, skip_navigator=True)
+
+    def _update_verse_neighbors(self, version: str, book: str, chapter: int, verse: int):
+        """Compute and store the previous and next verse relative to the given verse."""
+        from core.bible_service import get_prev_verse, get_next_verse
         try:
-            if not self._current_display:
-                logger.info("next_verse: nothing displayed")
-                return
+            self._prev_verse_data = get_prev_verse(version, book, chapter, verse)
+        except Exception:
+            self._prev_verse_data = None
+        try:
+            self._next_verse_data = get_next_verse(version, book, chapter, verse)
+        except Exception:
+            self._next_verse_data = None
 
-            version = self._current_display.get("version", "") or self._current_display.get("translation", "")
-            book = self._current_display.get("book", "")
-            chapter = self._current_display.get("chapter", "")
-            verse = self._current_display.get("verse_num", "") or self._current_display.get("verse", "")
-            if not book or not chapter or not verse or not version:
-                logger.info(f"next_verse: incomplete display data: {self._current_display}")
-                return
-
-            chapter = int(chapter)
-            verse = int(verse)
-
-            from core.bible_service import get_next_verse
-            nxt = get_next_verse(version, book, chapter, verse)
-            if not nxt:
-                logger.info(f"next_verse: already at last verse")
-                return
-
-            self._navigate_to_bible_verse(nxt, version)
-        except Exception as e:
-            logger.error(f"next_verse failed: {e}", exc_info=True)
-
-    def _navigate_to_bible_verse(self, verse_data: dict, version: str):
-        """Display a Bible verse on live + preview and update the browser navigator."""
+    def _navigate_to_bible_verse(self, verse_data: dict, version: str, skip_navigator: bool = False):
+        """Display a Bible verse on live + preview. Optionally skip translation switch."""
         book = verse_data.get("book", "")
         chapter = str(verse_data.get("chapter", ""))
         verse_num = str(verse_data.get("verse", ""))
@@ -575,7 +566,18 @@ class PresentationTab(QWidget):
         self.live_preview.set_live_payload(payload)
         self._broadcast_to_ws(payload)
 
-        self.browser_panel.navigate_to_reference(book, chapter, verse_num, translation=version)
+        if skip_navigator:
+            # Highlight + scroll (ensure visible) + update navigator inputs, but no translation switch
+            self.browser_panel._set_highlight(book, int(chapter), int(verse_num))
+            self.browser_panel._scroll_to_highlight()
+            self.browser_panel._update_navigator()
+        else:
+            self.browser_panel.navigate_to_reference(book, chapter, verse_num, translation=version)
+
+        # Update neighbors for next prev/next press
+        if book and chapter and verse_num and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
+
         logger.info(f"Prev/Next → {ref}")
 
     def _display_schedule_item(self, item: dict):
@@ -651,6 +653,8 @@ class PresentationTab(QWidget):
         self._current_theme = saved_theme
         self.live_preview.set_live_payload(payload)
         self._broadcast_to_ws(payload)
+        if book and chapter and verse and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse))
         logger.info(f"Schedule live: {ref} (theme: {theme})")
 
     def _on_start_transcription(self):

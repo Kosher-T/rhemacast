@@ -10,7 +10,7 @@ body, html {
     height: 100vh;
     overflow: hidden;
     background: transparent !important; /* MUST be transparent for OBS overlay */
-    font-family: 'Inter', sans-serif;
+    font-family: var(--rc-ref-font-family, 'DM Sans'), sans-serif;
     display: flex;
     align-items: var(--rc-vertical-align, flex-end); /* Align to bottom for lower-thirds, center for reference */
     justify-content: center;
@@ -50,14 +50,15 @@ body, html {
 
 /* Typography — defaults, overridden by theme via JS */
 #verse-text {
+    font-family: var(--rc-text-font-family, 'Cormorant Garamond'), serif;
     font-size: var(--rc-text-size, 2.5rem);
-    font-weight: var(--rc-text-weight, 800);
-    line-height: var(--rc-text-line-height, 1.4);
+    font-weight: var(--rc-text-weight, 700);
+    line-height: var(--rc-text-line-height, 1.2);
     color: var(--rc-text-color, #f8fafc);
     text-align: center;
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
-    letter-spacing: var(--rc-text-letter-spacing, -0.02em);
+    letter-spacing: var(--rc-text-letter-spacing, -0.01em);
     min-font-size: var(--rc-text-min-size, 4px);
     max-font-size: var(--rc-text-max-size, 300px);
 }
@@ -72,8 +73,9 @@ body, html {
 }
 
 #verse-ref {
+    font-family: var(--rc-ref-font-family, 'DM Sans'), sans-serif;
     font-size: var(--rc-ref-size, 1.5rem);
-    font-weight: var(--rc-ref-weight, 600);
+    font-weight: var(--rc-ref-weight, 500);
     color: var(--rc-ref-color, #94a3b8);
     text-align: center;
     text-transform: var(--rc-ref-text-transform, uppercase);

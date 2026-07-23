@@ -58,8 +58,10 @@ function resetTheme() {
         "--rc-text-color", "--rc-text-size", "--rc-text-weight",
         "--rc-text-line-height", "--rc-text-shadow", "--rc-text-letter-spacing",
         "--rc-text-margin-bottom", "--rc-text-min-size", "--rc-text-max-size",
+        "--rc-text-font-family",
         "--rc-ref-color", "--rc-ref-size", "--rc-ref-weight",
         "--rc-ref-text-transform", "--rc-ref-letter-spacing",
+        "--rc-ref-font-family",
         "--rc-translation-color", "--rc-translation-margin-left"
     ];
     props.forEach(p => root.style.removeProperty(p));
@@ -105,6 +107,7 @@ function applyTheme(theme) {
     if (t.margin_bottom) root.style.setProperty("--rc-text-margin-bottom", t.margin_bottom);
     if (t.min_size)     root.style.setProperty("--rc-text-min-size", t.min_size);
     if (t.max_size)     root.style.setProperty("--rc-text-max-size", t.max_size);
+    if (t.font_family)  root.style.setProperty("--rc-text-font-family", t.font_family);
 
     // Reference
     if (r.color)        root.style.setProperty("--rc-ref-color", r.color);
@@ -112,6 +115,7 @@ function applyTheme(theme) {
     if (r.weight)       root.style.setProperty("--rc-ref-weight", r.weight);
     if (r.text_transform) root.style.setProperty("--rc-ref-text-transform", r.text_transform);
     if (r.letter_spacing) root.style.setProperty("--rc-ref-letter-spacing", r.letter_spacing);
+    if (r.font_family)  root.style.setProperty("--rc-ref-font-family", r.font_family);
 
     // Translation
     if (tr.color)       root.style.setProperty("--rc-translation-color", tr.color);

@@ -205,6 +205,8 @@ class SearchPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
+        self.setAccessibleName("Fuzzy Search Panel")
+        self.setAccessibleDescription("Semantic search using FAISS and BM25 for natural language Bible verse queries")
         self._searching = False
 
         layout = QVBoxLayout(self)
@@ -222,6 +224,8 @@ class SearchPanel(QWidget):
 
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("e.g., rich man threw a party for his son...")
+        self.query_input.setAccessibleName("Fuzzy search query")
+        self.query_input.setAccessibleDescription("Type a natural language description to find Bible verses")
         self.query_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {SLATE_800};
@@ -239,6 +243,8 @@ class SearchPanel(QWidget):
         input_row.addWidget(self.query_input)
 
         self.search_btn = QPushButton("Search")
+        self.search_btn.setAccessibleName("Search")
+        self.search_btn.setAccessibleDescription("Execute semantic search for Bible verses")
         self.search_btn.setStyleSheet(f"""
             QPushButton {{
                 background: rgba(34, 211, 238, 0.15);
@@ -261,17 +267,24 @@ class SearchPanel(QWidget):
 
         # ── Status / latency label ──
         self.status_label = QLabel("")
+        self.status_label.setAccessibleName("Search status")
         self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
         layout.addWidget(self.status_label)
 
         # ── Results list ──
         self.results_list = _SearchResultsList()
+        self.results_list.setAccessibleName("Fuzzy search results")
+        self.results_list.setAccessibleDescription("List of Bible verse search results ordered by relevance")
         self.results_list.setSpacing(4)
         self.results_list.setStyleSheet(f"""
             QListWidget {{
                 background: transparent;
                 border: none;
                 padding: 0;
+            }}
+            QListWidget::item:focus {{
+                outline: 2px solid {CYAN_400};
+                outline-offset: -2px;
             }}
             QScrollBar:vertical {{
                 background: transparent;

@@ -113,6 +113,15 @@ QPushButton:hover {{
 QPushButton:pressed {{
     background-color: {SLATE_800};
 }}
+QPushButton:focus {{
+    border: 2px solid {BLUE_500};
+    padding: 3px 11px;  /* compensate for border width */
+}}
+QPushButton:disabled {{
+    color: {SLATE_500};
+    background-color: {SLATE_800};
+    border-color: transparent;
+}}
 
 /* ── Line Edit ── */
 QLineEdit {{
@@ -125,7 +134,8 @@ QLineEdit {{
     selection-background-color: {BLUE_500};
 }}
 QLineEdit:focus {{
-    border-color: {BLUE_500};
+    border: 2px solid {BLUE_500};
+    padding: 3px 7px;  /* compensate for border */
 }}
 
 /* ── List Widget ── */
@@ -144,6 +154,14 @@ QListWidget::item:selected {{
 }}
 QListWidget::item:hover {{
     background: transparent;
+}}
+QListWidget::item:focus {{
+    outline: 2px solid {BLUE_500};
+    outline-offset: -2px;
+}}
+QListWidget::item:selected:focus {{
+    outline: 2px solid {BLUE_500};
+    outline-offset: -2px;
 }}
 
 /* ── Labels ── */

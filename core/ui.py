@@ -15,13 +15,23 @@ import threading
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtGui import QGuiApplication
 
 from ui.main_window import MainWindow
-from ui.styles import APP_STYLESHEET
 from ui.workers import OperatorQueueWorker, HardwareTelemetryWorker, TranscriptStreamWorker
+from ui.theme import apply_theme
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_high_dpi():
+    """Configure high-DPI scaling before QApplication creation."""
+    # Qt 6: High DPI scaling is enabled by default
+    # PassThrough policy respects the OS scaling factor
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
 
 
 def _boot_background_services():
@@ -61,8 +71,11 @@ def _boot_background_services():
 
 class RhemaCastApp(QApplication):
     def __init__(self, argv):
+        _configure_high_dpi()
         super().__init__(argv)
-        self.setStyleSheet(APP_STYLESHEET)
+        
+        # Apply theme palette for native look + accessibility
+        apply_theme(self, "dark")
         
         # Boot persistent background services
         _boot_background_services()

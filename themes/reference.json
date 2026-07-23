@@ -1,7 +1,7 @@
 {
     "name": "reference",
     "label": "Reference",
-    "description": "Fixed 1920x420 centered reference display with transparent background and auto-resizing text",
+    "description": "Fixed 1920x420 centered reference display with transparent background and premium serif typography",
     "author": "RhemaCast",
     "container": {
         "background": "transparent",
@@ -10,10 +10,10 @@
         "box_shadow": "none",
         "backdrop_filter": "none",
         "padding": "0",
-        "max_width": "1920px",
-        "min_width": "1920px",
-        "width": "1920px",
-        "height": "640px",
+        "max_width": "1840px",
+        "min_width": "1840px",
+        "width": "1840px",
+        "height": "500px",
         "display": "flex",
         "flex_direction": "column",
         "justify_content": "center",
@@ -25,24 +25,26 @@
     },
     "text": {
         "color": "#ffffff",
+        "font_family": "'Cormorant Garamond', serif",
         "size": "55px",
         "min_size": "50px",
         "max_size": "65px",
-        "weight": 700,
-        "line_height": "1.2",
-        "text_shadow": "none",
-        "letter_spacing": "-0.01em",
-        "margin_bottom": "12px"
+        "weight": 600,
+        "line_height": "1.25",
+        "text_shadow": "-2px -2px 0 #555, 2px -2px 0 #555, -2px 2px 0 #555, 2px 2px 0 #555, -2px 0 0 #555, 2px 0 0 #555, 0 -2px 0 #555, 0 2px 0 #555, 0 2px 20px rgba(0, 0, 0, 0.3)",
+        "letter_spacing": "-0.005em",
+        "margin_bottom": "16px"
     },
     "reference": {
-        "color": "#cccccc",
-        "size": "40px",
+        "color": "#b0b0b0",
+        "font_family": "'DM Sans', sans-serif",
+        "size": "36px",
         "weight": 500,
         "text_transform": "uppercase",
-        "letter_spacing": "0.1em"
+        "letter_spacing": "0.12em"
     },
     "translation": {
-        "color": "#999999",
-        "margin_left": "8px"
+        "color": "#808080",
+        "margin_left": "10px"
     }
 }
