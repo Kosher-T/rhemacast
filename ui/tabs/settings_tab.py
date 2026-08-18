@@ -1030,6 +1030,9 @@ class SettingsTab(QWidget):
         self._sections["Database"] = section
         self._content_layout.addWidget(section)
 
+        # Load index status on startup
+        self._load_index_status()
+
     def _make_translation_tag(self, translation: str, index_key: str) -> QPushButton:
         """Create a removable translation tag button."""
         tag = QPushButton(f"  {translation}  ×")
@@ -1078,6 +1081,7 @@ class SettingsTab(QWidget):
         if translation in widgets["current_translations"]:
             widgets["current_translations"].remove(translation)
             self._refresh_translation_tags(index_key)
+            self._populate_add_combo(index_key)
 
     def _refresh_translation_tags(self, index_key: str):
         """Refresh the displayed translation tags for an index."""

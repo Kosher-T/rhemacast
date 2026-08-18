@@ -5,12 +5,14 @@ Frameless main window with Chrome-style tab bar and lazy-loaded tabs.
 Implements window dragging, resizing, and global hotkeys.
 """
 
+import os
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal
-from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
 
 from ui.styles import (
     SLATE_950, SLATE_600, CHROME_BG, CHROME_TAB_ACTIVE,
@@ -73,6 +75,20 @@ class FramelessTitleBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 0, 0)
         layout.setSpacing(0)
+        
+        # Favicon icon
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        icon_path = os.path.join(assets_dir, "favicon.svg")
+        if os.path.exists(icon_path):
+            icon_label = QLabel()
+            icon_pixmap = QPixmap(icon_path).scaled(
+                20, 20, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            icon_label.setPixmap(icon_pixmap)
+            icon_label.setFixedSize(24, 24)
+            icon_label.setStyleSheet("background: transparent; padding: 0px 6px 0px 0px;")
+            layout.addWidget(icon_label)
         
         # Logo
         logo = QLabel("RhemaCast")
@@ -224,6 +240,13 @@ class MainWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(1024, 768)
         self.resize(1280, 800)
+
+        # Set window icon
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        icon_path = os.path.join(assets_dir, "icon.svg")
+        if os.path.exists(icon_path):
+            from PyQt6.QtGui import QIcon
+            self.setWindowIcon(QIcon(icon_path))
         
         # Focus policy for keyboard navigation
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)

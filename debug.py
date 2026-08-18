@@ -16,6 +16,6 @@ from core.ui import RhemaCastApp
 
 print("Creating app instance")
 app = RhemaCastApp(sys.argv)
-app.main_window.show()
+# Main window is now shown after loading screen completes
 print("OK — entering event loop")
 sys.exit(app.exec())

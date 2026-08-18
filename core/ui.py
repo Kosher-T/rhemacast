@@ -79,13 +79,28 @@ class RhemaCastApp(QApplication):
         # Apply theme palette for native look + accessibility
         apply_theme(self, "dark")
         
-        # Boot persistent background services
+        # Show loading screen immediately
+        from ui.widgets.loading_screen import LoadingScreen
+        self.loading_screen = LoadingScreen()
+        self.loading_screen.show()
+        self.processEvents()
+        
+        # Boot persistent background services after a short delay
+        QTimer.singleShot(100, self._boot_and_show)
+        
+    def _boot_and_show(self):
+        """Boot background services, then show main window."""
         _boot_background_services()
         
         self.main_window = MainWindow()
         
         # Initialize background workers
         self._init_workers()
+        
+        # Close loading screen and show main window
+        self.loading_screen.close()
+        self.main_window.show()
+        self.loading_screen.deleteLater()
         
     def _init_workers(self):
         # Operator Queue Worker: reads from operator_queue → queue panel
@@ -129,7 +144,6 @@ def launch_ui():
     )
     
     app = RhemaCastApp(sys.argv)
-    app.main_window.show()
     
     # Run the event loop
     exit_code = app.exec()
