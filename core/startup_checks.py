@@ -79,9 +79,12 @@ class StartupValidator:
         # FAISS
         faiss_path = os.path.join(self.data_dir, "indexes", "faiss.index")
         faiss_fp_path = os.path.join(self.data_dir, "indexes", "faiss_fingerprint.json")
+        faiss_lookup_path = os.path.join(self.data_dir, "indexes", "faiss_verse_lookup.pkl")
         
         if not os.path.exists(faiss_path) or not os.path.exists(faiss_fp_path):
             self._add_result("FAISS Index", CheckStatus.FAIL, "FAISS index or fingerprint missing.", True)
+        elif not os.path.exists(faiss_lookup_path):
+            self._add_result("FAISS Index", CheckStatus.FAIL, "FAISS verse lookup missing — run build_faiss.py.", True)
         else:
             try:
                 with open(faiss_fp_path, "r") as f:
@@ -111,6 +114,27 @@ class StartupValidator:
                     self._add_result("BM25 Index", CheckStatus.FAIL, "BM25 index hash mismatch.", True)
             except Exception as e:
                 self._add_result("BM25 Index", CheckStatus.FAIL, f"Error verifying BM25: {e}", True)
+
+        # Fuzzy BM25 (optional — fuzzy search degrades to FAISS-only)
+        fuzzy_path = os.path.join(self.data_dir, "indexes", "fuzzy_bm25.pkl")
+        fuzzy_fp_path = os.path.join(self.data_dir, "indexes", "fuzzy_bm25_fingerprint.json")
+        
+        if not os.path.exists(fuzzy_path) or not os.path.exists(fuzzy_fp_path):
+            self._add_result("Fuzzy BM25 Index", CheckStatus.WARNING,
+                             "Fuzzy BM25 index missing — fuzzy search will run FAISS-only.", False)
+        else:
+            try:
+                with open(fuzzy_fp_path, "r") as f:
+                    fp = json.load(f)
+                actual = self._file_sha256(fuzzy_path)
+                if actual == fp.get("bm25_sha256"):
+                    self._add_result("Fuzzy BM25 Index", CheckStatus.PASS,
+                                     "Fuzzy BM25 index present and verified.", False)
+                else:
+                    self._add_result("Fuzzy BM25 Index", CheckStatus.FAIL,
+                                     "Fuzzy BM25 index hash mismatch.", False)
+            except Exception as e:
+                self._add_result("Fuzzy BM25 Index", CheckStatus.FAIL, f"Error verifying fuzzy BM25: {e}", False)
 
     def check_sqlite(self):
         db_path = os.path.join(self.data_dir, "app.db")

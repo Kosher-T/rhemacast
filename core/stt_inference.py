@@ -20,183 +20,179 @@ _stt_lock = threading.Lock()
 sequence_counter = 0
 session_id = time.strftime("%Y-%m-%d_%H-%M")
 
+def _notify_model(model_name: str):
+    """Push a model switch notification to the UI transcript panel."""
+    try:
+        transcript_ui_queue.put_nowait(f"[MODEL:{model_name}]")
+    except queue.Full:
+        pass
+
 def _stt_thread_target():
     """Primary STT Inference Loop (Thread 2) using Faster-Whisper."""
     global _last_processed_time, sequence_counter
-    logger.info("Starting STT Inference (Thread 2) with Faster-Whisper")
-    
-    with _stt_lock:
-        _last_processed_time = time.time()
+    try:
+        logger.info("Starting STT Inference (Thread 2) with Faster-Whisper")
+        _notify_model("whisper")
         
-    whisper_model = model_manager.whisper_model
-    
-    word_buffer = []
-    trigger_buffer = collections.deque(maxlen=50)
-    wait_state = False
-    
-    # Audio accumulation buffer (collect chunks to form a longer segment)
-    pcm_accumulator = []
-    accumulated_chunk_ids = []
-    
-    while _stt_running.is_set() and service_active.is_set() and not compute_failure.is_set():
-        try:
-            chunk_id, pcm_data = audio_buffer.pull(block=True, timeout=0.1)
-            pcm_accumulator.append(pcm_data)
-            accumulated_chunk_ids.append(chunk_id)
+        with _stt_lock:
+            _last_processed_time = time.time()
             
-            with _stt_lock:
-                _last_processed_time = time.time()
-            manager.heartbeat("T2")
-            
-            # If we have 1 second of audio (10 chunks of 100ms) or silence is detected
-            if len(pcm_accumulator) >= 10 or silence_detected.is_set():
-                # Process audio
-                audio_array = np.concatenate(pcm_accumulator).flatten()
+        whisper_model = model_manager.whisper_model
+        if whisper_model is None:
+            logger.warning("STT: whisper_model is None at thread start — Whisper not loaded?")
+        else:
+            logger.info(f"STT: whisper_model loaded, type={type(whisper_model).__name__}")
+        
+        word_buffer = []
+        trigger_buffer = collections.deque(maxlen=50)
+        wait_state = False
+        
+        # Audio accumulation buffer (collect chunks to form a longer segment)
+        pcm_accumulator = []
+        accumulated_chunk_ids = []
+        
+        while _stt_running.is_set() and service_active.is_set() and not compute_failure.is_set():
+            try:
+                chunk_id, pcm_data = audio_buffer.pull(block=True, timeout=0.1)
+                pcm_accumulator.append(pcm_data)
+                accumulated_chunk_ids.append(chunk_id)
                 
-                # Transcribe
-                if whisper_model:
-                    segments, _ = whisper_model.transcribe(audio_array)
+                with _stt_lock:
+                    _last_processed_time = time.time()
+                manager.heartbeat("T2")
+                
+                # Diagnostic: log first few chunks
+                if len(pcm_accumulator) <= 3:
+                    logger.info(f"STT chunk received: type={type(pcm_data).__name__}, shape={pcm_data.shape if hasattr(pcm_data, 'shape') else 'N/A'}")
+                
+                # If we have 1 second of audio (10 chunks of 100ms) or silence is detected
+                if len(pcm_accumulator) >= 10 or silence_detected.is_set():
+                    text_found = False
                     
-                    for segment in segments:
-                        words = segment.text.strip().split()
-                        if not words: continue
+                    # Transcribe
+                    if not whisper_model:
+                        logger.warning("STT: whisper_model is None — discarding audio, cannot transcribe")
+                    else:
+                        # Process audio
+                        audio_array = np.concatenate(pcm_accumulator).flatten()
                         
-                        word_buffer.extend(words)
-                        trigger_buffer.extend(words)
+                        segments, _ = whisper_model.transcribe(audio_array)
                         
-                        # Wait state logic
-                        if wait_state:
-                            # Preceding: extract prior 15 words from trigger_buffer
-                            prior = list(trigger_buffer)[-15:]
-                            # Snap proceeding words
-                            wait_state = False
-                        
-                        # Sliding window logic
-                        while len(word_buffer) >= 15:
-                            chunk_words = word_buffer[:15]
-                            payload = {
-                                "session_id": session_id,
-                                "sequence_id": sequence_counter,
-                                "timestamp_ms": int(time.time() * 1000),
-                                "text_chunk": " ".join(chunk_words),
-                                "word_count": len(chunk_words)
-                            }
-                            sequence_counter += 1
-                            queue_b.put(payload)
+                        for segment in segments:
+                            words = segment.text.strip().split()
+                            if not words: continue
+                            text_found = True
                             
-                            # Log to DB Write Queue
-                            db_write_queue.put({"type": "raw_stt", "payload": payload})
+                            word_buffer.extend(words)
+                            trigger_buffer.extend(words)
                             
-                            # Push to UI transcript stream
-                            try:
-                                transcript_ui_queue.put_nowait(" ".join(chunk_words))
-                            except queue.Full:
-                                pass
+                            # Wait state logic
+                            if wait_state:
+                                prior = list(trigger_buffer)[-15:]
+                                wait_state = False
                             
-                            # Retain last 6 words (overlap), drop oldest 9
-                            word_buffer = word_buffer[9:]
-                
-                # TTL Override (silence flush)
-                if silence_detected.is_set() and len(word_buffer) > 0:
-                    payload = {
-                        "session_id": session_id,
-                        "sequence_id": sequence_counter,
-                        "timestamp_ms": int(time.time() * 1000),
-                        "text_chunk": " ".join(word_buffer),
-                        "word_count": len(word_buffer)
-                    }
-                    sequence_counter += 1
-                    queue_b.put(payload)
-                    db_write_queue.put({"type": "raw_stt", "payload": payload})
-                    try:
-                        transcript_ui_queue.put_nowait(" ".join(word_buffer))
-                    except queue.Full:
-                        pass
-                    word_buffer.clear()
-                    silence_detected.clear()
-                
-                # Ack all processed chunks
-                for cid in accumulated_chunk_ids:
-                    audio_buffer.ack(cid)
-                pcm_accumulator.clear()
-                accumulated_chunk_ids.clear()
-                
-        except queue.Empty:
-            with _stt_lock:
-                _last_processed_time = time.time()
-            manager.heartbeat("T2")
-        except Exception as e:
-            logger.error(f"STT Inference error: {e}")
+                            # Sliding window logic
+                            while len(word_buffer) >= 15:
+                                chunk_words = word_buffer[:15]
+                                payload = {
+                                    "session_id": session_id,
+                                    "sequence_id": sequence_counter,
+                                    "timestamp_ms": int(time.time() * 1000),
+                                    "text_chunk": " ".join(chunk_words),
+                                    "word_count": len(chunk_words)
+                                }
+                                sequence_counter += 1
+                                queue_b.put(payload)
+                                
+                                # Log to DB Write Queue
+                                db_write_queue.put({"type": "raw_stt", "payload": payload})
+                                
+                                # Push to UI transcript stream
+                                try:
+                                    transcript_ui_queue.put_nowait(" ".join(chunk_words))
+                                except queue.Full:
+                                    pass
+                                
+                                # Retain last 6 words (overlap), drop oldest 9
+                                word_buffer = word_buffer[9:]
+                    
+                    # TTL Override (silence flush)
+                    if silence_detected.is_set() and len(word_buffer) > 0:
+                        payload = {
+                            "session_id": session_id,
+                            "sequence_id": sequence_counter,
+                            "timestamp_ms": int(time.time() * 1000),
+                            "text_chunk": " ".join(word_buffer),
+                            "word_count": len(word_buffer)
+                        }
+                        sequence_counter += 1
+                        queue_b.put(payload)
+                        db_write_queue.put({"type": "raw_stt", "payload": payload})
+                        try:
+                            transcript_ui_queue.put_nowait(" ".join(word_buffer))
+                        except queue.Full:
+                            pass
+                        word_buffer.clear()
+                        silence_detected.clear()
+                    
+                    # Ack all processed chunks
+                    for cid in accumulated_chunk_ids:
+                        audio_buffer.ack(cid)
+                    
+                    # Diagnostic: log if Whisper found no text
+                    if not text_found and whisper_model and len(pcm_accumulator) >= 10:
+                        logger.debug(f"STT: Whisper returned no text for {len(pcm_accumulator)} chunks")
+                    
+                    pcm_accumulator.clear()
+                    accumulated_chunk_ids.clear()
+                    
+            except queue.Empty:
+                with _stt_lock:
+                    _last_processed_time = time.time()
+                manager.heartbeat("T2")
+            except Exception as e:
+                logger.error(f"STT Inference error: {e}")
+    except Exception as e:
+        logger.error(f"STT Inference thread CRASHED: {e}", exc_info=True)
 
 def _vosk_thread_target():
     """Vosk Failover Thread."""
     global _last_processed_time, sequence_counter
-    logger.info("Vosk fallback thread waiting in standby (0 CPU)...")
-    
-    # Block on the failover event flag
-    compute_failure.wait()
-    
-    if not _stt_running.is_set() or not service_active.is_set():
-        return
+    try:
+        logger.info("Vosk fallback thread waiting in standby (0 CPU)...")
         
-    logger.info("Vosk failover activated. Replaying unacknowledged chunks...")
-    vosk_model = model_manager.vosk_model
-    if not vosk_model:
-        logger.critical("Vosk model not available for failover!")
-        return
-        
-    from vosk import KaldiRecognizer
-    rec = KaldiRecognizer(vosk_model, 16000)
+        # Block on the failover event flag
+        compute_failure.wait()
     
-    unacked = audio_buffer.get_unacked_chunks()
-    
-    while not queue_a.empty():
-        try:
-            _, pcm = queue_a.get_nowait()
-            unacked.append(pcm)
-            queue_a.task_done()
-        except queue.Empty:
-            break
+        if not _stt_running.is_set() or not service_active.is_set():
+            return
             
-    # Replay
-    word_buffer = []
-    
-    for pcm_data in unacked:
-        # Convert float32 to int16 for Vosk
-        int16_data = (pcm_data * 32767).astype(np.int16).tobytes()
-        if rec.AcceptWaveform(int16_data):
-            res = rec.Result()
-            import json
-            text = json.loads(res).get("text", "")
-            if text:
-                words = text.split()
-                word_buffer.extend(words)
+        logger.info("Vosk failover activated. Replaying unacknowledged chunks...")
+        _notify_model("vosk")
+        vosk_model = model_manager.vosk_model
+        if not vosk_model:
+            logger.critical("Vosk model not available for failover!")
+            return
+            
+        from vosk import KaldiRecognizer
+        rec = KaldiRecognizer(vosk_model, 16000)
+        
+        unacked = audio_buffer.get_unacked_chunks()
+        
+        while not queue_a.empty():
+            try:
+                _, pcm = queue_a.get_nowait()
+                unacked.append(pcm)
+                queue_a.task_done()
+            except queue.Empty:
+                break
                 
-                while len(word_buffer) >= 15:
-                    chunk_words = word_buffer[:15]
-                    payload = {
-                        "session_id": session_id,
-                        "sequence_id": sequence_counter,
-                        "timestamp_ms": int(time.time() * 1000),
-                        "text_chunk": " ".join(chunk_words),
-                        "word_count": len(chunk_words)
-                    }
-                    sequence_counter += 1
-                    queue_b.put(payload)
-                    db_write_queue.put({"type": "raw_stt", "payload": payload})
-                    word_buffer = word_buffer[9:]
-        time.sleep(0.01) # Yield
+        # Replay
+        word_buffer = []
         
-    # Resume live capture
-    capture_paused.clear()
-    logger.info("Vosk replay complete. Resuming live capture in CPU-only mode.")
-    
-    # Now continue loop for Vosk
-    while _stt_running.is_set() and service_active.is_set():
-        try:
-            chunk_id, pcm_data = audio_buffer.pull(block=True, timeout=0.1)
+        for pcm_data in unacked:
+            # Convert float32 to int16 for Vosk
             int16_data = (pcm_data * 32767).astype(np.int16).tobytes()
-            
             if rec.AcceptWaveform(int16_data):
                 res = rec.Result()
                 import json
@@ -217,30 +213,76 @@ def _vosk_thread_target():
                         sequence_counter += 1
                         queue_b.put(payload)
                         db_write_queue.put({"type": "raw_stt", "payload": payload})
+                        try:
+                            transcript_ui_queue.put_nowait(" ".join(chunk_words))
+                        except queue.Full:
+                            pass
                         word_buffer = word_buffer[9:]
-            audio_buffer.ack(chunk_id)
-        except queue.Empty:
-            pass
+            time.sleep(0.01) # Yield
+            
+        # Resume live capture
+        capture_paused.clear()
+        logger.info("Vosk replay complete. Resuming live capture in CPU-only mode.")
+        
+        # Now continue loop for Vosk
+        while _stt_running.is_set() and service_active.is_set():
+            try:
+                chunk_id, pcm_data = audio_buffer.pull(block=True, timeout=0.1)
+                int16_data = (pcm_data * 32767).astype(np.int16).tobytes()
+                
+                if rec.AcceptWaveform(int16_data):
+                    res = rec.Result()
+                    import json
+                    text = json.loads(res).get("text", "")
+                    if text:
+                        words = text.split()
+                        word_buffer.extend(words)
+                        
+                        while len(word_buffer) >= 15:
+                            chunk_words = word_buffer[:15]
+                            payload = {
+                                "session_id": session_id,
+                                "sequence_id": sequence_counter,
+                                "timestamp_ms": int(time.time() * 1000),
+                                "text_chunk": " ".join(chunk_words),
+                                "word_count": len(chunk_words)
+                            }
+                            sequence_counter += 1
+                            queue_b.put(payload)
+                            db_write_queue.put({"type": "raw_stt", "payload": payload})
+                            try:
+                                transcript_ui_queue.put_nowait(" ".join(chunk_words))
+                            except queue.Full:
+                                pass
+                            word_buffer = word_buffer[9:]
+                audio_buffer.ack(chunk_id)
+            except queue.Empty:
+                pass
+    except Exception as e:
+        logger.error(f"Vosk thread CRASHED: {e}", exc_info=True)
 
 def _stt_watchdog_target():
     """Watchdog thread for monitoring STT compute stalls."""
     global _last_processed_time
-    logger.info("Starting STT Watchdog")
-    
-    while _stt_running.is_set() and service_active.is_set():
-        time.sleep(0.5)
+    try:
+        logger.info("Starting STT Watchdog")
         
-        # If compute_failure is already set, exit watchdog
-        if compute_failure.is_set():
-            break
+        while _stt_running.is_set() and service_active.is_set():
+            time.sleep(0.5)
             
-        with _stt_lock:
-            time_since_last = time.time() - _last_processed_time
-            
-        if time_since_last > 2.0 and queue_a.qsize() > 0:
-            logger.critical(f"STT Inference stalled for {time_since_last:.1f}s while audio is incoming!")
-            _trigger_failover_sequence()
-            break
+            # If compute_failure is already set, exit watchdog
+            if compute_failure.is_set():
+                break
+                
+            with _stt_lock:
+                time_since_last = time.time() - _last_processed_time
+                
+            if time_since_last > 2.0 and queue_a.qsize() > 0:
+                logger.critical(f"STT Inference stalled for {time_since_last:.1f}s while audio is incoming!")
+                _trigger_failover_sequence()
+                break
+    except Exception as e:
+        logger.error(f"Watchdog thread CRASHED: {e}", exc_info=True)
 
 def _trigger_failover_sequence():
     """Executes the Pause -> Replay -> Resume sequence for Vosk fallback."""
@@ -251,7 +293,15 @@ def _trigger_failover_sequence():
 
 def start_stt():
     """Spawns the STT loop and its watchdog."""
+    from core.queues import stt_consuming
+
+    # Wait for background STT preload to finish (if still loading)
+    if hasattr(model_manager, '_stt_ready') and not model_manager._stt_ready.is_set():
+        logger.info("Waiting for STT models to finish loading...")
+        model_manager.wait_for_stt(timeout=30)
+
     _stt_running.set()
+    stt_consuming.set()  # Signal: STT thread will consume from Queue A
     
     if model_manager.stt_mode == "vosk_primary":
         # Start Vosk thread as primary
@@ -271,5 +321,7 @@ def start_stt():
 
 def stop_stt():
     """Gracefully stops STT threads."""
+    from core.queues import stt_consuming
     _stt_running.clear()
+    stt_consuming.clear()  # Signal: STT thread no longer consuming from Queue A
     compute_failure.set() # Ensure vosk thread unblocks and exits

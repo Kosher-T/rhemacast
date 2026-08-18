@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Bible version metadata ───────────────────────────────────────────────────
 
-_STANDARD_VERSIONS = {"AMP", "ESV", "KJV", "NIV", "NKJV", "NLT"}
+_STANDARD_VERSIONS = {"AMP", "BSB", "ESV", "KJV", "NIV", "NKJV", "NLT"}
 
 _VERSION_META = {
     "KJV":  {"full": "King James Version",          "desc": "Public Domain. Full archaic index.",         "color": SLATE_700,  "abbr": "Kj"},
@@ -33,7 +33,9 @@ _VERSION_META = {
     "ESV":  {"full": "English Standard Version",     "desc": "Word-for-word accuracy.",                    "color": EMERALD_500,"abbr": "E'"},
     "NLT":  {"full": "New Living Translation",       "desc": "Thought-for-thought readability.",           "color": "#8b5cf6",  "abbr": "nL"},
     "AMP":  {"full": "Amplified Bible",              "desc": "Expanded meaning of original text.",         "color": "#ec4899",  "abbr": "M"},
-    "MSG":  {"full": "The Message",                  "desc": "",                                           "color": "#64748b",  "abbr": "I S"},
+    "BSB":  {"full": "Berean Standard Bible",        "desc": "Literal, fair-equality renderings.",         "color": "#06b6d4",  "abbr": "BS"},
+    "BIBLE_ENGLISH_MSG": {"full": "The Message",     "desc": "Paraphrase by Eugene Peterson.",            "color": "#64748b",  "abbr": "I S"},
+    "MSG":  {"full": "The Message",                  "desc": "Paraphrase by Eugene Peterson.",             "color": "#64748b",  "abbr": "I S"},
     "TPT":  {"full": "The Passion Translation",      "desc": "",                                           "color": "#475569",  "abbr": "P'"},
     "ERV":  {"full": "Easy-to-Read Version",         "desc": "",                                           "color": "#64748b",  "abbr": "R'"},
 }

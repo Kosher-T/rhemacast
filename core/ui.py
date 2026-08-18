@@ -65,8 +65,10 @@ def _boot_background_services():
     try:
         from core.model_manager import model_manager
         model_manager.preload_search()
+        # Load STT models in parallel background threads (non-blocking)
+        model_manager.preload_stt()
     except Exception as e:
-        logger.error(f"Failed to start search preload: {e}")
+        logger.error(f"Failed to load models: {e}")
 
 
 class RhemaCastApp(QApplication):
@@ -134,7 +136,14 @@ def launch_ui():
     
     # Clean up workers on exit
     app.stop_workers()
-    
+
+    # Clear OBS display so nothing remains on screen
+    try:
+        from core.websocket_server import clear_display
+        clear_display()
+    except Exception:
+        pass
+
     # Graceful shutdown of any running services
     try:
         from core.service_manager import manager, ServiceState

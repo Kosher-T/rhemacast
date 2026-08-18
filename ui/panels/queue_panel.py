@@ -136,9 +136,11 @@ class QueuePanel(QWidget):
     # Emitted when the operator clicks "Show" on a verse
     display_requested = pyqtSignal(dict)
     # Emitted when operator selects a display theme (single-click)
-    theme_changed = pyqtSignal(str)
+    theme_changed = pyqtSignal(str, str)   # (output_id, theme_name)
     # Emitted when operator double-clicks a theme
-    theme_double_clicked = pyqtSignal(str)
+    theme_double_clicked = pyqtSignal(str, str)  # (output_id, theme_name)
+    # Emitted when operator right-clicks a theme → Quick Edit
+    theme_edit_requested = pyqtSignal(str)  # theme_name
     # Emitted when operator sends a search result to schedule
     verse_to_schedule = pyqtSignal(dict)
     # Single-click search result → navigate in current browser translation
@@ -284,6 +286,7 @@ class QueuePanel(QWidget):
             self._themes_panel = ThemesPanel()
             self._themes_panel.theme_changed.connect(self.theme_changed)
             self._themes_panel.theme_double_clicked.connect(self.theme_double_clicked)
+            self._themes_panel.theme_edit_requested.connect(self.theme_edit_requested)
             self._themes_index = self._stack.addWidget(self._themes_panel)
 
     def _ensure_fts_search_loaded(self):

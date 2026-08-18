@@ -50,9 +50,16 @@ class PresentationTab(QWidget):
         self._prev_verse_data = None      # Previous verse (for Prev button)
         self._next_verse_data = None      # Next verse (for Next button)
 
-        # Load saved theme from settings
+        # Per-output themes: {"1": "default", "2": "default", ...}
         from core.database import get_setting
-        self._current_theme = get_setting("display.last_theme", "default")   # Active display theme
+        output_count = int(get_setting("display.output_count", 1))
+        self._themes_by_output: dict[str, str] = {}
+        for i in range(1, output_count + 1):
+            oid = str(i)
+            self._themes_by_output[oid] = get_setting(f"display.output_{oid}_theme", "default")
+
+        # Legacy single-theme property (always = output 1 theme)
+        self._current_theme = self._themes_by_output.get("1", "default")
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(4, 4, 4, 4)
@@ -114,7 +121,7 @@ class PresentationTab(QWidget):
         main_splitter.setSizes([650, 350])
 
         root_layout.addWidget(main_splitter)
-        
+
         # ── Wire all signals ──
         self._connect_signals()
 
@@ -140,6 +147,11 @@ class PresentationTab(QWidget):
         # STT panel: transcription start/stop → control Thread 1 + Thread 2
         self.stt_panel.transcription_started.connect(self._on_start_transcription)
         self.stt_panel.transcription_stopped.connect(self._on_stop_transcription)
+
+        # STT panel: recording start/stop/pause
+        self.stt_panel.recording_started.connect(self._toggle_recording)
+        self.stt_panel.recording_stopped.connect(self._toggle_recording)
+        self.stt_panel.recording_paused.connect(self._toggle_pause_recording)
         
         # Browser panel: single-click → update preview only
         self.browser_panel.verse_clicked.connect(self._on_verse_single_click)
@@ -170,6 +182,8 @@ class PresentationTab(QWidget):
         
         # Preview screen: double-click → push to live
         self.live_preview.preview_double_clicked.connect(self._on_preview_double_click)
+        self.live_preview.preview_clicked.connect(self._on_preview_clicked)
+        self.live_preview.live_clicked.connect(self._on_live_clicked)
         
         # Schedule panel: single-click → preview, double-click → live
         self.schedule_panel.item_clicked.connect(self._on_schedule_click)
@@ -183,10 +197,11 @@ class PresentationTab(QWidget):
         self._restore_last_schedule()
 
     def _build_payload(self, text: str, ref: str, version: str, book: str = "",
-                       chapter: str = "", verse: str = "") -> dict:
+                       chapter: str = "", verse: str = "", output_id: str = "1") -> dict:
         """Build a display payload matching the WS broadcast format."""
         from core.theme_loader import get_theme
-        theme_data = get_theme(self._current_theme)
+        theme_name = self._themes_by_output.get(output_id, "default")
+        theme_data = get_theme(theme_name)
         return {
             "action": "display",
             "text": text,
@@ -196,7 +211,7 @@ class PresentationTab(QWidget):
             "book": book,
             "chapter": str(chapter),
             "verse": str(verse),
-            "theme": self._current_theme,
+            "theme": theme_name,
             "theme_data": theme_data,
         }
 
@@ -433,6 +448,18 @@ class PresentationTab(QWidget):
         self.live_preview.set_preview_payload(payload)
         logger.info(f"Preview updated: {ref}")
 
+    def _on_preview_clicked(self):
+        """Called when operator clicks the preview screen. Navigates browser to the previewed verse."""
+        if not self._current_preview:
+            return
+        book = self._current_preview.get("book", "")
+        chapter = self._current_preview.get("chapter", "")
+        verse = self._current_preview.get("verse_num", "")
+        version = self._current_preview.get("version", "")
+        if book and chapter and verse:
+            self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
+            logger.info(f"Preview click → navigate to {book} {chapter}:{verse}")
+
     def _on_preview_double_click(self):
         """Called when operator double-clicks the preview screen. Pushes preview to live."""
         if not self._current_preview:
@@ -459,6 +486,18 @@ class PresentationTab(QWidget):
 
         logger.info(f"Preview pushed to live: {ref}")
 
+    def _on_live_clicked(self):
+        """Called when operator clicks the live screen. Navigates browser to the displayed verse."""
+        if not self._current_display:
+            return
+        book = self._current_display.get("book", "")
+        chapter = self._current_display.get("chapter", "")
+        verse = self._current_display.get("verse_num", "")
+        version = self._current_display.get("version", "")
+        if book and chapter and verse:
+            self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
+            logger.info(f"Live click → navigate to {book} {chapter}:{verse}")
+
     def _on_clear_recall(self):
         """Toggle between clear and recall of the last displayed verse."""
         if not self._is_cleared and self._current_display:
@@ -475,27 +514,31 @@ class PresentationTab(QWidget):
             self._on_display_verse(self._last_cleared_display)
             logger.info("Display recalled")
 
-    def _on_theme_changed(self, theme_name: str):
-        """Single-click theme: set as default + re-render preview verse with new theme."""
-        self._current_theme = theme_name
-        from core.theme_loader import set_current_theme
-        set_current_theme(theme_name)
-        if self._current_preview:
+    def _on_theme_changed(self, output_id: str, theme_name: str):
+        """Single-click theme: update that output's theme + re-render preview."""
+        self._themes_by_output[output_id] = theme_name
+        # Keep legacy property in sync
+        if output_id == "1":
+            self._current_theme = theme_name
+
+        if output_id == "1" and self._current_preview:
+            # Main output preview update
             data = self._current_preview
             book = data.get("book", "")
             chapter = data.get("chapter", "")
             verse_num = data.get("verse_num", "")
             version = data.get("version", "")
             ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
-            payload = self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num)
+            payload = self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num, output_id="1")
             self.live_preview.set_preview_payload(payload)
-        logger.info(f"Theme changed to: {theme_name} (preview updated)")
+        logger.info(f"Output {output_id} theme changed to: {theme_name}")
 
-    def _on_theme_double_click(self, theme_name: str):
-        """Double-click theme: set as default + re-render the live verse with that theme."""
-        self._current_theme = theme_name
-        from core.theme_loader import set_current_theme
-        set_current_theme(theme_name)
+    def _on_theme_double_click(self, output_id: str, theme_name: str):
+        """Double-click theme: update that output's theme + re-render live + broadcast."""
+        self._themes_by_output[output_id] = theme_name
+        if output_id == "1":
+            self._current_theme = theme_name
+
         if self._current_display:
             data = self._current_display
             verse_text = data.get("text", "")
@@ -505,12 +548,13 @@ class PresentationTab(QWidget):
             version = data.get("version", "")
             ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
 
-            payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
-            self.live_preview.set_live_payload(payload)
+            payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num, output_id=output_id)
+            if output_id == "1":
+                self.live_preview.set_live_payload(payload)
             self._broadcast_to_ws(payload)
-            logger.info(f"Theme double-clicked: {theme_name}, live re-rendered")
+            logger.info(f"Output {output_id} theme double-clicked: {theme_name}, live re-rendered")
         else:
-            logger.info(f"Theme double-clicked: {theme_name} (no live verse to re-render)")
+            logger.info(f"Output {output_id} theme double-clicked: {theme_name} (no live verse)")
 
     def _on_prev_verse(self):
         """Show the previous Bible verse from the stored neighbor."""
@@ -519,7 +563,7 @@ class PresentationTab(QWidget):
             logger.info("prev_verse: no previous verse")
             return
         prev = self._prev_verse_data
-        version = prev.get("version", "") or self._current_display.get("version", "") if self._current_display else ""
+        version = prev.get("version", "") or (self._current_display.get("version", "") if self._current_display else "")
         self._navigate_to_bible_verse(prev, version, skip_navigator=True)
 
     def _on_next_verse(self):
@@ -529,7 +573,7 @@ class PresentationTab(QWidget):
             logger.info("next_verse: no next verse")
             return
         nxt = self._next_verse_data
-        version = nxt.get("version", "") or self._current_display.get("version", "") if self._current_display else ""
+        version = nxt.get("version", "") or (self._current_display.get("version", "") if self._current_display else "")
         self._navigate_to_bible_verse(nxt, version, skip_navigator=True)
 
     def _update_verse_neighbors(self, version: str, book: str, chapter: int, verse: int):
@@ -593,13 +637,22 @@ class PresentationTab(QWidget):
         book = book_chapter.rsplit(" ", 1)[0] if " " in book_chapter else book_chapter
         chapter = book_chapter.rsplit(" ", 1)[1] if " " in book_chapter else ""
 
-        self._current_display = item
+        self._current_display = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version,
+        }
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse)
         self.live_preview.set_live_payload(payload)
 
         self._broadcast_to_ws(payload)
+
+        if book and chapter and verse and version:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse))
 
     def _on_schedule_click(self, data: dict):
         """Single-click schedule item: navigate to verse in browser + update preview."""
@@ -643,7 +696,13 @@ class PresentationTab(QWidget):
         # Navigate browser to this verse
         self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
 
-        self._current_display = data
+        self._current_display = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": version,
+        }
         self._is_cleared = False
 
         from core.theme_loader import get_theme
@@ -662,14 +721,24 @@ class PresentationTab(QWidget):
         try:
             from core.stt_inference import start_stt
             from core.audio_capture import start_capture
+            from core.database import get_setting
+            from core.service_manager import service_active
             
-            # Start audio capture on system default device
-            start_capture(device_index=None)
+            service_active.set()
             
-            # Start STT inference
+            saved = get_setting("audio.device_index", "")
+            device_index = int(saved) if saved and saved.isdigit() else None
+            
+            start_capture(device_index=device_index)
             start_stt()
             
-            logger.info("Transcription started (T1 + T2)")
+            # Update button states
+            self.stt_panel._is_transcribing = True
+            self.stt_panel._set_btn_recording()
+            self.stt_panel.btn_transcribe.setText("STOP")
+            self.stt_panel.btn_transcribe.setStyleSheet(self.stt_panel._stt_btn_active_style)
+            
+            logger.info(f"Transcription started (T1 + T2), device={device_index}")
         except Exception as e:
             logger.error(f"Failed to start transcription: {e}")
 
@@ -678,35 +747,85 @@ class PresentationTab(QWidget):
         try:
             from core.stt_inference import stop_stt
             from core.audio_capture import stop_capture
+            from core.service_manager import service_active
             
             stop_capture()
             stop_stt()
+            service_active.clear()
+            
+            # Update button states
+            self.stt_panel._is_transcribing = False
+            self.stt_panel._set_btn_ready()
+            self.stt_panel.btn_transcribe.setText("TRANSCRIBE")
+            self.stt_panel.btn_transcribe.setStyleSheet(self.stt_panel._stt_btn_style)
             
             logger.info("Transcription stopped (T1 + T2)")
         except Exception as e:
             logger.error(f"Failed to stop transcription: {e}")
 
+    def _toggle_recording(self):
+        """Toggle audio recording on/off."""
+        from core import audio_recorder
+        from core.audio_capture import start_capture
+        from core.database import get_setting
+        from core.service_manager import service_active
+
+        if audio_recorder.is_recording():
+            filepath = audio_recorder.stop_recording()
+            self.stt_panel.set_recording_state(False)
+            logger.info(f"Recording saved: {filepath}")
+        else:
+            # Ensure audio capture is running
+            if not service_active.is_set():
+                service_active.set()
+                saved = get_setting("audio.device_index", "")
+                device_index = int(saved) if saved and saved.isdigit() else None
+                start_capture(device_index=device_index)
+
+            saved = get_setting("audio.device_index", "")
+            device_index = int(saved) if saved and saved.isdigit() else None
+            audio_recorder.start_recording(device_index=device_index)
+            self.stt_panel.set_recording_state(True)
+
+    def _toggle_pause_recording(self):
+        """Pause/resume audio recording."""
+        from core import audio_recorder
+        audio_recorder.pause_recording()
+        if audio_recorder.is_paused():
+            self.stt_panel.btn_pause_rec.setText("RESUME")
+        else:
+            self.stt_panel.btn_pause_rec.setText("PAUSE")
+
     def _broadcast_to_ws(self, payload: dict):
         """
-        Send a display command to all connected WebSocket clients (OBS Browser Sources).
-        Runs the async broadcast in a fire-and-forget manner.
+        Send a display payload to all connected outputs via WebSocket.
+        Each output receives the payload with its own theme applied.
+        For non-theme-specific payloads (like clear), sends as-is to all.
         """
         try:
-            from core.websocket_server import broadcast_display
-            
-            # We need to run the async broadcast from a sync context.
-            # Use a thread to fire the coroutine without blocking the UI.
-            def _fire():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(broadcast_display(payload))
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"WebSocket broadcast error: {e}")
-            
-            t = threading.Thread(target=_fire, daemon=True)
-            t.start()
+            from core.websocket_server import broadcast_display, _server_loop
+
+            if _server_loop is None or _server_loop.is_closed():
+                return
+
+            if payload.get("action") == "clear":
+                asyncio.run_coroutine_threadsafe(
+                    broadcast_display(payload), _server_loop
+                )
+            else:
+                for oid in self._themes_by_output:
+                    themed = self._build_payload(
+                        payload.get("text", ""),
+                        payload.get("ref", ""),
+                        payload.get("translation", ""),
+                        payload.get("book", ""),
+                        payload.get("chapter", ""),
+                        payload.get("verse", ""),
+                        output_id=oid,
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast_display(themed, target=oid), _server_loop
+                    )
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")
 

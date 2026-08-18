@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QFrame, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
-from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtGui import QWheelEvent, QFontMetrics
 
 from ui.styles import (
     PANEL_BODY_STYLE, SHOW_BTN_STYLE,
@@ -24,13 +24,11 @@ from ui.styles import (
     WHITE, BORDER_SUBTLE
 )
 from core.bible_service import hybrid_search
+from core.constants import FTS_TRANSLATIONS
 
 logger = logging.getLogger(__name__)
 
-FTS_TRANSLATIONS = ["KJV", "NKJV", "ESV", "NLT", "AMP", "BSB"]
-
 _CLICK_DELAY = 250
-_ROW_HEIGHT = 48
 
 
 class _FtsResultsList(QListWidget):
@@ -66,20 +64,6 @@ class _TransBadge(QLabel):
         self._click_timer.setInterval(_CLICK_DELAY)
         self._click_timer.timeout.connect(self._on_single)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(f"""
-            QLabel {{
-                color: {SLATE_400};
-                font-size: 8px;
-                font-weight: 700;
-                background: rgba(255, 255, 255, 0.05);
-                border-radius: 3px;
-                padding: 1px 4px;
-            }}
-            QLabel:hover {{
-                color: {WHITE};
-                background: rgba(34, 211, 238, 0.15);
-            }}
-        """)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -106,49 +90,68 @@ class _ResultRow(QFrame):
     def __init__(self, data: dict, query: str, parent=None):
         super().__init__(parent)
         self._data = data
-        self.setFixedHeight(_ROW_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(f"""
             QFrame {{
                 background: transparent;
-                border: 1px solid transparent;
-                border-radius: 4px;
-                padding: 0 4px;
+                border: none;
             }}
             QFrame:hover {{
                 background: rgba(255, 255, 255, 0.03);
-                border-color: {BORDER_SUBTLE};
             }}
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(6)
 
-        # Reference
+        # Confidence badge
+        conf = data.get("confidence", 0)
+        conf_label = QLabel(f"{conf:.0f}%")
+        conf_label.setFixedWidth(32)
+        conf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if conf >= 70:
+            badge_color = CYAN_400
+        elif conf >= 40:
+            badge_color = SLATE_400
+        else:
+            badge_color = SLATE_600
+        conf_label.setStyleSheet(f"""
+            color: {badge_color};
+            font-size: 9px;
+            font-weight: 700;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            padding: 1px 0;
+        """)
+        layout.addWidget(conf_label)
+
+        # Verse reference + text
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(1)
+
         ref = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref)
-        ref_label.setFixedWidth(65)
-        ref_label.setStyleSheet(f"color: {CYAN_400}; font-size: 9px; font-weight: 700;")
-        layout.addWidget(ref_label)
+        ref_label.setStyleSheet(f"color: {WHITE}; font-size: 10px; font-weight: 700;")
+        text_layout.addWidget(ref_label)
 
-        # Scripture text with keyword highlighting
+        verse_text = data.get("text", "")
         text_label = QLabel()
-        text_label.setStyleSheet(f"color: {SLATE_300}; font-size: 10px; background: transparent;")
+        text_label.setStyleSheet(f"color: {SLATE_400}; font-size: 9px;")
         text_label.setTextFormat(Qt.TextFormat.RichText)
-        text_label.setWordWrap(False)
-        layout.addWidget(text_label, 1)
+        text_label.setWordWrap(True)
+        fm = QFontMetrics(text_label.font())
+        text_label.setMaximumHeight(fm.height() * 2)
 
-        text = data.get("text", "")
-        if query and text:
-            safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if query and verse_text:
+            safe = verse_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             words = query.split()
             if words:
                 pattern = "|".join(r"\b" + re.escape(w) + r"\b" for w in words)
                 try:
                     highlighted = re.sub(
                         pattern,
-                        lambda m: f'<span style="background:rgba(34,211,238,0.25);color:{WHITE};border-radius:2px;">{m.group()}</span>',
+                        lambda m: f'<span style="background:rgba(34,211,238,0.12);color:{WHITE};border-radius:2px;">{m.group()}</span>',
                         safe,
                         flags=re.IGNORECASE
                     )
@@ -158,35 +161,35 @@ class _ResultRow(QFrame):
             else:
                 text_label.setText(safe)
         else:
-            text_label.setText(text)
+            text_label.setText(verse_text)
 
-        # Translation badge (only the one whose text is displayed)
+        text_layout.addWidget(text_label)
+
+        layout.addLayout(text_layout, 1)
+
+        # Translation badge
         translations = data.get("translations", [])
         if translations:
             t = translations[0]
+            from core.bible_service import get_display_name
             badge = _TransBadge(t["version"], t)
+            badge.setStyleSheet(f"""
+                color: {SLATE_500};
+                font-size: 8px;
+                font-weight: 600;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 2px;
+                padding: 1px 4px;
+            """)
             badge.single_clicked.connect(self.trans_single.emit)
             badge.double_clicked.connect(self.trans_double.emit)
             layout.addWidget(badge)
 
-        # Send button
+        # Send to Schedule button
         send_btn = QPushButton("Send")
-        send_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {WHITE};
-                font-size: 9px;
-                font-weight: 600;
-                background: rgba(34, 211, 238, 0.15);
-                border: none;
-                border-radius: 3px;
-                padding: 2px 8px;
-            }}
-            QPushButton:hover {{
-                background: rgba(34, 211, 238, 0.3);
-            }}
-        """)
-        send_btn.setFixedWidth(40)
-        send_btn.setFixedHeight(20)
+        send_btn.setStyleSheet(SHOW_BTN_STYLE)
+        send_btn.setFixedWidth(44)
+        send_btn.setFixedHeight(18)
         send_btn.setToolTip("Add this verse to the schedule")
         send_btn.clicked.connect(lambda: self.send_to_schedule.emit(self._data))
         layout.addWidget(send_btn)
@@ -230,40 +233,56 @@ class FtsSearchPanel(QWidget):
         layout.setSpacing(8)
 
         # Header
-        header = QHBoxLayout()
-        header.setSpacing(6)
-        icon = QLabel("\u2315")
-        icon.setStyleSheet(f"color: {CYAN_400}; font-size: 16px; font-weight: 700;")
-        header.addWidget(icon)
-        title = QLabel("FTS")
-        title.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 700;")
-        header.addWidget(title)
-        header.addStretch()
-        self.trans_label = QLabel("6 translations")
-        self.trans_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px;")
-        header.addWidget(self.trans_label)
-        layout.addLayout(header)
+        header = QLabel("FTS Search")
+        header.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 700;")
+        layout.addWidget(header)
 
         # Search input
+        input_row = QHBoxLayout()
+        input_row.setSpacing(6)
+
         self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("Search all translations...")
+        self.query_input.setPlaceholderText("e.g., rich man threw a party for his son...")
         self.query_input.setAccessibleName("FTS search query")
         self.query_input.setAccessibleDescription("Type a Bible verse reference or text to search across all translations")
         self.query_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {SLATE_800};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 4px;
-                padding: 4px 8px;
                 color: {WHITE};
-                font-size: 11px;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
             }}
             QLineEdit:focus {{
                 border-color: {CYAN_400};
             }}
         """)
         self.query_input.returnPressed.connect(self._on_search)
-        layout.addWidget(self.query_input)
+        input_row.addWidget(self.query_input)
+
+        self.search_btn = QPushButton("Search")
+        self.search_btn.setAccessibleName("Search")
+        self.search_btn.setAccessibleDescription("Execute FTS search across all translations")
+        self.search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(34, 211, 238, 0.15);
+                color: {CYAN_400};
+                border: 1px solid rgba(34, 211, 238, 0.3);
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 11px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: rgba(34, 211, 238, 0.25);
+            }}
+        """)
+        self.search_btn.setFixedWidth(70)
+        self.search_btn.clicked.connect(self._on_search)
+        input_row.addWidget(self.search_btn)
+
+        layout.addLayout(input_row)
 
         # Results list
         self.results_list = _FtsResultsList()
@@ -296,10 +315,10 @@ class FtsSearchPanel(QWidget):
         """)
         layout.addWidget(self.results_list, 1)
 
-        # Status label
+        # Status / latency label
         self.status_label = QLabel("")
         self.status_label.setAccessibleName("Search status")
-        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px;")
+        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
         layout.addWidget(self.status_label)
 
         # Debounce timer
@@ -383,7 +402,7 @@ class FtsSearchPanel(QWidget):
             widget.trans_double.connect(self._on_trans_double)
             self.results_list.addItem(item)
             self.results_list.setItemWidget(item, widget)
-            item.setSizeHint(QSize(200, _ROW_HEIGHT))
+            item.setSizeHint(widget.sizeHint())
 
         self.status_label.setText(
             f"{len(sorted_verses)} verses across {len(FTS_TRANSLATIONS)} translations ({elapsed_ms:.0f}ms)"

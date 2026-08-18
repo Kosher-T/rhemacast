@@ -1,33 +1,77 @@
-system_prompt.md
-/temp
-checklist_audit.md
-/venv
-/local
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
 
-# Bible data — generated files (scripts + README are tracked)
-/data/bible/json/
-/data/bible/*.db
-/data/app.db
-/var/lib/rhemacast/logs/
+# --- Application Configuration & State ---
+config.json
+
+# --- Database & SQLite Temporary Files ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/data/app.db*
+/data/bible/*.db*
 /data/bible/sources/
+/data/bible/json/
 /data/indexes/
-__pycache__/
-/docs
-/ui_draft
 
-# Audio test files
+# --- Audio Recordings & Media ---
 *.wav
 *.pcm
 *.flac
+*.mp3
+*.ogg
+*.m4a
+*.aac
+/data/recordings/
 
-# Models
+# --- Models & ML Weights ---
 /models/
+/data/vosk-model-small-en-us/
 
+# --- Logs ---
+*.log
+debug.log
+logs/
+/var/lib/rhemacast/logs/
 
-data/vosk-model-small-en-us
-.env
-.svg
-AGENTS.md
-PRODUCT.md
+# --- Python & Testing Artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Virtual Environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- IDEs & OS Files ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 opencode.json
 .opencode/
+
+# --- Internal / Temporary / Scratch ---
+system_prompt.md
+checklist_audit.md
+AGENTS.md
+PRODUCT.md
+/temp/
+/local/
+/docs/
+/ui_draft/
+/windows/

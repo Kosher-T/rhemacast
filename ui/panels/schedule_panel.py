@@ -55,6 +55,22 @@ _header_btn_style = f"""
     }}
 """
 
+# ─── Color coding for schedule items ──────────────────────────────────────────
+# 8 base colors, one per book group. Different chapters get different shades.
+
+_BOOK_COLORS = [
+    ("#1e3a5f", "#2d5a8a", "#152c4a"),  # 0: steel blue — base, bright, dark
+    ("#3b2d4a", "#5a4270", "#2d2238"),  # 1: plum
+    ("#2d4a3b", "#42705a", "#22382d"),  # 2: forest
+    ("#4a3b2d", "#705a42", "#382d22"),  # 3: amber-brown
+    ("#4a2d3b", "#704260", "#382230"),  # 4: mauve
+    ("#2d3b4a", "#425a70", "#223038"),  # 5: slate blue
+    ("#3b4a2d", "#5a7042", "#303822"),  # 6: olive
+    ("#4a3030", "#705050", "#382424"),  # 7: wine
+]
+
+_DEFAULT_BG = "rgba(70, 100, 246, 60)"
+
 
 class ScheduleItem(QFrame):
     """A single schedule row — displays reference and translation."""
@@ -83,31 +99,28 @@ class ScheduleItem(QFrame):
         self.setProperty("selected", False)
         self.setStyleSheet(f"""
             QFrame {{
-                background: rgba(30, 41, 59, 150);
-                border: 1px solid rgba(255, 255, 255, 12);
-                border-radius: 6px;
-                padding: 10px;
+                background: rgba(70, 100, 246, 60);
+                padding: 6px;
             }}
             QFrame[selected="true"] {{
-                background: rgba(59, 130, 246, 100);
-                border-color: {BLUE_500};
+                background: rgba(59, 130, 200, 50);
             }}
             QFrame:hover {{
-                border-color: rgba(59, 130, 246, 75);
+                background: rgba(59, 130, 246, 40);
             }}
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(6, 4, 6, 4)
 
         self._ref_label = QLabel(display)
-        self._ref_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 600; background: transparent;")
+        self._ref_label.setStyleSheet(f"color: {WHITE}; font-size: 11px; font-weight: 600; background: transparent;")
         layout.addWidget(self._ref_label)
         layout.addStretch()
 
         theme_label = self._theme_display_name(data.get("theme", "default"))
         self._theme_label = QLabel(theme_label)
-        self._theme_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px; background: transparent;")
+        self._theme_label.setStyleSheet(f"color: {SLATE_500}; font-size: 8px; background: transparent;")
         layout.addWidget(self._theme_label)
 
         self._edit = QLineEdit()
@@ -152,6 +165,22 @@ class ScheduleItem(QFrame):
         self.setProperty("selected", selected)
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def set_background(self, color: str):
+        """Set the item background color dynamically."""
+        self._bg_color = color
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {color};
+                padding: 6px;
+            }}
+            QFrame[selected="true"] {{
+                background: rgba(59, 130, 200, 50);
+            }}
+            QFrame:hover {{
+                background: rgba(59, 130, 246, 40);
+            }}
+        """)
 
     def start_rename(self):
         self._editing = True
@@ -301,8 +330,8 @@ class SchedulePanel(QWidget):
         self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_widget.setDragEnabled(True)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.list_widget.setSpacing(4)
-        self.list_widget.setStyleSheet("QListWidget { padding: 8px; }")
+        self.list_widget.setSpacing(2)
+        self.list_widget.setStyleSheet("QListWidget { padding: 4px; }")
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._on_context_menu)
         self.list_widget.model().rowsMoved.connect(self._on_rows_moved)
@@ -310,6 +339,44 @@ class SchedulePanel(QWidget):
         # Event filter for proper multi-select handling
         self.list_widget.viewport().installEventFilter(self)
         layout.addWidget(self.list_widget)
+
+        # Color coding toggle (bottom bar)
+        self._color_enabled = False
+        bottom_bar = QWidget()
+        bottom_bar.setStyleSheet("background: transparent;")
+        bottom_layout = QHBoxLayout(bottom_bar)
+        bottom_layout.setContentsMargins(8, 4, 8, 4)
+        bottom_layout.setSpacing(4)
+
+        self._color_toggle = QPushButton("Color Code")
+        self._color_toggle.setCheckable(True)
+        self._color_toggle.setChecked(False)
+        self._color_toggle.setFixedHeight(22)
+        self._color_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._color_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {SLATE_400};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 3px;
+                padding: 2px 8px;
+                font-size: 10px;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 255, 255, 0.05);
+                color: {WHITE};
+            }}
+            QPushButton:checked {{
+                background: rgba(59, 130, 246, 0.15);
+                color: #60a5fa;
+                border-color: rgba(59, 130, 246, 0.3);
+            }}
+        """)
+        self._color_toggle.clicked.connect(self._toggle_color_coding)
+        bottom_layout.addWidget(self._color_toggle)
+        bottom_layout.addStretch()
+
+        layout.addWidget(bottom_bar)
 
         # Ensure schedules directory exists
         _SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
@@ -338,6 +405,8 @@ class SchedulePanel(QWidget):
         item_widget.style().polish(item_widget)
 
         self._mark_modified()
+        if self._color_enabled:
+            self._assign_colors()
 
     def get_schedule(self) -> list:
         """Return all schedule items as dicts."""
@@ -384,6 +453,68 @@ class SchedulePanel(QWidget):
 
     def _on_rows_moved(self):
         self._mark_modified()
+        if self._color_enabled:
+            self._assign_colors()
+
+    # ─── Color coding ────────────────────────────────────────────────────────
+
+    def _toggle_color_coding(self, checked: bool):
+        """Toggle color coding on/off."""
+        self._color_enabled = checked
+        if checked:
+            self._assign_colors()
+        else:
+            self._clear_colors()
+
+    def _assign_colors(self):
+        """Assign background colors to schedule items based on the card above.
+
+        Rules (positional, not identity-based):
+        - Same book + same chapter as previous → same shade
+        - Same book + different chapter → different shade of same color
+        - Different book → next color in sequence
+        """
+        if not self._color_enabled:
+            return
+
+        color_idx = 0
+        prev_book = None
+        prev_chapter = None
+        chapter_idx = 0
+
+        for i in range(self.list_widget.count()):
+            list_item = self.list_widget.item(i)
+            item_widget = list_item.data(Qt.ItemDataRole.UserRole + 1)
+            if not item_widget:
+                continue
+            data = list_item.data(Qt.ItemDataRole.UserRole)
+            book = data.get("book", "")
+            chapter = data.get("chapter", "")
+
+            if book != prev_book:
+                # Different book → next color in sequence
+                color_idx_at = color_idx % len(_BOOK_COLORS)
+                color_idx += 1
+                chapter_idx = 0
+                prev_book = book
+                prev_chapter = chapter
+            elif chapter != prev_chapter:
+                # Same book, different chapter → different shade
+                chapter_idx += 1
+                prev_chapter = chapter
+            # else: same book + same chapter → keep same shade
+
+            palette = _BOOK_COLORS[color_idx_at]
+            shade = palette[chapter_idx % len(palette)]
+            item_widget.set_background(shade)
+
+    def _clear_colors(self):
+        """Reset all items to the default background."""
+        for i in range(self.list_widget.count()):
+            list_item = self.list_widget.item(i)
+            item_widget = list_item.data(Qt.ItemDataRole.UserRole + 1)
+            if item_widget:
+                item_widget.set_background(_DEFAULT_BG)
 
     def _sync_selection_state(self):
         """Sync ScheduleItem's 'selected' property with QListWidget's selection."""

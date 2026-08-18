@@ -7,7 +7,7 @@ Allows users to bind keys to actions with backspace to clear.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QSizePolicy
+    QFrame, QScrollArea, QSizePolicy, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QFont
@@ -33,24 +33,23 @@ class HotkeyCaptureButton(QPushButton):
         self._update_text()
         self.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(30, 41, 59, 0.6);
-                color: {SLATE_300};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 12px;
+                background: transparent;
+                color: {SLATE_400};
+                border: none;
+                border-bottom: 2px solid transparent;
+                padding: 2px 6px;
+                font-size: 11px;
                 font-family: monospace;
                 font-weight: 600;
-                min-width: 180px;
+                min-width: 100px;
             }}
             QPushButton:hover {{
-                border-color: rgba(59, 130, 246, 0.5);
                 color: {WHITE};
+                border-bottom-color: rgba(59, 130, 246, 0.5);
             }}
             QPushButton:checked {{
-                background: rgba(59, 130, 246, 0.3);
-                border-color: {BLUE_500};
                 color: {CYAN_400};
+                border-bottom-color: {BLUE_500};
             }}
         """)
 
@@ -302,30 +301,26 @@ class HotkeyRow(QFrame):
         self.action_id = action_id
         self.setStyleSheet(f"""
             QFrame {{
-                background: rgba(30, 41, 59, 0.4);
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 8px;
-            }}
-            QFrame:hover {{
-                border-color: rgba(59, 130, 246, 0.3);
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             }}
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(12)
 
         # Action info
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
+        info_layout.setSpacing(0)
 
         name_label = QLabel(action_name)
-        name_label.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        name_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 600;")
         info_layout.addWidget(name_label)
 
         desc_label = QLabel(description)
-        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
         info_layout.addWidget(desc_label)
 
         layout.addLayout(info_layout, 1)
@@ -337,20 +332,18 @@ class HotkeyRow(QFrame):
 
         # Clear button
         self.clear_btn = QPushButton("✕")
-        self.clear_btn.setFixedSize(28, 28)
+        self.clear_btn.setFixedSize(22, 22)
         self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {SLATE_500};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 4px;
-                font-size: 12px;
+                color: {SLATE_600};
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: rgba(239, 68, 68, 0.2);
-                border-color: {RED_500};
                 color: {RED_500};
             }}
         """)
@@ -368,6 +361,111 @@ class HotkeyRow(QFrame):
         return self.capture_btn.get_key()
 
 
+class TranslationHotkeyRow(QFrame):
+    """A row for translation-specific hotkey: name + dropdown + capture button + remove."""
+
+    changed = pyqtSignal(str, str)  # translation, key_sequence
+    removed = pyqtSignal(str)       # translation
+
+    def __init__(self, translation: str, key: str, available: list[str], parent=None):
+        super().__init__(parent)
+        self._translation = translation
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setSpacing(12)
+
+        # Left side: name + dropdown
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
+
+        name_label = QLabel("Switch Translation")
+        name_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 600;")
+        info_layout.addWidget(name_label)
+
+        # Dropdown inline under the name
+        self._combo = QComboBox()
+        self._combo.addItems(available)
+        if translation in available:
+            self._combo.setCurrentText(translation)
+        self._combo.setFixedHeight(24)
+        self._combo.setStyleSheet(f"""
+            QComboBox {{
+                background: transparent;
+                color: {SLATE_300};
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 1px 4px;
+                font-size: 10px;
+                font-weight: 600;
+                min-width: 60px;
+            }}
+            QComboBox:hover {{
+                border-bottom-color: rgba(59, 130, 246, 0.5);
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 14px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                selection-background-color: rgba(59, 130, 246, 0.3);
+            }}
+        """)
+        self._combo.currentTextChanged.connect(self._on_translation_changed)
+        info_layout.addWidget(self._combo)
+
+        layout.addLayout(info_layout, 1)
+
+        # Capture button (same as HotkeyRow)
+        self.capture_btn = HotkeyCaptureButton(key)
+        self.capture_btn.key_captured.connect(self._on_key_captured)
+        layout.addWidget(self.capture_btn)
+
+        # Remove button (same as HotkeyRow clear_btn)
+        self._remove_btn = QPushButton("✕")
+        self._remove_btn.setFixedSize(22, 22)
+        self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remove_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {SLATE_600};
+                border: none;
+                border-radius: 3px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                color: {RED_500};
+            }}
+        """)
+        self._remove_btn.clicked.connect(lambda: self.removed.emit(self._translation))
+        layout.addWidget(self._remove_btn)
+
+    def _on_translation_changed(self, text: str):
+        old = self._translation
+        self._translation = text
+        self.changed.emit(old, self.capture_btn.get_key())
+
+    def _on_key_captured(self, key: str):
+        self.changed.emit(self._translation, key)
+
+    def get_translation(self) -> str:
+        return self._combo.currentText()
+
+    def get_key(self) -> str:
+        return self.capture_btn.get_key()
+
+
 class HotkeyEditor(QWidget):
     """Main hotkey editor widget with list of bindable actions."""
 
@@ -378,7 +476,7 @@ class HotkeyEditor(QWidget):
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
 
         # Header
         header = QWidget()
@@ -386,7 +484,7 @@ class HotkeyEditor(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         
         title = QLabel("Hotkeys")
-        title.setStyleSheet(f"color: {WHITE}; font-size: 16px; font-weight: 800;")
+        title.setStyleSheet(f"color: {WHITE}; font-size: 14px; font-weight: 700;")
         header_layout.addWidget(title)
         header_layout.addStretch()
         
@@ -397,15 +495,14 @@ class HotkeyEditor(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {SLATE_500};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 10px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
                 color: {AMBER_500};
-                border-color: {AMBER_500};
             }}
         """)
         reset_btn.clicked.connect(self._reset_to_defaults)
@@ -482,6 +579,122 @@ class HotkeyEditor(QWidget):
             row.changed.connect(self._on_binding_changed)
             self._container_layout.addWidget(row)
             self._rows[action_id] = row
+
+        # ── Translation Shortcuts section ──
+        self._container_layout.addSpacing(16)
+
+        trans_header = QLabel("Translation Shortcuts")
+        trans_header.setStyleSheet(f"color: {WHITE}; font-size: 14px; font-weight: 800;")
+        self._container_layout.addWidget(trans_header)
+
+        trans_desc = QLabel("Bind a key to instantly switch to a specific translation")
+        trans_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        self._container_layout.addWidget(trans_desc)
+
+        self._container_layout.addSpacing(4)
+
+        self._trans_rows_container = QWidget()
+        self._trans_rows_layout = QVBoxLayout(self._trans_rows_container)
+        self._trans_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._trans_rows_layout.setSpacing(6)
+        self._container_layout.addWidget(self._trans_rows_container)
+
+        self._trans_rows: list[TranslationHotkeyRow] = []
+
+        # Add button
+        self._add_trans_btn = QPushButton("+ Add Translation Shortcut")
+        self._add_trans_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_trans_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {CYAN_400};
+                border: 1px dashed rgba(34, 211, 238, 0.3);
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {CYAN_400};
+                background: rgba(34, 211, 238, 0.05);
+            }}
+        """)
+        self._add_trans_btn.clicked.connect(self._add_translation_row)
+        self._container_layout.addWidget(self._add_trans_btn)
+
+        self._container_layout.addStretch()
+
+        # Load existing translation bindings
+        self._load_trans_bindings()
+
+    def _get_available_translations(self) -> list[str]:
+        """Get list of available translation abbreviations."""
+        from core.bible_service import get_available_translations
+        return get_available_translations()
+
+    def _get_used_translations(self) -> set[str]:
+        """Get translations already bound to a hotkey."""
+        return {row.get_translation() for row in self._trans_rows}
+
+    def _load_trans_bindings(self):
+        """Load saved translation hotkey bindings."""
+        import json
+        from core.database import get_setting
+        saved = get_setting("hotkeys.trans_bindings", "[]")
+        try:
+            bindings = json.loads(saved)
+        except Exception:
+            bindings = []
+
+        available = self._get_available_translations()
+        for trans, key in bindings:
+            self._add_translation_row(trans, key, available)
+
+    def _save_trans_bindings(self):
+        """Save translation hotkey bindings."""
+        import json
+        from core.database import set_setting
+        bindings = [(row.get_translation(), row.get_key()) for row in self._trans_rows]
+        set_setting("hotkeys.trans_bindings", json.dumps(bindings))
+
+    def _add_translation_row(self, translation: str = None, key: str = "", available: list[str] = None):
+        """Add a new translation hotkey row."""
+        if available is None:
+            available = self._get_available_translations()
+
+        if not translation:
+            # Pick first unused translation
+            used = self._get_used_translations()
+            for t in available:
+                if t not in used:
+                    translation = t
+                    break
+            if not translation:
+                translation = available[0] if available else "KJV"
+
+        row = TranslationHotkeyRow(translation, key, available)
+        row.changed.connect(self._on_trans_binding_changed)
+        row.removed.connect(self._remove_translation_row)
+        self._trans_rows_layout.addWidget(row)
+        self._trans_rows.append(row)
+        self._save_trans_bindings()
+        self._apply_bindings()
+
+    def _remove_translation_row(self, translation: str):
+        """Remove a translation hotkey row."""
+        for row in self._trans_rows:
+            if row.get_translation() == translation:
+                self._trans_rows.remove(row)
+                self._trans_rows_layout.removeWidget(row)
+                row.deleteLater()
+                break
+        self._save_trans_bindings()
+        self._apply_bindings()
+
+    def _on_trans_binding_changed(self, old_trans: str, key: str):
+        """Handle translation binding change (key captured or dropdown changed)."""
+        self._save_trans_bindings()
+        self._apply_bindings()
 
     def _on_binding_changed(self, action_id: str, key: str):
         self._bindings[action_id] = key

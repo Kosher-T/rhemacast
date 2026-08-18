@@ -11,8 +11,14 @@ import core.websocket_server as ws_server
 @pytest.fixture(autouse=True)
 def cleanup():
     LRU_CACHE.clear()
-    ws_server.current_display_state = {"action": "clear"}
-    ws_server.connected_clients.clear()
+    ws_server.current_display_state = {
+        "1": {"action": "clear"},
+        "2": {"action": "clear"},
+        "3": {"action": "clear"},
+    }
+    ws_server.connected_clients = {
+        "1": set(), "2": set(), "3": set(),
+    }
     yield
 
 def test_regression_phase6():
@@ -49,13 +55,13 @@ def test_obs_reconnect_cache():
 
 async def _test_obs_reconnect_cache():
     
-    # 1. Update global display state
+    # 1. Update global display state for output 1
     payload = {"action": "display", "text": "Test verse", "ref": "Test 1:1"}
-    await ws_server.broadcast_display(payload)
+    await ws_server.broadcast_display(payload, target="1")
     
     # Ensure state was saved
-    assert ws_server.current_display_state["action"] == "display"
-    assert ws_server.current_display_state["text"] == "Test verse"
+    assert ws_server.current_display_state["1"]["action"] == "display"
+    assert ws_server.current_display_state["1"]["text"] == "Test verse"
     
     # 2. Mock a websocket connection
     class MockWebSocket:
@@ -74,7 +80,7 @@ async def _test_obs_reconnect_cache():
     ws = MockWebSocket()
     
     # Simulate handler
-    await ws_server.ws_handler(ws, path="/")
+    await ws_server.ws_handler(ws)
     
     # Ensure the handler instantly pushed the current_display_state upon connection
     assert len(ws.sent_messages) == 1

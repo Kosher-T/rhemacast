@@ -1,8 +1,8 @@
 {
-    "name": "reference",
-    "label": "Stream Reference",
-    "description": "Fixed 1920x420 centered reference display with transparent background and premium serif typography",
-    "author": "Qosher",
+    "name": "reference_2",
+    "label": "Projection Reference",
+    "description": "Fixed 1920x360 reference display, no flex, centered, premium serif typography",
+    "author": "RhemaCast",
     "container": {
         "background": "transparent",
         "border": "none",
@@ -10,10 +10,10 @@
         "box_shadow": "none",
         "backdrop_filter": "none",
         "padding": "0",
-        "max_width": "1880px",
-        "min_width": "1880px",
-        "width": "1880px",
-        "height": "140px",
+        "max_width": "1920px",
+        "min_width": "1920px",
+        "width": "1920px",
+        "height": "360px",
         "display": "flex",
         "flex_direction": "column",
         "justify_content": "center",
@@ -26,18 +26,19 @@
     "text": {
         "color": "#ffffff",
         "font_family": "'Nunito', sans-serif",
-        "size": "52px",
-        "min_size": "28px",
-        "max_size": "60px",
+        "min_size": "42px",
+        "size": "60px",
+        "max_size": "65px",
         "weight": 600,
         "line_height": "1.2",
+        "text_shadow": "-3px -3px 0 #555, 3px -2px 0 #555, -3px 3px 0 #555, 3px 3px 0 #555, -3px 0 0 #555, 3px 0 0 #555, 0 -3px 0 #555, 0 3px 0 #555, 0 3px 20px rgba(0, 0, 0, 0.1)",
         "letter_spacing": "-0.005em",
-        "margin_bottom": "12px"
+        "margin_bottom": "0px"
     },
     "reference": {
         "color": "#D4AF37",
         "font_family": "'DM Sans', sans-serif",
-        "size": "30px",
+        "size": "34px",
         "weight": 500,
         "text_transform": "uppercase",
         "letter_spacing": "0.12em"

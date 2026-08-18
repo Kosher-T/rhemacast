@@ -24,7 +24,8 @@ from ui.styles import (
 
 
 class PreviewOverlay(QWidget):
-    """Transparent overlay that captures double-clicks on the preview viewport."""
+    """Transparent overlay that captures clicks and double-clicks on the preview viewport."""
+    clicked = pyqtSignal()
     double_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -34,16 +35,47 @@ class PreviewOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
 
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        event.accept()
+
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         self.double_clicked.emit()
 
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        event.accept()
+
+    def wheelEvent(self, event):
+        event.accept()
+
+
+class LiveOverlay(QWidget):
+    """Transparent overlay that captures single-clicks on the live viewport."""
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+
     def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
         event.accept()
 
     def wheelEvent(self, event):
@@ -57,6 +89,8 @@ class LivePreviewPanel(QWidget):
     prev_verse = pyqtSignal()
     next_verse = pyqtSignal()
     preview_double_clicked = pyqtSignal()
+    preview_clicked = pyqtSignal()
+    live_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,7 +108,7 @@ class LivePreviewPanel(QWidget):
         preview_panel.setStyleSheet(PANEL_BODY_STYLE)
         preview_panel_layout = QVBoxLayout(preview_panel)
         preview_panel_layout.setContentsMargins(8, 8, 8, 8)
-        preview_panel_layout.setSpacing(8)
+        preview_panel_layout.setSpacing(0)
 
         preview_header = QWidget()
         preview_header.setStyleSheet(PANEL_HEADER_STYLE)
@@ -85,6 +119,12 @@ class LivePreviewPanel(QWidget):
         preview_header_layout.addWidget(preview_title)
         preview_header_layout.addStretch()
         preview_panel_layout.addWidget(preview_header)
+
+        # Spacer between header and viewport (matches live panel)
+        _prev_header_spacer = QWidget()
+        _prev_header_spacer.setFixedHeight(8)
+        _prev_header_spacer.setStyleSheet("background: transparent;")
+        preview_panel_layout.addWidget(_prev_header_spacer)
 
         self.preview_frame = QFrame()
         self.preview_frame.setObjectName("OperatorPreviewViewport")
@@ -104,6 +144,7 @@ class LivePreviewPanel(QWidget):
         preview_inner.addWidget(self.preview_view)
 
         self._preview_overlay = PreviewOverlay(self.preview_frame)
+        self._preview_overlay.clicked.connect(self.preview_clicked.emit)
         self._preview_overlay.double_clicked.connect(self.preview_double_clicked.emit)
         self._preview_overlay.raise_()
         self.preview_frame.installEventFilter(self)
@@ -113,6 +154,19 @@ class LivePreviewPanel(QWidget):
             min_width=320, max_width=840
         )
         preview_panel_layout.addWidget(self.preview_ar_widget, 1)
+
+        # Spacer matching nav bar height so preview viewport equals live viewport
+        _nav_spacer = QWidget()
+        _nav_spacer.setFixedHeight(24)
+        _nav_spacer.setStyleSheet("background: transparent;")
+        preview_panel_layout.addWidget(_nav_spacer)
+
+        # Bottom spacer (matches live panel)
+        _prev_bottom_spacer = QWidget()
+        _prev_bottom_spacer.setFixedHeight(4)
+        _prev_bottom_spacer.setStyleSheet("background: transparent;")
+        preview_panel_layout.addWidget(_prev_bottom_spacer)
+
         splitter.addWidget(preview_panel)
 
         # ── Live Panel (right) ──
@@ -120,7 +174,7 @@ class LivePreviewPanel(QWidget):
         live_panel.setStyleSheet(PANEL_BODY_STYLE)
         live_panel_layout = QVBoxLayout(live_panel)
         live_panel_layout.setContentsMargins(8, 8, 8, 8)
-        live_panel_layout.setSpacing(8)
+        live_panel_layout.setSpacing(0)
 
         live_header = QWidget()
         live_header.setStyleSheet(PANEL_HEADER_STYLE)
@@ -142,6 +196,12 @@ class LivePreviewPanel(QWidget):
         live_header_layout.addStretch()
         live_panel_layout.addWidget(live_header)
 
+        # Spacer between header and viewport
+        _header_spacer = QWidget()
+        _header_spacer.setFixedHeight(8)
+        _header_spacer.setStyleSheet("background: transparent;")
+        live_panel_layout.addWidget(_header_spacer)
+
         self.viewport = QFrame()
         self.viewport.setObjectName("LiveOutputViewport")
         self.viewport.setStyleSheet("""
@@ -159,58 +219,84 @@ class LivePreviewPanel(QWidget):
         self.live_view.setMinimumHeight(1)
         vp_layout.addWidget(self.live_view)
 
+        self._live_overlay = LiveOverlay(self.viewport)
+        self._live_overlay.clicked.connect(self.live_clicked.emit)
+        self._live_overlay.raise_()
+        self.viewport.installEventFilter(self)
+
         self.ar_widget = AspectRatioWidget(
             self.viewport, aspect_ratio=16.0 / 9.0,
             min_width=320, max_width=840
         )
         live_panel_layout.addWidget(self.ar_widget, 1)
+
+        # ── Nav buttons (centered below live viewport) ──
+        NAV_BTN_STYLE = f"""
+            QPushButton {{
+                background: rgba(30, 41, 59, 0.6);
+                color: #94a3b8;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: rgba(30, 41, 59, 0.9);
+                color: #f8fafc;
+                border-color: rgba(255, 255, 255, 0.1);
+            }}
+        """
+        nav_bar = QHBoxLayout()
+        nav_bar.setContentsMargins(0, 0, 0, 0)
+        nav_bar.setSpacing(6)
+        nav_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        btn_prev = QPushButton("<")
+        btn_prev.setStyleSheet(NAV_BTN_STYLE)
+        btn_prev.setFixedSize(36, 24)
+        btn_prev.setToolTip("Previous Verse")
+        btn_prev.clicked.connect(self.prev_verse.emit)
+        nav_bar.addWidget(btn_prev)
+
+        _icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "eye-off.svg")
+        btn_clear = QPushButton()
+        btn_clear.setIcon(QIcon(_icon_path))
+        btn_clear.setIconSize(QSize(12, 12))
+        btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
+        btn_clear.setFixedSize(36, 24)
+        btn_clear.setToolTip("Clear / Recall")
+        btn_clear.clicked.connect(self.clear_recall.emit)
+        nav_bar.addWidget(btn_clear)
+
+        btn_next = QPushButton(">")
+        btn_next.setStyleSheet(NAV_BTN_STYLE)
+        btn_next.setFixedSize(36, 24)
+        btn_next.setToolTip("Next Verse")
+        btn_next.clicked.connect(self.next_verse.emit)
+        nav_bar.addWidget(btn_next)
+
+        live_panel_layout.addLayout(nav_bar)
+
+        # Bottom spacer
+        _bottom_spacer = QWidget()
+        _bottom_spacer.setFixedHeight(4)
+        _bottom_spacer.setStyleSheet("background: transparent;")
+        live_panel_layout.addWidget(_bottom_spacer)
+
         splitter.addWidget(live_panel)
 
         # Default splitter ratio: 50% | 50%
         splitter.setSizes([500, 500])
         layout.addWidget(splitter, 1)
 
-        # ── Macro Controls (under Live, right-aligned) ──
-        controls_container = QWidget()
-        controls = QHBoxLayout(controls_container)
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(8)
-
-        btn_prev = QPushButton("<")
-        btn_prev.setStyleSheet(MACRO_BTN_AMBER)
-        btn_prev.setFixedSize(56, 30)
-        btn_prev.setToolTip("Previous Verse")
-        btn_prev.clicked.connect(self.prev_verse.emit)
-        controls.addWidget(btn_prev)
-
-        _icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "eye-off.svg")
-        self.btn_clear = QPushButton()
-        self.btn_clear.setIcon(QIcon(_icon_path))
-        self.btn_clear.setIconSize(QSize(14, 14))
-        self.btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
-        self.btn_clear.setFixedSize(56, 30)
-        self.btn_clear.setToolTip("Clear screen / Recall last cleared verse")
-        self.btn_clear.clicked.connect(self.clear_recall.emit)
-        controls.addWidget(self.btn_clear)
-
-        btn_next = QPushButton(">")
-        btn_next.setStyleSheet(MACRO_BTN_AMBER)
-        btn_next.setFixedSize(56, 30)
-        btn_next.setToolTip("Next Verse")
-        btn_next.clicked.connect(self.next_verse.emit)
-        controls.addWidget(btn_next)
-
-        # Right-align buttons under the Live viewport (right half of the panel)
-        controls_wrapper = QHBoxLayout()
-        controls_wrapper.addStretch()
-        controls_wrapper.addWidget(controls_container)
-        layout.addLayout(controls_wrapper)
-
     def eventFilter(self, obj, event):
-        """Resize the preview overlay to match the preview frame."""
+        """Resize overlays to match their parent frames."""
         if obj is self.preview_frame and event.type() == QEvent.Type.Resize:
             r = self.preview_frame.contentsRect()
             self._preview_overlay.setGeometry(r)
+        if hasattr(self, 'viewport') and obj is self.viewport and event.type() == QEvent.Type.Resize:
+            r = self.viewport.contentsRect()
+            self._live_overlay.setGeometry(r)
         return super().eventFilter(obj, event)
 
     def set_live_payload(self, payload: dict):

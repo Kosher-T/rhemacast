@@ -42,7 +42,7 @@ QWidget {{
     background-color: {SLATE_950};
     color: {WHITE};
     font-family: 'Nunito', 'Segoe UI', sans-serif;
-    font-size: 12px;
+    font-size: 10px;
     border: none;
 }}
 
@@ -103,9 +103,9 @@ QPushButton {{
     color: {WHITE};
     border: 1px solid {BORDER_SUBTLE};
     border-radius: 4px;
-    padding: 4px 12px;
+    padding: 3px 10px;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 10px;
 }}
 QPushButton:hover {{
     background-color: {SLATE_600};
@@ -115,7 +115,7 @@ QPushButton:pressed {{
 }}
 QPushButton:focus {{
     border: 2px solid {BLUE_500};
-    padding: 3px 11px;  /* compensate for border width */
+    padding: 2px 9px;  /* compensate for border width */
 }}
 QPushButton:disabled {{
     color: {SLATE_500};
@@ -129,13 +129,13 @@ QLineEdit {{
     color: {WHITE};
     border: 1px solid {BORDER_SUBTLE};
     border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 11px;
+    padding: 3px 7px;
+    font-size: 10px;
     selection-background-color: {BLUE_500};
 }}
 QLineEdit:focus {{
     border: 2px solid {BLUE_500};
-    padding: 3px 7px;  /* compensate for border */
+    padding: 2px 6px;  /* compensate for border */
 }}
 
 /* ── List Widget ── */
@@ -175,8 +175,8 @@ QToolTip {{
     background-color: {SLATE_800};
     color: {WHITE};
     border: 1px solid {BORDER_LIGHT};
-    padding: 6px 10px;
-    font-size: 11px;
+    padding: 5px 8px;
+    font-size: 10px;
     border-radius: 6px;
 }}
 """
@@ -260,11 +260,15 @@ MACRO_BTN_CLEAR = f"""
 """
 
 # ─── Verse Row Styles ────────────────────────────────────────────────────────
-VERSE_EVEN_BG = "rgba(255, 255, 255, 8)"
-VERSE_ODD_BG = "transparent"
-VERSE_SELECTED_BG = "rgba(59, 130, 246, 0.32)"
-VERSE_HOVER_BG = "rgba(59, 130, 246, 0.15)"
-VERSE_SELECTED_TEXT = "#bfdbfe"
+VERSE_EVEN_BG = "rgba(255, 255, 255, 6)"      # Subtle even rows
+VERSE_ODD_BG = "rgba(15, 23, 42, 0.4)"        # Dark slate for odd rows (more contrast)
+VERSE_SELECTED_BG = "rgba(59, 130, 246, 0.25)"
+VERSE_HOVER_BG = "rgba(59, 130, 246, 0.12)"
+VERSE_SELECTED_TEXT = "#dbeafe"
+
+# Bible panel verse font sizes (user-configurable via Settings → Display)
+VERSE_TEXT_SIZE = 12   # verse text (was 10)
+VERSE_REF_SIZE = 11    # reference text (was 9)
 
 # ─── Translation Bar Button ──────────────────────────────────────────────────
 TRANSLATION_BTN_INACTIVE = f"""

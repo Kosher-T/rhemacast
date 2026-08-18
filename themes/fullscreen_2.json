@@ -1,0 +1,53 @@
+{
+    "name": "fullscreen_2",
+    "label": "Shadowed Full Screen",
+    "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
+    "author": "RhemaCast",
+    "container": {
+        "background": "transparent",
+        "border": "none",
+        "border_radius": "0",
+        "box_shadow": "none",
+        "backdrop_filter": "none",
+        "padding": "0",
+        "max_width": "1800px",
+        "min_width": "1800px",
+        "width": "1800px",
+        "height": "1080px",
+        "display": "flex",
+        "flex_direction": "column",
+        "justify_content": "center",
+        "align_items": "center"
+    },
+    "body": {
+        "vertical_align": "center",
+        "padding_bottom": "0"
+    },
+    "text": {
+        "color": "#ffffff",
+        "font_family": "'Nunito', sans-serif",
+        "size": "46px",
+        "min_size": "40px",
+        "max_size": "60px",
+        "weight": 700,
+        "line_height": "1.08",
+        "text_shadow": "-2px -2px 0 #555, 2px -2px 0 #555, -2px 2px 0 #555, 2px 2px 0 #555, -2px 0 0 #555, 2px 0 0 #555, 0 -2px 0 #555, 0 2px 0 #555, 0 2px 16px rgba(0, 0, 0, 0.6)",
+        "letter_spacing": "-0.02em",
+        "margin_bottom": "20px"
+    },
+    "reference": {
+        "color": "#cccccc",
+        "size": "38px",
+        "weight": 500,
+        "text_transform": "uppercase",
+        "letter_spacing": "0.1em"
+    },
+    "translation": {
+        "color": "#999999",
+        "margin_left": "8px"
+    },
+    "verse_num": {
+        "color": "#cccccc",
+        "font_family": "'Nunito', sans-serif"
+    }
+}

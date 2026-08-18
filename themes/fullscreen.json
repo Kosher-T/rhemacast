@@ -1,8 +1,6 @@
 {
     "name": "fullscreen",
-    "label": "Full Screen",
-    "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
-    "author": "RhemaCast",
+    "label": "Fullscreen",
     "container": {
         "background": "transparent",
         "border": "none",
@@ -10,14 +8,14 @@
         "box_shadow": "none",
         "backdrop_filter": "none",
         "padding": "0",
-        "max_width": "1840px",
-        "min_width": "1840px",
-        "width": "1840px",
-        "height": "1080px",
-        "display": "flex",
+        "width": "1800px",
+        "height": "1000px",
+        "max_width": "1800px",
+        "min_width": "1800px",
         "flex_direction": "column",
         "justify_content": "center",
-        "align_items": "center"
+        "align_items": "center",
+        "display": "flex"
     },
     "body": {
         "vertical_align": "center",
@@ -25,24 +23,29 @@
     },
     "text": {
         "color": "#ffffff",
-        "size": "60px",
-        "min_size": "55px",
-        "max_size": "70px",
+        "font_family": "'Nunito', sans-serif",
+        "size": "80px",
         "weight": 700,
-        "line_height": "1.1",
-        "text_shadow": "-2px -2px 0 #555, 2px -2px 0 #555, -2px 2px 0 #555, 2px 2px 0 #555, -2px 0 0 #555, 2px 0 0 #555, 0 -2px 0 #555, 0 2px 0 #555, 0 2px 16px rgba(0, 0, 0, 0.6)",
+        "line_height": "1.08",
         "letter_spacing": "-0.02em",
-        "margin_bottom": "24px"
+        "text_shadow": "none",
+        "min_size": "60px",
+        "max_size": "96px"
     },
     "reference": {
-        "color": "#cccccc",
-        "size": "40px",
-        "weight": 500,
+        "color": "#D4AF37",
+        "font_family": "'Nunito', sans-serif",
+        "size": "48px",
+        "weight": 800,
         "text_transform": "uppercase",
         "letter_spacing": "0.1em"
     },
     "translation": {
-        "color": "#999999",
+        "color": "#AAFF00",
         "margin_left": "8px"
+    },
+    "verse_num": {
+        "color": "#D4AF37",
+        "font_family": "'Nunito', sans-serif"
     }
 }

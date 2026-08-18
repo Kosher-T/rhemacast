@@ -24,10 +24,11 @@ from PyQt6.QtGui import QWheelEvent, QFontMetrics, QDrag, QCursor
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint
 
 from ui.styles import (
-    PANEL_BODY_STYLE, SLATE_300, SLATE_500, BLUE_500,
+    PANEL_BODY_STYLE, SLATE_300, SLATE_400, SLATE_500, BLUE_500, CYAN_400,
     TRANSLATION_BTN_INACTIVE, TRANSLATION_BTN_ACTIVE,
     VERSE_EVEN_BG, VERSE_ODD_BG, VERSE_SELECTED_BG, VERSE_HOVER_BG, VERSE_SELECTED_TEXT,
-    BORDER_SUBTLE, SLATE_950, WHITE
+    BORDER_SUBTLE, SLATE_950, WHITE,
+    VERSE_TEXT_SIZE, VERSE_REF_SIZE
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
 from ui.dialogs.add_translation_dialog import AddTranslationDialog
@@ -64,7 +65,7 @@ BOOK_ABBREV = {
 }
 
 # Fixed height for each verse row (pixels)
-_ROW_HEIGHT = 32
+_ROW_HEIGHT = 26
 
 
 class _HScrollArea(QScrollArea):
@@ -118,10 +119,13 @@ class VerseListModel(QAbstractListModel):
         self._verses = verses
         self.endResetModel()
 
+    _BOOK_ALIASES = {"Psalm": "Psalms"}
+
     def find_row(self, book: str, chapter: int, verse: int) -> int:
         """Binary-ish scan for the row matching book/chapter/verse. Returns -1 if not found."""
+        normalized = self._BOOK_ALIASES.get(book, book)
         for i, v in enumerate(self._verses):
-            if v["book"] == book and v["chapter"] == chapter and v["verse"] == verse:
+            if v["book"] == normalized and v["chapter"] == chapter and v["verse"] == verse:
                 return i
         return -1
 
@@ -170,6 +174,11 @@ class VerseDelegate(QStyledItemDelegate):
     full QWidget per row, keeping memory usage low for 31k items.
     """
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.verse_text_size = VERSE_TEXT_SIZE
+        self.verse_ref_size = VERSE_REF_SIZE
+
     def paint(self, painter, option: QStyleOptionViewItem, index: QModelIndex):
         model = index.model()
         verse = model.verse_at(index.row()) if hasattr(model, 'verse_at') else None
@@ -211,20 +220,20 @@ class VerseDelegate(QStyledItemDelegate):
         # Reference text (Book chapter:verse)
         abbrev = BOOK_ABBREV.get(verse['book'], verse['book'][:4])
         ref = f"{abbrev} {verse['chapter']}:{verse['verse']}"
-        ref_rect = option.rect.adjusted(8, 0, 0, 0)
-        ref_rect.setWidth(60)
+        ref_rect = option.rect.adjusted(6, 0, 0, 0)
+        ref_rect.setWidth(55)
         painter.setPen(QPen(QColor(BLUE_500)))
         font = painter.font()
-        font.setPixelSize(10)
+        font.setPixelSize(self.verse_ref_size)
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(ref_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ref)
 
         # Verse text
-        text_rect = option.rect.adjusted(68, 0, -8, 0)
+        text_rect = option.rect.adjusted(62, 0, -6, 0)
         text_color = VERSE_SELECTED_TEXT if is_selected else SLATE_300
         painter.setPen(QPen(QColor(text_color)))
-        font.setPixelSize(12)
+        font.setPixelSize(self.verse_text_size)
         font.setBold(False)
         painter.setFont(font)
         fm = QFontMetrics(font)
@@ -515,6 +524,28 @@ class BrowserPanel(QWidget):
                 btn.set_active(True)
 
         trans_layout.addStretch()
+
+        self._add_btn = QPushButton("+ Add")
+        self._add_btn.setAccessibleName("Add translation")
+        self._add_btn.setAccessibleDescription("Import a new Bible translation")
+        self._add_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {SLATE_400};
+                font-size: 10px;
+                font-weight: 600;
+                background: transparent;
+                border: 1px dashed {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 4px 8px;
+            }}
+            QPushButton:hover {{
+                color: {WHITE};
+                border-color: {CYAN_400};
+            }}
+        """)
+        self._add_btn.clicked.connect(self._on_add_translation)
+        trans_layout.addWidget(self._add_btn)
+
         scroll_area.setWidget(trans_area)
 
         toolbar_layout.addWidget(scroll_area, 1)
@@ -561,6 +592,10 @@ class BrowserPanel(QWidget):
         """)
         self.verse_list.clicked.connect(self._on_verse_clicked)
         self.verse_list.doubleClicked.connect(self._on_verse_double_clicked)
+
+        # Load user-configured font sizes from database
+        self.update_verse_font_sizes()
+
         layout.addWidget(self.verse_list)
 
         # ── Load entire bible + highlight Genesis 1:1 ──
@@ -896,6 +931,27 @@ class BrowserPanel(QWidget):
     def get_current_translation(self) -> str:
         """Return the currently active translation abbreviation."""
         return self._current_translation
+
+    def update_verse_font_sizes(self, text_size: int | None = None, ref_size: int | None = None):
+        """Update verse list font sizes and trigger a repaint."""
+        from core.database import get_setting
+        if text_size is None:
+            text_size = int(get_setting("bible.verse_text_size", str(VERSE_TEXT_SIZE)))
+        if ref_size is None:
+            ref_size = int(get_setting("bible.verse_ref_size", str(VERSE_REF_SIZE)))
+        self._delegate.verse_text_size = text_size
+        self._delegate.verse_ref_size = ref_size
+        self.verse_list.viewport().update()
+
+    def get_all_selected_verses(self) -> list[dict]:
+        """Return all currently selected (Ctrl/Shift+click) verse data dicts."""
+        indexes = self.verse_list.selectionModel().selectedIndexes()
+        verses = []
+        for idx in indexes:
+            verse = self._model.verse_at(idx.row())
+            if verse:
+                verses.append(verse)
+        return verses
 
     @property
     def _current_book(self) -> str:

@@ -152,7 +152,11 @@ class TestIndexFingerprint:
             os.path.join(INDEX_DIR, "bm25.pkl"),
             os.path.join(INDEX_DIR, "verse_lookup.pkl"),
             os.path.join(INDEX_DIR, "bm25_fingerprint.json"),
+            os.path.join(INDEX_DIR, "fuzzy_bm25.pkl"),
+            os.path.join(INDEX_DIR, "fuzzy_verse_lookup.pkl"),
+            os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json"),
             os.path.join(INDEX_DIR, "faiss.index"),
+            os.path.join(INDEX_DIR, "faiss_verse_lookup.pkl"),
             os.path.join(INDEX_DIR, "faiss_fingerprint.json"),
         ]:
             if not os.path.exists(path):
@@ -174,6 +178,22 @@ class TestIndexFingerprint:
             f"Verse lookup hash mismatch: file={actual[:16]}… vs fingerprint={fp['verse_lookup_sha256'][:16]}…"
         )
 
+    def test_fuzzy_bm25_sha256_matches(self):
+        with open(os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json")) as f:
+            fp = json.load(f)
+        actual = _file_sha256(os.path.join(INDEX_DIR, "fuzzy_bm25.pkl"))
+        assert actual == fp["bm25_sha256"], (
+            f"Fuzzy BM25 index hash mismatch: file={actual[:16]}… vs fingerprint={fp['bm25_sha256'][:16]}…"
+        )
+
+    def test_fuzzy_verse_lookup_sha256_matches(self):
+        with open(os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json")) as f:
+            fp = json.load(f)
+        actual = _file_sha256(os.path.join(INDEX_DIR, "fuzzy_verse_lookup.pkl"))
+        assert actual == fp["verse_lookup_sha256"], (
+            f"Fuzzy verse lookup hash mismatch: file={actual[:16]}… vs fingerprint={fp['verse_lookup_sha256'][:16]}…"
+        )
+
     def test_faiss_sha256_matches(self):
         with open(os.path.join(INDEX_DIR, "faiss_fingerprint.json")) as f:
             fp = json.load(f)
@@ -182,22 +202,45 @@ class TestIndexFingerprint:
             f"FAISS index hash mismatch: file={actual[:16]}… vs fingerprint={fp['faiss_sha256'][:16]}…"
         )
 
-    def test_verse_counts_consistent(self):
-        with open(os.path.join(INDEX_DIR, "bm25_fingerprint.json")) as f:
+    def test_fuzzy_and_faiss_translations_match(self):
+        """Fuzzy BM25 and FAISS must cover the same translations — they are
+        fused together in the fuzzy search lane."""
+        with open(os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json")) as f:
+            bm25_fp = json.load(f)
+        with open(os.path.join(INDEX_DIR, "faiss_fingerprint.json")) as f:
+            faiss_fp = json.load(f)
+        assert sorted(bm25_fp["translations"]) == sorted(faiss_fp["translations"]), (
+            f"Translation set mismatch: fuzzy={bm25_fp['translations']} vs FAISS={faiss_fp['translations']}"
+        )
+
+    def test_fuzzy_and_faiss_verse_counts_consistent(self):
+        """Fuzzy BM25 and FAISS are built from the same translations, so their
+        verse counts must match. (The FTS BM25 intentionally differs — it covers
+        a different six-translation set.)"""
+        with open(os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json")) as f:
             bm25_fp = json.load(f)
         with open(os.path.join(INDEX_DIR, "faiss_fingerprint.json")) as f:
             faiss_fp = json.load(f)
         assert bm25_fp["verse_count"] == faiss_fp["verse_count"], (
-            f"Verse count mismatch: BM25={bm25_fp['verse_count']} vs FAISS={faiss_fp['verse_count']}"
+            f"Verse count mismatch: fuzzy BM25={bm25_fp['verse_count']} vs FAISS={faiss_fp['verse_count']}"
         )
 
-    def test_source_fingerprints_match(self):
-        """BM25 and FAISS source fingerprints must be identical."""
-        with open(os.path.join(INDEX_DIR, "bm25_fingerprint.json")) as f:
+    def test_fuzzy_and_faiss_source_fingerprints_match(self):
+        """Fuzzy BM25 and FAISS source fingerprints must be identical."""
+        with open(os.path.join(INDEX_DIR, "fuzzy_bm25_fingerprint.json")) as f:
             bm25_fp = json.load(f)
         with open(os.path.join(INDEX_DIR, "faiss_fingerprint.json")) as f:
             faiss_fp = json.load(f)
         assert bm25_fp["source_fingerprints"] == faiss_fp["source_fingerprints"]
+
+    def test_fts_bm25_six_translations(self):
+        """The FTS BM25 index covers exactly the six FTS translations."""
+        from core.constants import FTS_TRANSLATIONS
+        with open(os.path.join(INDEX_DIR, "bm25_fingerprint.json")) as f:
+            bm25_fp = json.load(f)
+        assert sorted(bm25_fp["translations"]) == sorted(FTS_TRANSLATIONS), (
+            f"FTS BM25 translations {bm25_fp['translations']} != {sorted(FTS_TRANSLATIONS)}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -7,7 +7,8 @@ Matches the design from ui_draft/settings.html
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QComboBox, QSlider, QFrame, QSizePolicy
+    QScrollArea, QComboBox, QSlider, QFrame, QSizePolicy, QSpinBox,
+    QCheckBox, QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from ui.widgets.hotkey_editor import HotkeyEditor
@@ -18,11 +19,25 @@ from ui.styles import (
     AMBER_500, BORDER_SUBTLE
 )
 
-# Glass card style matching global.css
+# Load translations from persistent storage
+import json as _json
+import os as _os
+
+_translations_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                                    "data", "indexes", "translations.json")
+try:
+    with open(_translations_path) as _f:
+        ALL_TRANSLATIONS = _json.load(_f).get("translations", [])
+except Exception:
+    ALL_TRANSLATIONS = []
+
+
+
+# Glass card style — transparent containers (no visible background/border)
 GLASS_CARD_STYLE = f"""
     QFrame {{
-        background: rgba(30, 41, 59, 0.4);
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        background: transparent;
+        border: none;
         border-radius: 8px;
     }}
 """
@@ -69,7 +84,8 @@ COMBO_STYLE = f"""
         border-radius: 6px;
         padding: 8px 12px;
         font-size: 12px;
-        min-width: 200px;
+        min-width: 140px;
+        max-width: 220px;
     }}
     QComboBox:hover {{
         border-color: rgba(59, 130, 246, 0.5);
@@ -194,12 +210,14 @@ class GlassCard(QFrame):
 class SettingsTab(QWidget):
     """Settings tab with sidebar navigation and content sections."""
     
+    font_size_changed = pyqtSignal(int, int)  # verse_text_size, verse_ref_size
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         
         root_layout = QHBoxLayout(self)
         root_layout.setContentsMargins(16, 16, 16, 16)
-        root_layout.setSpacing(16)
+        root_layout.setSpacing(12)
         
         # ── Sidebar ──
         sidebar = QWidget()
@@ -213,6 +231,7 @@ class SettingsTab(QWidget):
         self._sidebar_items = {}
         sidebar_categories = [
             "Audio Ingestion",
+            "Recording",
             "AI Models",
             "Display & Broadcast",
             "Database",
@@ -262,8 +281,11 @@ class SettingsTab(QWidget):
         self._content_widget = QWidget()
         self._content_layout = QVBoxLayout(self._content_widget)
         self._content_layout.setContentsMargins(0, 0, 8, 0)
-        self._content_layout.setSpacing(16)
-        self._content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._content_layout.setSpacing(8)
+        self._content_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+
+        # Constrain content width so cards don't stretch edge-to-edge
+        self._content_widget.setMaximumWidth(720)
         
         # Create section widgets
         self._sections = {}
@@ -271,6 +293,7 @@ class SettingsTab(QWidget):
         self._create_ai_models_section()
         self._create_display_broadcast_section()
         self._create_database_section()
+        self._create_recording_section()
         self._create_gpu_hardware_section()
         self._create_hotkeys_section()
         
@@ -418,14 +441,14 @@ class SettingsTab(QWidget):
         section = QWidget()
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        
+        layout.setSpacing(8)
+
         # Section header
         header = QWidget()
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
-        
+
         title = QLabel("Audio Ingestion")
         title.setStyleSheet(LABEL_STYLE)
         header_layout.addWidget(title)
@@ -440,7 +463,7 @@ class SettingsTab(QWidget):
         grid = QWidget()
         grid_layout = QHBoxLayout(grid)
         grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setSpacing(16)
+        grid_layout.setSpacing(24)
         
         # Input Device
         device_col = QWidget()
@@ -458,7 +481,7 @@ class SettingsTab(QWidget):
         self._populate_audio_devices()
         device_layout.addWidget(self._device_combo)
         
-        grid_layout.addWidget(device_col, 1)
+        grid_layout.addWidget(device_col)
         
         # Sample Rate
         rate_col = QWidget()
@@ -479,59 +502,67 @@ class SettingsTab(QWidget):
         ])
         rate_layout.addWidget(self._rate_combo)
         
-        grid_layout.addWidget(rate_col, 1)
+        grid_layout.addWidget(rate_col)
         layout.addWidget(grid)
         
-        # DeepFilterNet status card
-        dfn_card = GlassCard()
-        dfn_layout = QHBoxLayout(dfn_card)
-        dfn_layout.setContentsMargins(16, 12, 16, 12)
-        dfn_layout.setSpacing(12)
-        
-        # Icon + text
-        dfn_info = QWidget()
-        dfn_info_layout = QVBoxLayout(dfn_info)
-        dfn_info_layout.setContentsMargins(0, 0, 0, 0)
-        dfn_info_layout.setSpacing(2)
-        
-        dfn_title = QLabel("DeepFilterNet 3 Active")
-        dfn_title.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
-        dfn_info_layout.addWidget(dfn_title)
-        
-        dfn_desc = QLabel("Real-time background noise suppression enabled")
-        dfn_desc.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;")
-        dfn_info_layout.addWidget(dfn_desc)
-        
-        dfn_layout.addWidget(dfn_info)
-        dfn_layout.addStretch()
-        
-        # Toggle switch
-        self._dfn_toggle = QPushButton()
-        self._dfn_toggle.setCheckable(True)
-        self._dfn_toggle.setChecked(True)
-        self._dfn_toggle.setFixedSize(56, 28)
-        self._dfn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._dfn_toggle.setStyleSheet(TOGGLE_STYLE)
-        dfn_layout.addWidget(self._dfn_toggle)
-        
-        layout.addWidget(dfn_card)
         layout.addStretch()
         
         self._sections["Audio Ingestion"] = section
         self._content_layout.addWidget(section)
     
     def _populate_audio_devices(self):
-        """Populate the audio device combo box."""
+        """Populate the audio device combo box and restore saved selection."""
         try:
             import sounddevice as sd
             devices = sd.query_devices()
             self._device_combo.clear()
+            
+            # On Linux with PipeWire, raw ALSA hw: devices are always locked.
+            # Show only PipeWire/PulseAudio routed devices that actually work.
+            skip_names = ['hw:', 'sysdefault', 'lavrate', 'samplerate', 'speexrate',
+                          'speex', 'upmix', 'vdownmix']
+            
             for i, dev in enumerate(devices):
-                if dev['max_input_channels'] > 0:
-                    name = f"{dev['name']} ({dev['hostapi']})"
-                    self._device_combo.addItem(name, i)
+                if dev['max_input_channels'] <= 0:
+                    continue
+                name_lower = dev['name'].lower()
+                if any(s in name_lower for s in skip_names):
+                    continue
+                    
+                hostapi = sd.query_hostapis(dev['hostapi'])['name']
+                name = f"{dev['name']} ({hostapi})"
+                self._device_combo.addItem(name, i)
+            
+            # If nothing survived filtering, show all input devices as fallback
+            if self._device_combo.count() == 0:
+                for i, dev in enumerate(devices):
+                    if dev['max_input_channels'] > 0:
+                        hostapi = sd.query_hostapis(dev['hostapi'])['name']
+                        name = f"{dev['name']} ({hostapi})"
+                        self._device_combo.addItem(name, i)
+            
+            # Restore saved device
+            from core.database import get_setting
+            saved = get_setting("audio.device_index", "")
+            if saved and saved.isdigit():
+                idx = int(saved)
+                for c in range(self._device_combo.count()):
+                    if self._device_combo.itemData(c) == idx:
+                        self._device_combo.setCurrentIndex(c)
+                        break
+            
+            # Save on change
+            self._device_combo.currentIndexChanged.connect(self._on_device_changed)
         except Exception:
-            self._device_combo.addItems(["Default", "System Loopback", "Wireless Receiver"])
+            self._device_combo.addItems(["Default"])
+    
+    def _on_device_changed(self, index: int):
+        """Persist selected audio device index."""
+        if index >= 0:
+            device_data = self._device_combo.itemData(index)
+            if device_data is not None:
+                from core.database import set_setting
+                set_setting("audio.device_index", str(device_data))
     
     def _create_ai_models_section(self):
         """Create the AI Models section."""
@@ -539,8 +570,8 @@ class SettingsTab(QWidget):
         section.setVisible(False)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        
+        layout.setSpacing(8)
+
         title = QLabel("AI Models")
         title.setStyleSheet(LABEL_STYLE)
         layout.addWidget(title)
@@ -557,7 +588,7 @@ class SettingsTab(QWidget):
         ]:
             card = GlassCard()
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(16, 12, 16, 12)
+            card_layout.setContentsMargins(12, 8, 12, 8)
             card_layout.setSpacing(4)
             
             t = QLabel(title_text)
@@ -580,8 +611,8 @@ class SettingsTab(QWidget):
         section.setVisible(False)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        
+        layout.setSpacing(8)
+
         title = QLabel("Display & Broadcast")
         title.setStyleSheet(LABEL_STYLE)
         layout.addWidget(title)
@@ -593,7 +624,7 @@ class SettingsTab(QWidget):
         # WebSocket port
         card = GlassCard()
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setContentsMargins(12, 8, 12, 8)
         card_layout.setSpacing(8)
         
         port_label = QLabel("WebSocket Port")
@@ -609,8 +640,8 @@ class SettingsTab(QWidget):
         # Theme selection
         theme_card = GlassCard()
         theme_layout = QVBoxLayout(theme_card)
-        theme_layout.setContentsMargins(16, 12, 16, 12)
-        theme_layout.setSpacing(8)
+        theme_layout.setContentsMargins(12, 8, 12, 8)
+        theme_layout.setSpacing(6)
         
         theme_label = QLabel("Default Theme")
         theme_label.setStyleSheet(SECTION_LABEL_STYLE)
@@ -624,72 +655,803 @@ class SettingsTab(QWidget):
         theme_layout.addWidget(self._theme_combo)
         
         layout.addWidget(theme_card)
+
+        # Verse Display Font Sizes
+        font_card = GlassCard()
+        font_layout = QVBoxLayout(font_card)
+        font_layout.setContentsMargins(12, 8, 12, 8)
+        font_layout.setSpacing(8)
+
+        font_title = QLabel("Verse Display")
+        font_title.setStyleSheet(SECTION_LABEL_STYLE)
+        font_layout.addWidget(font_title)
+
+        from core.database import get_setting
+
+        # Verse Text Size
+        row1 = QHBoxLayout()
+        row1.setSpacing(12)
+
+        vt_label = QLabel("Verse Text Size")
+        vt_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        row1.addWidget(vt_label)
+
+        self._verse_text_spin = QSpinBox()
+        self._verse_text_spin.setRange(8, 16)
+        self._verse_text_spin.setValue(int(get_setting("bible.verse_text_size", "12")))
+        self._verse_text_spin.setSuffix("px")
+        self._verse_text_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background: rgba(0, 0, 0, 0.4);
+                color: {SLATE_300};
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 80px;
+            }}
+            QSpinBox:focus {{ border-color: {BLUE_500}; }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                width: 20px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background: rgba(255, 255, 255, 0.2);
+            }}
+            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
+            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
+        """)
+        self._verse_text_spin.valueChanged.connect(self._on_font_size_changed)
+        row1.addWidget(self._verse_text_spin)
+
+        row1.addStretch()
+        font_layout.addLayout(row1)
+
+        # Reference Text Size
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+
+        vr_label = QLabel("Reference Text Size")
+        vr_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        row2.addWidget(vr_label)
+
+        self._verse_ref_spin = QSpinBox()
+        self._verse_ref_spin.setRange(7, 14)
+        self._verse_ref_spin.setValue(int(get_setting("bible.verse_ref_size", "11")))
+        self._verse_ref_spin.setSuffix("px")
+        self._verse_ref_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background: rgba(0, 0, 0, 0.4);
+                color: {SLATE_300};
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 80px;
+            }}
+            QSpinBox:focus {{ border-color: {BLUE_500}; }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                width: 20px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background: rgba(255, 255, 255, 0.2);
+            }}
+            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
+            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
+        """)
+        self._verse_ref_spin.valueChanged.connect(self._on_font_size_changed)
+        row2.addWidget(self._verse_ref_spin)
+
+        row2.addStretch()
+        font_layout.addLayout(row2)
+
+        layout.addWidget(font_card)
         layout.addStretch()
-        
+
         self._sections["Display & Broadcast"] = section
         self._content_layout.addWidget(section)
+
+    def _on_font_size_changed(self):
+        """Persist font sizes and emit signal for live preview."""
+        from core.database import set_setting
+        text_size = self._verse_text_spin.value()
+        ref_size = self._verse_ref_spin.value()
+        set_setting("bible.verse_text_size", str(text_size))
+        set_setting("bible.verse_ref_size", str(ref_size))
+        self.font_size_changed.emit(text_size, ref_size)
     
     def _create_database_section(self):
-        """Create the Database section."""
+        """Create the Database section with index status and rebuild controls."""
         section = QWidget()
         section.setVisible(False)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        
+        layout.setSpacing(12)
+
         title = QLabel("Database")
         title.setStyleSheet(LABEL_STYLE)
         layout.addWidget(title)
-        
-        subtitle = QLabel("Bible database management and index rebuilding")
+
+        subtitle = QLabel("Search index status and rebuild controls")
         subtitle.setStyleSheet(SUBTITLE_STYLE)
         layout.addWidget(subtitle)
-        
-        # Rebuild indexes button
-        card = GlassCard()
-        card_layout = QHBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
-        card_layout.setSpacing(12)
-        
-        info = QWidget()
-        info_layout = QVBoxLayout(info)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(2)
-        
-        t = QLabel("Rebuild Search Indexes")
-        t.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
-        info_layout.addWidget(t)
-        
-        d = QLabel("Rebuild BM25 + FAISS indexes from bible.db")
-        d.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
-        info_layout.addWidget(d)
-        
-        card_layout.addWidget(info)
-        card_layout.addStretch()
-        
-        rebuild_btn = QPushButton("Rebuild")
-        rebuild_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        rebuild_btn.setStyleSheet(f"""
+
+        # ── Index Management Cards ──
+        self._index_widgets = {}
+        index_defs = [
+            ("FTS BM25", "fts", "bm25_fingerprint.json", "Full-text search (exact match)"),
+            ("Fuzzy BM25", "fuzzy_bm25", "fuzzy_bm25_fingerprint.json", "Keyword search for fuzzy lane"),
+            ("Fuzzy FAISS", "fuzzy_faiss", "faiss_fingerprint.json", "Semantic search (vectors)"),
+        ]
+
+        for label, key, fingerprint_file, desc in index_defs:
+            card = GlassCard()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(12, 10, 12, 10)
+            card_layout.setSpacing(8)
+
+            # Header row with name + status + rebuild button
+            header_row = QHBoxLayout()
+            header_row.setSpacing(8)
+
+            name_label = QLabel(label)
+            name_label.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+            header_row.addWidget(name_label)
+
+            status_label = QLabel("Loading...")
+            status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+            header_row.addWidget(status_label)
+
+            header_row.addStretch()
+
+            build_btn = QPushButton("Rebuild")
+            build_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            build_btn.setFixedHeight(26)
+            build_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(59, 130, 246, 0.15);
+                    color: {BLUE_500};
+                    border: 1px solid rgba(59, 130, 246, 0.3);
+                    border-radius: 4px;
+                    padding: 4px 12px;
+                    font-size: 10px;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background: rgba(59, 130, 246, 0.25);
+                }}
+                QPushButton:disabled {{
+                    background: rgba(255, 255, 255, 0.05);
+                    color: {SLATE_600};
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }}
+            """)
+            build_btn.clicked.connect(lambda checked, k=key: self._rebuild_single_index(k))
+            header_row.addWidget(build_btn)
+
+            card_layout.addLayout(header_row)
+
+            # Description
+            desc_label = QLabel(desc)
+            desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+            card_layout.addWidget(desc_label)
+
+            # Translation tags container
+            trans_label = QLabel("Translations:")
+            trans_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+            card_layout.addWidget(trans_label)
+
+            tags_container = QWidget()
+            tags_layout = QHBoxLayout(tags_container)
+            tags_layout.setContentsMargins(0, 0, 0, 0)
+            tags_layout.setSpacing(4)
+            tags_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            card_layout.addWidget(tags_container)
+
+            # Add translation row
+            add_row = QHBoxLayout()
+            add_row.setSpacing(4)
+
+            add_combo = QComboBox()
+            add_combo.setStyleSheet(f"""
+                QComboBox {{
+                    background: rgba(0, 0, 0, 0.3);
+                    color: {SLATE_300};
+                    border: 1px solid {BORDER_SUBTLE};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    min-width: 120px;
+                    max-height: 24px;
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 20px;
+                }}
+                QComboBox::down-arrow {{
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 5px solid {SLATE_400};
+                }}
+            """)
+            add_combo.setPlaceholderText("Add...")
+            add_row.addWidget(add_combo)
+
+            add_btn = QPushButton("+")
+            add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            add_btn.setFixedSize(24, 24)
+            add_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(34, 197, 94, 0.15);
+                    color: {EMERALD_500};
+                    border: 1px solid rgba(34, 197, 94, 0.3);
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{
+                    background: rgba(34, 197, 94, 0.3);
+                }}
+            """)
+            add_row.addWidget(add_btn)
+            add_row.addStretch()
+
+            card_layout.addLayout(add_row)
+
+            # Store widgets
+            self._index_widgets[key] = {
+                "status_label": status_label,
+                "tags_container": tags_container,
+                "tags_layout": tags_layout,
+                "add_combo": add_combo,
+                "add_btn": add_btn,
+                "current_translations": [],
+            }
+
+            # Wire up add button
+            add_btn.clicked.connect(lambda checked, k=key: self._add_translation_to_index(k))
+            add_combo.currentIndexChanged.connect(lambda idx, k=key: self._on_combo_changed(idx, k))
+
+            layout.addWidget(card)
+
+        # ── Topical Index (special case) ──
+        topical_card = GlassCard()
+        topical_layout = QVBoxLayout(topical_card)
+        topical_layout.setContentsMargins(12, 10, 12, 10)
+        topical_layout.setSpacing(6)
+
+        topical_header = QHBoxLayout()
+        topical_header.setSpacing(8)
+
+        topical_name = QLabel("Topical")
+        topical_name.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        topical_header.addWidget(topical_name)
+
+        topical_status = QLabel("Loading...")
+        topical_status.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        topical_header.addWidget(topical_status)
+
+        topical_header.addStretch()
+
+        topical_build_btn = QPushButton("Rebuild")
+        topical_build_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        topical_build_btn.setFixedHeight(26)
+        topical_build_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(59, 130, 246, 0.15);
+                color: {BLUE_500};
+                border: 1px solid rgba(59, 130, 246, 0.3);
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: rgba(59, 130, 246, 0.25);
+            }}
+        """)
+        topical_build_btn.clicked.connect(lambda: self._rebuild_single_index("topical"))
+        topical_header.addWidget(topical_build_btn)
+
+        topical_layout.addLayout(topical_header)
+
+        topical_desc = QLabel("Stories, parables, and miracles index (uses topical_data.json)")
+        topical_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        topical_layout.addWidget(topical_desc)
+
+        self._topical_status = topical_status
+        layout.addWidget(topical_card)
+
+        # ── Rebuild All ──
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        self._rebuild_all_btn = QPushButton("Rebuild All Indexes")
+        self._rebuild_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rebuild_all_btn.setFixedHeight(32)
+        self._rebuild_all_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(34, 197, 94, 0.15);
+                color: {EMERALD_500};
+                border: 1px solid rgba(34, 197, 94, 0.3);
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: rgba(34, 197, 94, 0.25);
+            }}
+            QPushButton:disabled {{
+                background: rgba(255, 255, 255, 0.05);
+                color: {SLATE_600};
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+        """)
+        self._rebuild_all_btn.clicked.connect(self._rebuild_all_indexes)
+        btn_row.addWidget(self._rebuild_all_btn)
+
+        layout.addLayout(btn_row)
+
+        # ── Build Log ──
+        log_card = GlassCard()
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(12, 10, 12, 10)
+        log_layout.setSpacing(6)
+
+        log_header = QLabel("Build Log")
+        log_header.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        log_layout.addWidget(log_header)
+
+        self._build_log = QTextEdit()
+        self._build_log.setReadOnly(True)
+        self._build_log.setMaximumHeight(120)
+        self._build_log.setStyleSheet(f"""
+            QTextEdit {{
+                background: rgba(0, 0, 0, 0.3);
+                color: {SLATE_400};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 10px;
+                font-family: monospace;
+            }}
+        """)
+        self._build_log.setPlaceholderText("Build output will appear here...")
+        log_layout.addWidget(self._build_log)
+
+        layout.addWidget(log_card)
+
+        layout.addStretch()
+
+        self._sections["Database"] = section
+        self._content_layout.addWidget(section)
+
+    def _make_translation_tag(self, translation: str, index_key: str) -> QPushButton:
+        """Create a removable translation tag button."""
+        tag = QPushButton(f"  {translation}  ×")
+        tag.setCursor(Qt.CursorShape.PointingHandCursor)
+        tag.setFixedHeight(22)
+        tag.setStyleSheet(f"""
             QPushButton {{
                 background: rgba(59, 130, 246, 0.2);
                 color: {BLUE_500};
                 border: 1px solid rgba(59, 130, 246, 0.3);
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 12px;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 10px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: rgba(59, 130, 246, 0.3);
+                background: rgba(239, 68, 68, 0.2);
+                color: {RED_500};
+                border: 1px solid rgba(239, 68, 68, 0.3);
             }}
         """)
-        rebuild_btn.clicked.connect(self._rebuild_indexes)
-        card_layout.addWidget(rebuild_btn)
-        
+        tag.clicked.connect(lambda: self._remove_translation_from_index(index_key, translation))
+        return tag
+
+    def _add_translation_to_index(self, index_key: str):
+        """Add selected translation from combo to the index."""
+        widgets = self._index_widgets[index_key]
+        combo = widgets["add_combo"]
+        idx = combo.currentIndex()
+        if idx < 0:
+            return
+        translation = combo.itemData(idx)
+        if not translation:
+            return
+        if translation in widgets["current_translations"]:
+            return
+
+        widgets["current_translations"].append(translation)
+        widgets["current_translations"].sort()
+        self._refresh_translation_tags(index_key)
+        combo.setCurrentIndex(-1)
+
+    def _remove_translation_from_index(self, index_key: str, translation: str):
+        """Remove a translation from the index."""
+        widgets = self._index_widgets[index_key]
+        if translation in widgets["current_translations"]:
+            widgets["current_translations"].remove(translation)
+            self._refresh_translation_tags(index_key)
+
+    def _refresh_translation_tags(self, index_key: str):
+        """Refresh the displayed translation tags for an index."""
+        widgets = self._index_widgets[index_key]
+        container = widgets["tags_container"]
+        tags_layout = widgets["tags_layout"]
+
+        # Clear existing tags
+        while tags_layout.count():
+            item = tags_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add tags
+        for t in widgets["current_translations"]:
+            tag = self._make_translation_tag(t, index_key)
+            tags_layout.addWidget(tag)
+
+        if not widgets["current_translations"]:
+            empty = QLabel("No translations selected")
+            empty.setStyleSheet(f"color: {SLATE_600}; font-size: 10px; font-style: italic;")
+            tags_layout.addWidget(empty)
+
+    def _populate_add_combo(self, index_key: str):
+        """Populate the add translation combo with available translations."""
+        widgets = self._index_widgets[index_key]
+        combo = widgets["add_combo"]
+        combo.clear()
+
+        for t in sorted(ALL_TRANSLATIONS):
+            if t not in widgets["current_translations"]:
+                combo.addItem(t, t)
+
+    def _on_combo_changed(self, idx: int, index_key: str):
+        """Handle combo selection - auto-add on selection."""
+        if idx >= 0:
+            self._add_translation_to_index(index_key)
+
+    def _load_index_status(self):
+        """Load and display current index status from fingerprint files."""
+        import json
+        import os
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        indexes_dir = os.path.join(project_root, "data", "indexes")
+
+        fingerprint_map = {
+            "fts": "bm25_fingerprint.json",
+            "fuzzy_bm25": "fuzzy_bm25_fingerprint.json",
+            "fuzzy_faiss": "faiss_fingerprint.json",
+        }
+
+        for key, filename in fingerprint_map.items():
+            fpath = os.path.join(indexes_dir, filename)
+            widgets = self._index_widgets.get(key)
+            if not widgets:
+                continue
+
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath) as f:
+                        data = json.load(f)
+                    translations = data.get("translations", [])
+                    verse_count = data.get("verse_count", 0)
+                    built_at = data.get("built_at", "")[:10]
+
+                    widgets["status_label"].setText(f"{verse_count:,} verses  •  {built_at}")
+                    widgets["status_label"].setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+
+                    # Set current translations
+                    widgets["current_translations"] = sorted(translations)
+                    self._refresh_translation_tags(key)
+                    self._populate_add_combo(key)
+                except Exception as e:
+                    widgets["status_label"].setText("Error reading fingerprint")
+                    widgets["status_label"].setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+            else:
+                widgets["status_label"].setText("Not built")
+                widgets["status_label"].setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+                widgets["current_translations"] = []
+                self._refresh_translation_tags(key)
+                self._populate_add_combo(key)
+
+        # Topical index status
+        topical_path = os.path.join(indexes_dir, "topical_lookup.pkl")
+
+        if os.path.exists(topical_path):
+            try:
+                import pickle
+                with open(topical_path, "rb") as f:
+                    lookup = pickle.load(f)
+                self._topical_status.setText(f"{len(lookup)} topics  •  Ready")
+                self._topical_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+            except Exception:
+                self._topical_status.setText("Error reading topical index")
+                self._topical_status.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+        else:
+            self._topical_status.setText("Not built")
+            self._topical_status.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+
+    def _rebuild_single_index(self, index_type: str):
+        """Rebuild a single index type."""
+        import subprocess
+        import os
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        python_bin = os.path.join(project_root, "venv", "bin", "python")
+        if not os.path.exists(python_bin):
+            python_bin = "python3"
+
+        self._build_log.clear()
+        self._build_log.append(f"Building {index_type} index...")
+
+        # Disable buttons
+        self._set_build_buttons_enabled(False)
+
+        scripts = {
+            "fts": [python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py")],
+            "fuzzy_bm25": [python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"), "--fuzzy"],
+            "fuzzy_faiss": [python_bin, os.path.join(project_root, "data", "bible", "build_faiss.py")],
+            "topical": [python_bin, os.path.join(project_root, "data", "bible", "build_topical.py"), "--cpu"],
+        }
+
+        cmd = scripts.get(index_type)
+        if not cmd:
+            self._build_log.append(f"Unknown index type: {index_type}")
+            self._set_build_buttons_enabled(True)
+            return
+
+        # Add translation flags from the index widgets
+        if index_type == "fts" and "fts" in self._index_widgets:
+            trans = self._index_widgets["fts"]["current_translations"]
+            if trans:
+                cmd.extend(["--translations", ",".join(trans)])
+        elif index_type in ("fuzzy_bm25", "fuzzy_faiss") and index_type in self._index_widgets:
+            trans = self._index_widgets[index_type]["current_translations"]
+            if trans:
+                cmd.extend(["--translations", ",".join(trans)])
+
+        try:
+            self._build_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=project_root,
+            )
+
+            # Read output in a timer
+            from PyQt6.QtCore import QTimer
+            self._build_timer = QTimer(self)
+            self._build_timer.timeout.connect(lambda: self._read_build_output(index_type))
+            self._build_timer.start(100)
+        except Exception as e:
+            self._build_log.append(f"Error: {e}")
+            self._set_build_buttons_enabled(True)
+
+    def _read_build_output(self, index_type: str):
+        """Read build process output."""
+        import signal
+
+        if not hasattr(self, "_build_process") or self._build_process is None:
+            return
+
+        # Non-blocking read
+        try:
+            import select
+            if select.select([self._build_process.stdout], [], [], 0)[0]:
+                line = self._build_process.stdout.readline()
+                if line:
+                    self._build_log.append(line.rstrip())
+                    # Auto-scroll
+                    sb = self._build_log.verticalScrollBar()
+                    sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
+        # Check if process finished
+        if self._build_process.poll() is not None:
+            self._build_timer.stop()
+            rc = self._build_process.returncode
+            if rc == 0:
+                self._build_log.append(f"\n✓ {index_type} index built successfully")
+            else:
+                self._build_log.append(f"\n✗ Build failed (exit code {rc})")
+            self._build_process = None
+            self._set_build_buttons_enabled(True)
+            self._load_index_status()
+
+    def _rebuild_all_indexes(self):
+        """Rebuild all indexes sequentially."""
+        import subprocess
+        import os
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        python_bin = os.path.join(project_root, "venv", "bin", "python")
+        if not os.path.exists(python_bin):
+            python_bin = "python3"
+
+        self._build_log.clear()
+        self._build_log.append("Building all indexes...")
+
+        self._set_build_buttons_enabled(False)
+
+        fts_trans = self._index_widgets.get("fts", {}).get("current_translations", [])
+        fuzzy_trans = self._index_widgets.get("fuzzy_bm25", {}).get("current_translations", [])
+
+        scripts = [
+            ([python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"),
+              "--translations", ",".join(fts_trans)], "FTS BM25"),
+            ([python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"),
+              "--fuzzy", "--translations", ",".join(fuzzy_trans)], "Fuzzy BM25"),
+            ([python_bin, os.path.join(project_root, "data", "bible", "build_faiss.py"),
+              "--translations", ",".join(fuzzy_trans)], "Fuzzy FAISS"),
+            ([python_bin, os.path.join(project_root, "data", "bible", "build_topical.py"),
+              "--cpu"], "Topical"),
+        ]
+
+        self._build_queue = scripts
+        self._build_queue_idx = 0
+        self._run_next_build()
+
+    def _run_next_build(self):
+        """Run the next build in the queue."""
+        import subprocess
+        import os
+
+        if self._build_queue_idx >= len(self._build_queue):
+            self._build_log.append("\n✓ All indexes built successfully")
+            self._set_build_buttons_enabled(True)
+            self._load_index_status()
+            return
+
+        cmd, name = self._build_queue[self._build_queue_idx]
+        self._build_log.append(f"\n── Building {name} ──")
+
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        try:
+            self._build_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=project_root,
+            )
+
+            from PyQt6.QtCore import QTimer
+            self._build_timer = QTimer(self)
+            self._build_timer.timeout.connect(lambda: self._read_build_output_queue(name))
+            self._build_timer.start(100)
+        except Exception as e:
+            self._build_log.append(f"Error building {name}: {e}")
+            self._build_queue_idx += 1
+            self._run_next_build()
+
+    def _read_build_output_queue(self, name: str):
+        """Read build process output for queued builds."""
+        import select
+
+        if not hasattr(self, "_build_process") or self._build_process is None:
+            return
+
+        try:
+            if select.select([self._build_process.stdout], [], [], 0)[0]:
+                line = self._build_process.stdout.readline()
+                if line:
+                    self._build_log.append(line.rstrip())
+                    sb = self._build_log.verticalScrollBar()
+                    sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
+        if self._build_process.poll() is not None:
+            self._build_timer.stop()
+            rc = self._build_process.returncode
+            if rc == 0:
+                self._build_log.append(f"✓ {name} done")
+            else:
+                self._build_log.append(f"✗ {name} failed (exit code {rc})")
+            self._build_process = None
+            self._build_queue_idx += 1
+
+            # Run next after a short delay
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(200, self._run_next_build)
+
+    def _set_build_buttons_enabled(self, enabled: bool):
+        """Enable/disable all build buttons."""
+        for key, widgets in self._index_widgets.items():
+            if "build_btn" in widgets:
+                widgets["build_btn"].setEnabled(enabled)
+        if hasattr(self, "_rebuild_all_btn"):
+            self._rebuild_all_btn.setEnabled(enabled)
+
+    def _create_recording_section(self):
+        """Create the Recording section."""
+        section = QWidget()
+        section.setVisible(False)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        title = QLabel("Recording")
+        title.setStyleSheet(LABEL_STYLE)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Audio recording format and storage")
+        subtitle.setStyleSheet(SUBTITLE_STYLE)
+        layout.addWidget(subtitle)
+
+        # Encoding format
+        card = GlassCard()
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(12, 8, 12, 8)
+        card_layout.setSpacing(8)
+
+        info = QWidget()
+        info_layout = QVBoxLayout(info)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+
+        t = QLabel("Encoding Format")
+        t.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        info_layout.addWidget(t)
+
+        d = QLabel("WAV is lossless; MP3/FLAC/OGG require ffmpeg")
+        d.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        info_layout.addWidget(d)
+
+        card_layout.addWidget(info)
+        card_layout.addStretch()
+
+        self._rec_format_combo = QComboBox()
+        self._rec_format_combo.addItems(["WAV", "MP3", "FLAC", "OGG"])
+        self._rec_format_combo.setFixedWidth(120)
+        self._rec_format_combo.setStyleSheet(COMBO_STYLE)
+        from core.database import get_setting as _gs, set_setting as _ss
+        saved = _gs("recording.format", "WAV")
+        idx = self._rec_format_combo.findText(saved)
+        if idx >= 0:
+            self._rec_format_combo.setCurrentIndex(idx)
+        self._rec_format_combo.currentTextChanged.connect(
+            lambda v: _ss("recording.format", v)
+        )
+        card_layout.addWidget(self._rec_format_combo)
+
         layout.addWidget(card)
+
+        # Recording directory info
+        dir_card = GlassCard()
+        dir_layout = QHBoxLayout(dir_card)
+        dir_layout.setContentsMargins(12, 8, 12, 8)
+        dir_layout.setSpacing(8)
+
+        dir_info = QWidget()
+        dir_info_l = QVBoxLayout(dir_info)
+        dir_info_l.setContentsMargins(0, 0, 0, 0)
+        dir_info_l.setSpacing(2)
+
+        dt = QLabel("Recording Directory")
+        dt.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        dir_info_l.addWidget(dt)
+
+        dd = QLabel("data/recordings/")
+        dd.setStyleSheet(f"color: {SLATE_400}; font-size: 11px; font-family: monospace;")
+        dir_info_l.addWidget(dd)
+
+        dir_layout.addWidget(dir_info)
+        layout.addWidget(dir_card)
+
         layout.addStretch()
-        
-        self._sections["Database"] = section
+
+        self._sections["Recording"] = section
         self._content_layout.addWidget(section)
     
     def _create_gpu_hardware_section(self):
@@ -698,8 +1460,8 @@ class SettingsTab(QWidget):
         section.setVisible(False)
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        
+        layout.setSpacing(8)
+
         title = QLabel("GPU & Hardware")
         title.setStyleSheet(LABEL_STYLE)
         layout.addWidget(title)
@@ -711,8 +1473,8 @@ class SettingsTab(QWidget):
         # GPU info card
         card = GlassCard()
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(12, 8, 12, 8)
+        card_layout.setSpacing(8)
         
         # VRAM
         vram_layout = QVBoxLayout()
@@ -766,7 +1528,7 @@ class SettingsTab(QWidget):
         
         # Thermal limits
         limits_layout = QHBoxLayout()
-        limits_layout.setSpacing(16)
+        limits_layout.setSpacing(8)
         
         for label_text, value_text, color in [
             ("Critical", "82°C", RED_500),
@@ -805,19 +1567,11 @@ class SettingsTab(QWidget):
         layout.setSpacing(0)
 
         self._hotkey_editor = HotkeyEditor()
-        layout.addWidget(self._hotkey_editor, 1)
+        layout.addWidget(self._hotkey_editor)
 
         self._sections["Hotkeys"] = section
         self._content_layout.addWidget(section)
     
-    def _rebuild_indexes(self):
-        """Trigger index rebuild."""
-        import subprocess
-        try:
-            subprocess.Popen(["python", "data/bible/build_bm25.py"], cwd="/home/itorousa/Documents/Code/rhemacast")
-        except Exception as e:
-            print(f"Failed to start index rebuild: {e}")
-
     def update_gpu_hardware(self, telemetry: dict):
         """Live-update the GPU & Hardware section from HardwareTelemetryWorker signal."""
         vram_used = telemetry.get("gpu_vram_used_mb", 0)

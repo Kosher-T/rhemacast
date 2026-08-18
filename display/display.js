@@ -1,9 +1,12 @@
 const WS_HOST = window.location.hostname || "127.0.0.1";
-const WS_URL = `ws://${WS_HOST}:8765`;
+const OUTPUT_ID = new URLSearchParams(window.location.search).get("output") || "1";
+const WS_URL = `ws://${WS_HOST}:8765?output=${OUTPUT_ID}`;
 const RECONNECT_DELAY = 2000;
 
 let socket = null;
 let isConnecting = false;
+let _prevPayload = null;
+let _animStyleEl = null;
 
 const container = document.getElementById("container");
 const verseText = document.getElementById("verse-text");
@@ -62,7 +65,8 @@ function resetTheme() {
         "--rc-ref-color", "--rc-ref-size", "--rc-ref-weight",
         "--rc-ref-text-transform", "--rc-ref-letter-spacing",
         "--rc-ref-font-family",
-        "--rc-translation-color", "--rc-translation-margin-left"
+        "--rc-translation-color", "--rc-translation-margin-left",
+        "--rc-verse-num-color", "--rc-verse-num-font-family"
     ];
     props.forEach(p => root.style.removeProperty(p));
 }
@@ -121,7 +125,13 @@ function applyTheme(theme) {
     if (tr.color)       root.style.setProperty("--rc-translation-color", tr.color);
     if (tr.margin_left) root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
 
+    // Verse number
+    const vn = theme.verse_num || {};
+    if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
+    if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
+
     autoFitText();
+    _applyContainers(theme);
 }
 
 function extractVerseNumber(reference) {
@@ -162,13 +172,204 @@ function autoFitText() {
     verseText.style.fontSize = Math.floor(lo) + 'px';
 }
 
+// ─── Container (absolute positioning) support ───────────────────────────────
+let _activeContainers = null;
+
+function _applyContainers(theme) {
+    const ct = theme.containers;
+    const verseContent = document.getElementById("verse-content");
+    const ctText = document.getElementById("ct-text");
+    const ctRef = document.getElementById("ct-reference");
+    const ctTrans = document.getElementById("ct-translation");
+
+    if (!ct) {
+        // No containers — flex mode
+        _activeContainers = null;
+        verseContent.style.display = "";
+        ctText.style.display = "none";
+        ctRef.style.display = "none";
+        ctTrans.style.display = "none";
+        container.style.position = "";
+        container.style.width = "";
+        container.style.height = "";
+        container.style.left = "";
+        container.style.top = "";
+        return;
+    }
+
+    // Absolute mode
+    _activeContainers = ct;
+    verseContent.style.display = "none";
+
+    // Make container fill the viewport (1920x1080 virtual)
+    container.style.position = "absolute";
+    container.style.width = "1920px";
+    container.style.height = "1080px";
+    container.style.left = "0";
+    container.style.top = "0";
+
+    const t = theme.text || {};
+    const r = theme.reference || {};
+    const tr = theme.translation || {};
+
+    _positionContainer(ctText, ct.text, t, "text");
+    _positionContainer(ctRef, ct.reference, r, "reference");
+    _positionContainer(ctTrans, ct.translation, tr, "translation");
+}
+
+function _positionContainer(el, pos, style, type) {
+    if (!pos || pos.follows || pos.visible === false) {
+        el.style.display = "none";
+        return;
+    }
+    el.style.display = "block";
+    el.style.position = "absolute";
+    el.style.left = (pos.x - pos.width / 2) + "px";
+    el.style.top = (pos.y - pos.height / 2) + "px";
+    el.style.width = pos.width + "px";
+    el.style.height = pos.height + "px";
+    el.style.overflow = "hidden";
+
+    // Apply element-specific styles
+    const inner = el.firstElementChild;
+    if (!inner) return;
+    inner.style.width = "100%";
+    inner.style.height = "100%";
+    inner.style.display = "flex";
+    inner.style.flexDirection = "column";
+    inner.style.justifyContent = "center";
+    inner.style.alignItems = "center";
+    inner.style.textAlign = "center";
+
+    if (type === "text") {
+        inner.style.color = style.color || "#ffffff";
+        inner.style.fontFamily = style.font_family || "'Nunito', sans-serif";
+        inner.style.fontWeight = style.weight || 700;
+        inner.style.lineHeight = style.line_height || "1.08";
+        inner.style.letterSpacing = style.letter_spacing || "-0.02em";
+        inner.style.textShadow = style.text_shadow || "";
+        inner.style.padding = "20px";
+    } else if (type === "reference") {
+        inner.style.color = style.color || "#cccccc";
+        inner.style.fontFamily = style.font_family || "'DM Sans', sans-serif";
+        inner.style.fontWeight = style.weight || 500;
+        inner.style.textTransform = style.text_transform || "uppercase";
+        inner.style.letterSpacing = style.letter_spacing || "0.1em";
+        inner.style.fontSize = style.size || "34px";
+    } else if (type === "translation") {
+        inner.style.color = style.color || "#999999";
+        inner.style.fontSize = "16px";
+    }
+}
+
+function _populateContainers(data) {
+    if (!_activeContainers) return;
+    const refText = data.reference || (data.book && data.chapter && data.verse
+        ? data.book + " " + data.chapter + ":" + data.verse : "");
+    const verseNum = extractVerseNumber(refText);
+
+    // Text
+    const ctTextInner = document.querySelector("#ct-text > *");
+    if (ctTextInner) {
+        let html = data.text || "";
+        if (verseNum) html = '<span class="verse-num">' + verseNum + '</span> ' + html;
+        ctTextInner.innerHTML = html;
+    }
+
+    // Reference
+    const ctRefInner = document.querySelector("#ct-reference > *");
+    if (ctRefInner) ctRefInner.innerHTML = refText;
+
+    // Translation
+    const ctTransInner = document.querySelector("#ct-translation > *");
+    if (ctTransInner) ctTransInner.innerHTML = data.translation || "";
+}
+
+const ANIM_KEYFRAMES = {
+    fade_up:      { from: "opacity:0;transform:translateY(20px)",     to: "opacity:1;transform:translateY(0)" },
+    fade_in:      { from: "opacity:0",                                to: "opacity:1" },
+    fade_down:    { from: "opacity:1;transform:translateY(0)",        to: "opacity:0;transform:translateY(20px)" },
+    fade_out:     { from: "opacity:1",                                to: "opacity:0" },
+    scale_up:     { from: "opacity:0;transform:scale(0.85)",         to: "opacity:1;transform:scale(1)" },
+    scale_down:   { from: "opacity:1;transform:scale(1)",            to: "opacity:0;transform:scale(0.85)" },
+    slide_up:     { from: "transform:translateY(100%)",              to: "transform:translateY(0)" },
+    slide_down:   { from: "transform:translateY(0)",                 to: "transform:translateY(100%)" },
+};
+
+const ANIM_EASINGS = {
+    "ease-out":     "cubic-bezier(0.16, 1, 0.3, 1)",
+    "ease-in":      "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
+    "ease-in-out":  "cubic-bezier(0.65, 0, 0.35, 1)",
+    "linear":       "linear",
+    "spring":       "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "smooth":       "cubic-bezier(0.25, 0.1, 0.25, 1)",
+};
+
+function _injectAnimStyle() {
+    if (_animStyleEl) return;
+    _animStyleEl = document.createElement("style");
+    _animStyleEl.id = "rc-animations";
+    let css = "";
+    for (const [name, kf] of Object.entries(ANIM_KEYFRAMES)) {
+        css += `@keyframes rc-${name} { from { ${kf.from}; } to { ${kf.to}; } }\n`;
+    }
+    _animStyleEl.textContent = css;
+    document.head.appendChild(_animStyleEl);
+}
+
+function _applyAnimation(el, type, durationMs, easing) {
+    if (!type || type === "none" || !el) return;
+    const kfName = `rc-${type}`;
+    const dur = (durationMs || 600) + "ms";
+    const ease = ANIM_EASINGS[easing] || ANIM_EASINGS["ease-out"];
+    el.style.animation = `${kfName} ${dur} ${ease} forwards`;
+    el.addEventListener("animationend", () => { el.style.animation = ""; }, { once: true });
+}
+
+function _runAnimation(data, phase) {
+    const anims = data.theme_data && data.theme_data.animations;
+    if (!anims) return;
+    _injectAnimStyle();
+    if (phase === "display_enter" && anims.display_enter) {
+        const a = anims.display_enter;
+        _applyAnimation(container, a.type, a.duration_ms, a.easing);
+    } else if (phase === "between_slides" && anims.between_slides) {
+        const a = anims.between_slides;
+        _applyAnimation(container, a.in_type, a.duration_ms, a.easing);
+    }
+}
+
+function _runExitAnimation(callback) {
+    // Check if the previous payload had exit animation
+    const anims = _prevPayload && _prevPayload.theme_data && _prevPayload.theme_data.animations;
+    if (!anims || !anims.display_exit || !anims.display_exit.type) {
+        callback();
+        return;
+    }
+    const a = anims.display_exit;
+    _injectAnimStyle();
+    const kfName = `rc-${a.type}`;
+    const dur = (a.duration_ms || 400) + "ms";
+    const ease = ANIM_EASINGS[a.easing] || ANIM_EASINGS["ease-out"];
+    container.style.animation = `${kfName} ${dur} ${ease} forwards`;
+    container.addEventListener("animationend", () => {
+        container.style.animation = "";
+        callback();
+    }, { once: true });
+}
+
 function handlePayload(data) {
     if (data.action === "clear") {
-        container.classList.add("hidden");
+        _runExitAnimation(() => {
+            container.classList.add("hidden");
+            container.style.animation = "";
+        });
+        _prevPayload = null;
         return;
     }
     
     if (data.action === "display") {
+        const isTransition = _prevPayload && _prevPayload.action === "display";
         // Update scripture text
         if (data.text) {
             let verseTextContent = data.text;
@@ -216,6 +417,15 @@ function handlePayload(data) {
         // Show
         container.classList.remove("hidden");
         autoFitText();
+        _populateContainers(data);
+
+        // Play enter animation
+        if (isTransition) {
+            _runAnimation(data, "between_slides");
+        } else {
+            _runAnimation(data, "display_enter");
+        }
+        _prevPayload = data;
     }
 }
 

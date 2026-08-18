@@ -7,6 +7,7 @@ and the Queue A acknowledgment protocol.
 
 import queue
 import logging
+import threading
 from collections import OrderedDict
 from typing import Any, Optional, List, Dict
 
@@ -14,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 # Global Sentinel for graceful shutdown
 POISON_PILL = object()
+
+# Set when an STT thread is actively consuming from Queue A.
+# Audio callback only enqueues to Queue A when this is set.
+# Decouples recording (tap) from transcription (pipeline).
+stt_consuming = threading.Event()
 
 # Define the central queues
 # Max pending 100ms PCM audio chunks (500 chunks = 50 seconds of audio buffer)
@@ -44,9 +50,9 @@ class AudioChunkBuffer:
     """
     def __init__(self):
         # OrderedDict maintains insertion order so replay is sequential
-        self.pending_chunks: Dict[str, bytes] = OrderedDict()
+        self.pending_chunks: Dict[str, Any] = OrderedDict()
 
-    def enqueue(self, chunk_id: str, pcm_data: bytes):
+    def enqueue(self, chunk_id: str, pcm_data: Any):
         """Adds a chunk to Queue A."""
         if queue_a.qsize() > 400:
             # Backpressure Policy: Queue A: never drop audio chunks; trigger failover if depth > 400

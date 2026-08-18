@@ -22,7 +22,7 @@ _DISPLAY_HTML = r"""<!DOCTYPE html>
 <title>RhemaCast</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html {
@@ -32,7 +32,7 @@ html {
 body {
     width: 1920px; height: 1080px; overflow: hidden;
     background: #000;
-    font-family: 'Inter', sans-serif;
+    font-family: var(--rc-text-font-family, 'Nunito'), sans-serif;
     display: flex;
     align-items: var(--rc-vertical-align, flex-end);
     justify-content: center;
@@ -57,27 +57,28 @@ body {
     justify-content: var(--rc-container-justify-content, flex-start);
     align-items: var(--rc-container-align-items, stretch);
 
-    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
-                transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: none;
     opacity: 1; transform: translateY(0) scale(1);
 }
 #container.hidden {
     opacity: 0; transform: translateY(40px) scale(0.98); pointer-events: none;
 }
 #verse-text {
+    font-family: var(--rc-text-font-family, 'Nunito'), sans-serif;
     font-size: var(--rc-text-size, 2.5rem);
-    font-weight: var(--rc-text-weight, 800);
-    line-height: var(--rc-text-line-height, 1.4);
+    font-weight: var(--rc-text-weight, 700);
+    line-height: var(--rc-text-line-height, 1.2);
     color: var(--rc-text-color, #f8fafc);
     text-align: center;
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
-    letter-spacing: var(--rc-text-letter-spacing, -0.02em);
+    letter-spacing: var(--rc-text-letter-spacing, -0.01em);
     min-font-size: var(--rc-text-min-size, 4px);
     max-font-size: var(--rc-text-max-size, 300px);
 }
-
 .verse-num {
+    font-family: var(--rc-verse-num-font-family, inherit);
+    color: var(--rc-verse-num-color, inherit);
     font-size: 0.6em;
     font-weight: 700;
     opacity: 0.7;
@@ -85,10 +86,10 @@ body {
     margin-right: 0.15em;
     line-height: 1;
 }
-
 #verse-ref {
+    font-family: var(--rc-ref-font-family, 'DM Sans'), sans-serif;
     font-size: var(--rc-ref-size, 1.5rem);
-    font-weight: var(--rc-ref-weight, 600);
+    font-weight: var(--rc-ref-weight, 500);
     color: var(--rc-ref-color, #94a3b8);
     text-align: center;
     text-transform: var(--rc-ref-text-transform, uppercase);
@@ -100,6 +101,7 @@ body {
     color: var(--rc-translation-color, #64748b);
     margin-left: var(--rc-translation-margin-left, 8px);
 }
+
 </style>
 </head>
 <body>
@@ -118,6 +120,8 @@ const verseText = document.getElementById("verse-text");
 const verseRef = document.getElementById("verse-ref");
 const verseRefText = document.getElementById("verse-ref-text");
 const verseRefTranslation = document.getElementById("verse-ref-translation");
+let _fontsReady = false;
+document.fonts.load("700 16px Nunito").then(() => { _fontsReady = true; });
 
 function resetTheme() {
     const root = document.documentElement;
@@ -131,9 +135,12 @@ function resetTheme() {
         "--rc-text-color", "--rc-text-size", "--rc-text-weight",
         "--rc-text-line-height", "--rc-text-shadow", "--rc-text-letter-spacing",
         "--rc-text-margin-bottom", "--rc-text-min-size", "--rc-text-max-size",
+        "--rc-text-font-family",
         "--rc-ref-color", "--rc-ref-size", "--rc-ref-weight",
         "--rc-ref-text-transform", "--rc-ref-letter-spacing",
-        "--rc-translation-color", "--rc-translation-margin-left"
+        "--rc-ref-font-family",
+        "--rc-translation-color", "--rc-translation-margin-left",
+        "--rc-verse-num-color", "--rc-verse-num-font-family"
     ];
     props.forEach(p => root.style.removeProperty(p));
 }
@@ -175,15 +182,21 @@ function applyTheme(theme) {
     if (t.margin_bottom) root.style.setProperty("--rc-text-margin-bottom", t.margin_bottom);
     if (t.min_size)      root.style.setProperty("--rc-text-min-size", t.min_size);
     if (t.max_size)      root.style.setProperty("--rc-text-max-size", t.max_size);
+    if (t.font_family)   root.style.setProperty("--rc-text-font-family", t.font_family);
 
     if (r.color)         root.style.setProperty("--rc-ref-color", r.color);
     if (r.size)          root.style.setProperty("--rc-ref-size", r.size);
     if (r.weight)        root.style.setProperty("--rc-ref-weight", r.weight);
     if (r.text_transform) root.style.setProperty("--rc-ref-text-transform", r.text_transform);
     if (r.letter_spacing) root.style.setProperty("--rc-ref-letter-spacing", r.letter_spacing);
+    if (r.font_family)   root.style.setProperty("--rc-ref-font-family", r.font_family);
 
     if (tr.color)        root.style.setProperty("--rc-translation-color", tr.color);
     if (tr.margin_left)  root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
+
+    const vn = theme.verse_num || {};
+    if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
+    if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
 
     autoFitText();
 }
@@ -266,8 +279,12 @@ function handlePayload(data) {
         
         if (data.theme_data) { applyTheme(data.theme_data); document.body.className = ""; }
         else if (data.theme) { document.body.className = "theme-" + data.theme; }
-        container.classList.remove("hidden");
-        autoFitText();
+        function _showContainer() {
+            container.classList.remove("hidden");
+            autoFitText();
+        }
+        if (_fontsReady) { _showContainer(); }
+        else { document.fonts.ready.then(_showContainer); }
     }
 }
 
@@ -294,6 +311,8 @@ class DisplayView(QWebEngineView):
     def __init__(self, live_mode: bool = False, parent=None):
         super().__init__(parent)
         self._live_mode = live_mode
+        self._page_ready = False
+        self._pending_payload = None
 
         settings = self.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
@@ -301,13 +320,16 @@ class DisplayView(QWebEngineView):
         settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
 
         self.setHtml(_DISPLAY_HTML, QUrl("http://localhost"))
-
-        if live_mode:
-            self.loadFinished.connect(self._on_load_finished)
+        self.loadFinished.connect(self._on_load_finished)
 
     def _on_load_finished(self, ok: bool):
-        if ok:
+        self._page_ready = ok
+        if ok and self._live_mode:
             self.page().runJavaScript("connect()")
+        if ok and self._pending_payload is not None:
+            payload = self._pending_payload
+            self._pending_payload = None
+            self._run_payload(payload)
 
     def display_verse(self, payload: dict):
         """Display a verse. payload matches the WS broadcast format:
@@ -321,10 +343,15 @@ class DisplayView(QWebEngineView):
 
     def apply_theme(self, theme_data: dict):
         """Apply a theme without changing the displayed content."""
+        if not self._page_ready:
+            return
         js = "applyTheme(" + json.dumps(theme_data) + ")"
         self.page().runJavaScript(js)
 
     def _run_payload(self, payload: dict):
         """Execute handlePayload() with the given payload in the page."""
+        if not self._page_ready:
+            self._pending_payload = payload
+            return
         js = "handlePayload(" + json.dumps(payload) + ")"
         self.page().runJavaScript(js)

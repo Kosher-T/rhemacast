@@ -2,13 +2,49 @@
   "version": 1,
   "items": [
     {
+      "book": "Genesis",
+      "chapter": 2,
+      "ref": "Genesis 2:24",
+      "text": "Therefore a man shall leave his father and mother and be joined to his wife, and they shall become one flesh.",
+      "theme": "reference",
+      "translation": "NKJV",
+      "verse": 24
+    },
+    {
       "book": "Matthew",
-      "chapter": 14,
-      "ref": "Matthew 14:22",
-      "text": "And straightway Jesus constrained his disciples to get into a ship, and to go before him unto the other side, while he sent the multitudes away.",
-      "theme": "default",
-      "translation": "KJV",
-      "verse": 22
+      "chapter": 22,
+      "ref": "Matthew 22:2",
+      "text": "\"The kingdom of heaven is like a certain king who arranged a marriage for his son,",
+      "theme": "reference",
+      "translation": "NKJV",
+      "verse": 2
+    },
+    {
+      "book": "Genesis",
+      "chapter": 1,
+      "ref": "Genesis 1:26",
+      "text": "Then God said, \"Let us make man in our image, after our likeness; and let them have dominion over the fish of the sea, and over the birds of the air, and over the cattle, and over all the earth, and over every creeping thing that creeps upon the earth.\"",
+      "theme": "fullscreen",
+      "translation": "RSV",
+      "verse": 26
+    },
+    {
+      "book": "Acts",
+      "chapter": 19,
+      "ref": "Acts 19:15",
+      "text": "But the evil spirit answered them, \"Jesus I know, and Paul I know; but who are you?\"",
+      "theme": "fullscreen",
+      "translation": "RSV",
+      "verse": 15
+    },
+    {
+      "book": "Philippians",
+      "chapter": 2,
+      "ref": "Philippians 2:10",
+      "text": "that at the name of Jesus every knee should bow, in heaven and on earth and under the earth,",
+      "theme": "fullscreen",
+      "translation": "RSV",
+      "verse": 10
     }
   ]
 }

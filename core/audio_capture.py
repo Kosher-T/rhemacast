@@ -87,11 +87,20 @@ def _audio_callback(indata: np.ndarray, frames: int, time_info: dict, status: sd
     """
     global _silence_duration_blocks
     
+    # Diagnostic counter for first-chunk logging
+    if not hasattr(_audio_callback, '_first_chunk_logged'):
+        _audio_callback._first_chunk_logged = 0
+    
     if status:
         logger.warning(f"Audio callback status: {status}")
 
     if not _capture_running.is_set():
         raise sd.CallbackStop()
+
+    # Diagnostic: log first few chunks to confirm audio is flowing
+    if _silence_duration_blocks == 0 and _audio_callback._first_chunk_logged < 3:
+        _audio_callback._first_chunk_logged += 1
+        logger.info(f"Audio callback: frames={frames}, shape={indata.shape}, dtype={indata.dtype}, rms_db={_calculate_rms_db(indata):.1f}dB")
 
     # Calculate RMS energy for silence detection
     rms_db = _calculate_rms_db(indata)
@@ -105,24 +114,54 @@ def _audio_callback(indata: np.ndarray, frames: int, time_info: dict, status: sd
         if silence_detected.is_set():
             silence_detected.clear()
 
-    # Generate unique ID and PCM data
+    # Generate unique ID and PCM data — keep as float32 numpy array
     chunk_id = str(uuid.uuid4())
-    pcm_data = indata.copy().tobytes()
+    pcm_data = indata.copy()
+    
+    # Record raw audio if recorder is active
+    try:
+        from core import audio_recorder
+        audio_recorder.write_chunk(pcm_data)
+    except Exception:
+        pass
     
     if capture_paused.is_set():
         _paused_buffer.append((chunk_id, pcm_data))
     else:
-        # Flush buffer first to preserve order
-        if _paused_buffer:
-            for c_id, data in _paused_buffer:
-                audio_buffer.enqueue(c_id, data)
+        # Only enqueue to Queue A if STT thread is actively consuming.
+        # Recording is a separate tap — it does not feed Queue A.
+        from core.queues import stt_consuming
+        if stt_consuming.is_set():
+            # Flush buffer first to preserve order
+            if _paused_buffer:
+                for c_id, data in _paused_buffer:
+                    audio_buffer.enqueue(c_id, data)
+                _paused_buffer.clear()
+            audio_buffer.enqueue(chunk_id, pcm_data)
+        elif _paused_buffer:
             _paused_buffer.clear()
-        audio_buffer.enqueue(chunk_id, pcm_data)
 
 def _capture_thread_target(device_index: int):
     """
     Main audio capture loop for Thread 1.
     """
+    # If device_index is None, find the default input device
+    if device_index is None:
+        try:
+            device_info = sd.query_devices(kind='input')
+            # Find the index of this device
+            all_devices = sd.query_devices()
+            for idx, dev in enumerate(all_devices):
+                if dev['name'] == device_info['name'] and dev['max_input_channels'] > 0:
+                    device_index = idx
+                    break
+            if device_index is None:
+                device_index = sd.default.device[0]
+            logger.info(f"Using default input device: {device_index} ({sd.query_devices(device_index)['name']})")
+        except Exception as e:
+            logger.error(f"Failed to resolve default input device: {e}")
+            device_index = sd.default.device[0]
+    
     logger.info(f"Starting audio capture on device {device_index}")
     _capture_running.set()
     _silence_duration_blocks = 0

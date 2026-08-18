@@ -19,6 +19,7 @@ from ui.styles import (
 from ui.tabs.presentation_tab import PresentationTab
 from ui.tabs.library_tab import LibraryTab
 from ui.tabs.settings_tab import SettingsTab
+from ui.tabs.history_tab import HistoryTab
 from ui.widgets.status_bar import StatusBar
 
 
@@ -28,7 +29,7 @@ class ChromeTab(QPushButton):
         super().__init__(text, parent)
         self.setCheckable(True)
         self.setChecked(is_active)
-        self.setFixedHeight(34)
+        self.setFixedHeight(30)
         self.setAccessibleName(text)
         # self.setAccessibleRole(Qt.AccessibleRole.PageTab)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -38,10 +39,10 @@ class ChromeTab(QPushButton):
                 background: transparent;
                 color: {SLATE_400};
                 border: none;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                padding: 0 20px;
-                font-size: 11px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 0 14px;
+                font-size: 10px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -78,7 +79,7 @@ class FramelessTitleBar(QWidget):
         logo.setAccessibleName("Application name")
         logo.setStyleSheet("""
             color: #60a5fa;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: -0.5px;
@@ -398,7 +399,7 @@ class MainWindow(QMainWindow):
         tabs_config = [
             ("PRESENTATION", lambda: PresentationTab()),
             ("LIBRARY", lambda: LibraryTab()),
-            ("HISTORY", lambda: QWidget()),
+            ("HISTORY", lambda: HistoryTab()),
             ("SETTINGS", lambda: SettingsTab()),
             ("THEME DESIGNER", self._init_theme_designer)
         ]
@@ -408,6 +409,8 @@ class MainWindow(QMainWindow):
             if i == 0:
                 # Presentation tab is fully loaded immediately
                 content = init_func()
+                # Connect theme quick-edit from queue panel
+                content.queue_panel.theme_edit_requested.connect(self._open_theme_quick_editor)
             else:
                 # Other tabs are lazy-loaded Placeholders
                 content = PlaceholderTab(init_func)
@@ -441,66 +444,137 @@ class MainWindow(QMainWindow):
             btn.setChecked(btn_name == name)
             
         # Hide sub-toolbar for tabs that don't need it
-        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS"))
+        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS", "HISTORY"))
             
         # Switch stack
         self.stack.setCurrentIndex(index)
 
     def _on_settings_tab_loaded(self, widget):
-        """Connect hotkey editor signal once the Settings tab finishes lazy-loading."""
+        """Connect hotkey editor and font size signals once the Settings tab finishes lazy-loading."""
         if hasattr(widget, '_hotkey_editor'):
             widget._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
+        if hasattr(widget, 'font_size_changed'):
+            widget.font_size_changed.connect(self._on_font_size_changed)
+    
+    def _on_font_size_changed(self, text_size: int, ref_size: int):
+        """Propagate font size changes to the browser panel for live preview."""
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            pres_tab.browser_panel.update_verse_font_sizes(text_size, ref_size)
         
     def _init_theme_designer(self) -> QWidget:
-        # Phase 9.5: Theme Designer (Minimal Viable Version)
-        # Using a QWidget layout with QTextEdit and potentially QWebEngineView
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        from PyQt6.QtWidgets import QTextEdit
-        text_edit = QTextEdit()
-        text_edit.setPlainText("/* themes.css editor */")
-        text_edit.setStyleSheet(f"""
-            QTextEdit {{
-                background: #1e293b;
-                color: #f8fafc;
-                font-family: monospace;
-                padding: 12px;
-                border: 1px solid {BORDER_SUBTLE};
-            }}
-        """)
-        layout.addWidget(text_edit, 1)
-        
-        # Only load WebEngine if available
-        try:
-            from PyQt6.QtWebEngineWidgets import QWebEngineView
-            web_view = QWebEngineView()
-            web_view.setHtml("<html><body style='background: black; color: white;'><h2>Live Preview</h2></body></html>")
-            layout.addWidget(web_view, 1)
-        except ImportError:
-            fallback = QLabel("PyQt6-WebEngine not installed. Live preview disabled.")
-            fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(fallback, 1)
-            
-        return widget
+        from ui.tabs.theme_designer_tab import ThemeDesignerTab
+        tab = ThemeDesignerTab()
+        self._theme_designer_tab = tab
+        return tab
+
+    def _open_theme_quick_editor(self, theme_name: str):
+        from ui.widgets.theme_quick_editor import ThemeQuickEditor
+        editor = ThemeQuickEditor(theme_name, parent=self)
+        editor.edit_full_requested.connect(self._open_full_designer)
+        editor.theme_saved.connect(self._on_theme_saved)
+        editor.show()
+
+    def _open_full_designer(self, theme_name: str):
+        # Switch to the Theme Designer tab
+        for idx, (name, _) in enumerate([
+            ("PRESENTATION", None), ("LIBRARY", None), ("HISTORY", None),
+            ("SETTINGS", None), ("THEME DESIGNER", None)
+        ]):
+            if name == "THEME DESIGNER":
+                self._switch_tab(idx, name)
+                break
+        # Set the theme in the designer tab
+        if hasattr(self, '_theme_designer_tab') and self._theme_designer_tab:
+            self._theme_designer_tab.set_theme(theme_name)
+
+    def _on_theme_saved(self, theme_name: str):
+        # Reload themes in the presentation tab's queue panel
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, 'queue_panel'):
+            pres_tab.queue_panel._themes_panel.reload()
 
     def eventFilter(self, obj, event):
-        """App-wide event filter: intercept Alt+Click for add-to-schedule."""
+        """App-wide event filter: intercept Alt+Click and defocus search panels."""
         from PyQt6.QtCore import QEvent as _QE
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        
         if event.type() == _QE.Type.MouseButtonPress:
             if (event.button() == Qt.MouseButton.LeftButton
                     and event.modifiers() & Qt.KeyboardModifier.AltModifier):
                 self._hotkey_add_to_schedule()
                 return True  # consume — don't let Qt do alt-click text selection
+            # Defocus search panels on click outside them
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._defocus_search_if_outside(obj)
+        elif event.type() == _QE.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._defocus_search_if_outside(obj)
+        
+        # Prevent QWebEngineView from consuming ShortcutOverride events
+        # This allows QShortcut (parented to MainWindow) to work after Alt+Tab
+        if event.type() == _QE.Type.ShortcutOverride:
+            # Check if the object is a QWebEngineView or a child of one
+            current = obj
+            while current is not None:
+                if isinstance(current, QWebEngineView):
+                    # Reject the event to prevent QWebEngineView from consuming it
+                    event.ignore()
+                    return True
+                current = current.parent() if hasattr(current, 'parent') else None
+        
         return super().eventFilter(obj, event)
 
+    def _defocus_search_if_outside(self, widget):
+        """Clear focus from search panels if the clicked widget is outside them."""
+        pres = self._tabs.get("PRESENTATION")
+        if not pres:
+            return
+        qpanel = pres.queue_panel
+        if not qpanel:
+            return
+
+        # Check if click is inside either search panel
+        for panel_attr in ('_fts_search_panel', '_fuzzy_search_panel'):
+            panel = getattr(qpanel, panel_attr, None)
+            if panel is None:
+                continue
+            # Walk up from clicked widget to see if it's inside this panel
+            w = widget
+            while w is not None:
+                if w is panel or w is panel.query_input:
+                    return  # inside search panel — don't defocus
+                w = w.parentWidget() if hasattr(w, 'parentWidget') else None
+
+        # Click is outside all search panels — defocus
+        for panel_attr in ('_fts_search_panel', '_fuzzy_search_panel'):
+            panel = getattr(qpanel, panel_attr, None)
+            if panel is not None:
+                panel.query_input.clearFocus()
+
     def event(self, e):
+        from PyQt6.QtCore import QEvent as _QE, QTimer
+        from ui.widgets.hotkey_editor import KeyboardHandler
+
+        # After Alt+Tab or switching back, Qt doesn't restore keyboard focus
+        # to MainWindow, so QShortcut (parented to self) won't fire until a
+        # second keypress. Grab focus on window activation.
+        if e.type() == _QE.Type.WindowActivate:
+            # Use a short delay to ensure the window is fully activated
+            # before attempting to set focus
+            def _ensure_focus():
+                # Only set focus if no other widget currently has it
+                # This prevents stealing focus from text inputs, etc.
+                from PyQt6.QtWidgets import QApplication
+                focused = QApplication.focusWidget()
+                if focused is None or not focused.isEnabled():
+                    self.setFocus()
+            QTimer.singleShot(10, _ensure_focus)
+
         # Qt intercepts F1 for "What's This?" help. During hotkey capture mode,
         # accept the ShortcutOverride so the key reaches our KeyboardHandler
         # instead of being eaten by Qt's help system. During normal operation,
         # let it through so QShortcut can match it.
-        from PyQt6.QtCore import QEvent as _QE
-        from ui.widgets.hotkey_editor import KeyboardHandler
         if (e.type() == _QE.Type.ShortcutOverride
                 and e.key() == Qt.Key.Key_F1
                 and KeyboardHandler._target is not None):
@@ -551,7 +625,7 @@ class MainWindow(QMainWindow):
             shortcut.setEnabled(False)
             shortcut.deleteLater()
         self._shortcuts = []
-        
+
         # Map action IDs to handler methods
         action_handlers = {
             "clear_recall": self._hotkey_clear,
@@ -563,11 +637,26 @@ class MainWindow(QMainWindow):
             "add_to_schedule": self._hotkey_add_to_schedule,
             "double_click": self._hotkey_double_click,
         }
-        
+
         for action_id, key in self._hotkey_bindings.items():
             if action_id in action_handlers and key:
                 shortcut = QShortcut(QKeySequence(key), self)
                 shortcut.activated.connect(action_handlers[action_id])
+                self._shortcuts.append(shortcut)
+
+        # Translation shortcuts (stored as trans_<VERSION> in bindings)
+        import json
+        from core.database import get_setting
+        saved = get_setting("hotkeys.trans_bindings", "[]")
+        try:
+            trans_bindings = json.loads(saved)
+        except Exception:
+            trans_bindings = []
+
+        for version, key in trans_bindings:
+            if key:
+                shortcut = QShortcut(QKeySequence(key), self)
+                shortcut.activated.connect(lambda v=version: self._hotkey_switch_translation(v))
                 self._shortcuts.append(shortcut)
 
     def _on_hotkey_bindings_changed(self, bindings: dict):
@@ -604,12 +693,47 @@ class MainWindow(QMainWindow):
                 pres_tab.stt_panel.transcription_started.emit()
 
     def _hotkey_add_to_schedule(self):
-        """Add the currently highlighted browser verse to schedule."""
+        """Simulate a single click at cursor position (updates preview) and send to schedule."""
+        from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt as QtCore, QPointF
+
+        global_point = QCursor.pos()
+        target = QApplication.widgetAt(global_point)
+        if not target:
+            return
+
+        local_pos = QPointF(target.mapFromGlobal(global_point))
+        global_pos = QPointF(global_point)
+        device = QPointingDevice.primaryPointingDevice()
+
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            local_pos, global_pos,
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier, device,
+        )
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            local_pos, global_pos,
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier, device,
+        )
+
+        QApplication.sendEvent(target, press)
+        QApplication.sendEvent(target, release)
+
+        # Now add selected verses to schedule
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "browser_panel") and hasattr(pres_tab, "schedule_panel"):
             browser = pres_tab.browser_panel
-            verse_data = browser.get_selected_verse()
-            if verse_data:
+            selected = browser.get_all_selected_verses()
+            if not selected:
+                # Fallback to single highlighted verse
+                v = browser.get_selected_verse()
+                if v:
+                    selected = [v]
+            for verse_data in selected:
                 item_data = {
                     "ref": f"{verse_data.get('book', '')} {verse_data.get('chapter', '')}:{verse_data.get('verse', '')}".strip(),
                     "book": verse_data.get("book", ""),
@@ -674,6 +798,13 @@ class MainWindow(QMainWindow):
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "queue_panel"):
             pres_tab.queue_panel.switch_to_fts_search()
+
+    def _hotkey_switch_translation(self, version: str):
+        """Switch browser to the specified translation."""
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            browser = pres_tab.browser_panel
+            browser._on_translation_single_click(version)
 
     def _open_schedules_folder(self):
         """Open the schedules folder in the system file manager."""
@@ -836,3 +967,30 @@ class MainWindow(QMainWindow):
             logger.info("Service stopped.")
         except Exception as e:
             logger.error(f"Failed to stop service: {e}")
+
+    def closeEvent(self, event):
+        """Trigger graceful shutdown and clear OBS display on window close."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Stop the service threads if running
+        if getattr(self, '_service_running', False):
+            self._stop_service()
+        
+        # Clear the display via WebSocket using the server's event loop
+        try:
+            from core.websocket_server import broadcast_display, _server_loop
+            import asyncio
+            if _server_loop and _server_loop.is_running():
+                # Broadcast clear action to all outputs on the server's loop
+                for output_id in ["1", "2", "3"]:
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast_display({"action": "clear"}, target=output_id),
+                        _server_loop
+                    )
+            else:
+                logger.warning("WebSocket server loop not running; cannot clear display")
+        except Exception as e:
+            logger.warning(f"Failed to clear display on shutdown: {e}")
+        
+        event.accept()

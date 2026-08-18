@@ -6,16 +6,30 @@
     <meta name="description" content="RhemaCast live sermon verse display overlay for OBS">
     <title>RhemaCast Display</title>
     <link rel="stylesheet" href="themes.css">
-    <!-- Google Fonts: Cormorant Garamond (premium serif) + DM Sans (clean geometric sans) -->
+    <!-- Google Fonts: Nunito (clean sans-serif) + DM Sans (geometric sans) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        .rc-container { display: none; position: absolute; overflow: hidden; }
+        .rc-container .verse-num { font-size: inherit; opacity: 0.6; margin-right: 0.3em; }
+    </style>
 </head>
 <body>
     <div id="container" class="hidden" aria-live="polite" aria-atomic="true" role="status">
         <div id="verse-content">
             <h1 id="verse-text" aria-label="Verse text">In the beginning God created the heaven and the earth.</h1>
             <p id="verse-ref"><span id="verse-ref-text" aria-label="Verse reference">Genesis 1:1</span> <span id="verse-ref-translation" aria-label="Translation">KJV</span></p>
+        </div>
+        <!-- Individual containers for absolute positioning (used when theme has containers section) -->
+        <div id="ct-text" class="rc-container" data-element="text">
+            <h1 id="verse-text-abs" aria-label="Verse text"></h1>
+        </div>
+        <div id="ct-reference" class="rc-container" data-element="reference">
+            <span id="verse-ref-text-abs" aria-label="Verse reference"></span>
+        </div>
+        <div id="ct-translation" class="rc-container" data-element="translation">
+            <span id="verse-ref-translation-abs" aria-label="Translation"></span>
         </div>
     </div>
     <script src="display.js"></script>

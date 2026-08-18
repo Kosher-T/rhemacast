@@ -37,6 +37,17 @@ GPU_CRITICAL_TEMP = 82
 GPU_SAFE_TEMP = 70
 
 
+# ─── Search Index Translation Sets ─────────────────────────────────────────────
+
+# Translations covered by the FTS (FTS5 + BM25) search lane and the main bm25.pkl
+FTS_TRANSLATIONS = ["KJV", "NKJV", "ESV", "NLT", "AMP", "BSB"]
+
+# Translations covered by the fuzzy (FAISS + BM25) search lane.
+# Modern-language translations — semantic search queries arrive as conversational English.
+FUZZY_TRANSLATIONS = ["NLT", "BIBLE_ENGLISH_MSG", "BSB", "AMP", "NIV"]
+# NOTE: ERV (ENGLISHERVBIBLE) replaced by topical/stories index in data/indexes/topical_*
+
+
 # ─── Queue Depths & Backpressure ─────────────────────────────────────────────
 
 # Max pending 100ms PCM audio chunks (500 chunks = 50 seconds of audio buffer)
