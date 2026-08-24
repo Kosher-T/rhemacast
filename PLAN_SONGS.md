@@ -21,41 +21,54 @@ Markdown-like, strict rules for clean parsing into a basic render. Deferred text
 
 plain lines = slide content (displayed)
 
-blank line (\n\n double spacing) = slide boundary
+double blank line (\n\n\n = two consecutive empty lines) = slide boundary
+  single \n = line break within same slide; single blank (\n\n) is ignored (readable spacing only)
 ```
 
-### Example (complete deck)
+### Example (complete deck) — double blank = boundary
 ```
 #This is my story
+
 
 *Section 1 (Verse)
 This is my story, this is my song
 
+
 Praising the Lord all the day long
+
 
 Won't have no trouble, no need to fear
 
+
 I have my God always with me
+
 
 *Section 2 (Chorus)
 he's never failed me yet
 
+
 he's never failed
+
 
 he's never failed me yet
 
+
 he's never failed
+
 
 he's never failed me yet
 ```
 
 ### Parser rules
 - Trim leading/trailing whitespace; ignore empty file header before first content.
-- Title: first line matching `^[#%]\s*(.+)\s*$` → `title`. Subsequent `#`/`%` lines treated as plain text if title already set (or ignored — TBD, default: ignore).
-- Section: line matching `^\*\s*(.+)\s*$` → sets `current_section` for subsequent slides until next section marker. Not a slide by itself.
-- Slide: one or more non-empty, non-marker lines grouped until `\n\n` (one or more blank lines) or EOF. Single newlines within a slide = line breaks in that slide. Double newline = new slide.
+- Title: first line matching `^[#%]\s*(.+)\s*$` → `title`. Subsequent `#`/`%` lines ignored (not displayed).
+- Section: line matching `^\*\s*(.+)\s*$` → sets `current_section` for subsequent slides until next section marker. Not a slide by itself; flushes pending slide before switching.
+- Slide: one or more non-empty, non-marker lines grouped until double blank line (`\n\n\n` = two consecutive empty lines) or EOF.
+  Single `\n` = line break within same slide (`Line A\nLine B` → `Line A\nLine B`).
+  Single blank (`\n\n`, one empty line) = ignored — just readable spacing, not a boundary.
+  Triple+ blanks collapse to single boundary (no empty slides).
 - Section can span multiple slides — section marker does NOT imply slide boundary.
-- If user wants literal blank line *inside* a slide: not supported yet (open question — revisit for rolling output). For now, blank = boundary.
+- If user wants literal blank line *inside* a slide: not supported yet (open question — revisit for rolling output). For now, double blank = boundary.
 - Rolling output: parse same slides, then join with separator (e.g. ` • ` or `\n\n`) into one scrollable block; speed from user config. Tailoring to owner's use first, generalize later.
 
 ### `slides_json` (parsed output)
@@ -90,12 +103,13 @@ CREATE TABLE slide_decks (
 );
 
 -- FTS over deck title + concatenated slide texts (+ tags when present)
+-- content='' because slide_text is derived from slides_json (not a real column)
 CREATE VIRTUAL TABLE slides_fts USING fts5(
     title, slide_text, tags,
-    content='slide_decks', content_rowid='id',
+    content='', content_rowid='id',
     tokenize='porter unicode61'
 );
--- Triggers to keep FTS in sync on INSERT/UPDATE/DELETE (or rebuild on import)
+-- FTS maintained explicitly by slide_service._fts_sync_deck (no triggers)
 ```
 
 Alternative considered: normalized `slides` child table (deck_id, seq, section, text) — rejected for now in favor of JSON for simplicity; can normalize later if per-slide FTS/query needed.
@@ -111,10 +125,10 @@ Alternative considered: normalized `slides` child table (deck_id, seq, section, 
 - [x] Migration in `core/database.py` — `slide_decks` + `slides_fts` (content='', porter unicode61), bump `CURRENT_SCHEMA_VERSION` to 2, fix legacy FTS, init_db fresh path
 - [x] Storage dir: `data/slides/` created + `_sample.txt` example (9 slides parsed correctly)
 
-### Phase 2: Basic UI (txt-driven, no Lite Designer yet)
-- [ ] `ui/tabs/slides_tab.py` — deck list (title, slide count, updated_at), import txt button, delete, basic search bar
-- [ ] Add "SLIDES" tab to `main_window.py` (lazy-loaded like others)
-- [ ] Slide preview: click deck → show ordered slide cards (section label muted, text rendered with hardcoded theme)
+### Phase 2: Basic UI (txt-driven, no Lite Designer yet) — DONE
+- [x] `ui/tabs/slides_tab.py` — deck list cards (title, slide count, updated_at), Import .txt (multi-file), Delete (confirm), live search bar (FTS)
+- [x] Slide preview: click deck → 16:9 slide cards in 2-col grid (index, muted uppercase section label, text rendered with hardcoded "default" theme scaled down)
+- [x] Added "SLIDES" tab to `main_window.py` (lazy-loaded PlaceholderTab, sub-toolbar hidden); fixed `_open_full_designer` hardcoded indices; made test_phase9 tab index dynamic
 
 ### Phase 3: Display & Schedule Integration
 - [ ] Slide-by-slide display via existing WebSocket/OBS payload (one slide = one payload, theme applied)
@@ -146,5 +160,5 @@ Alternative considered: normalized `slides` child table (deck_id, seq, section, 
 
 ## Open Questions
 - Author/year/CCLI in txt header? For now nullable; propose optional header lines like `Author: ...` / `CCLI: ...` above first section if needed before Lite Designer.
-- Literal double-space inside a slide vs slide boundary — unsolved; leaning blank=boundary for now.
-- `#`/`%` after title set: ignore vs treat as text — default ignore, revisit if users title mid-deck.
+- Literal blank inside a slide vs slide boundary — resolved: double blank (`\n\n\n`) = boundary, single blank ignored.
+- `#`/`%` after title set: ignore (current), revisit if users title mid-deck.

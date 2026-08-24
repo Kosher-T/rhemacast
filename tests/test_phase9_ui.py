@@ -35,7 +35,8 @@ def test_lazy_tab_loading(qapp):
     assert settings_tab._loaded is False
     
     # Show the tab
-    main_window._switch_tab(3, "SETTINGS")
+    settings_idx = list(main_window._tabs.keys()).index("SETTINGS")
+    main_window._switch_tab(settings_idx, "SETTINGS")
     settings_tab.showEvent(None) # Force trigger for headless test
     
     # Assert it loaded

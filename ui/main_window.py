@@ -20,6 +20,7 @@ from ui.styles import (
 )
 from ui.tabs.presentation_tab import PresentationTab
 from ui.tabs.library_tab import LibraryTab
+from ui.tabs.slides_tab import SlidesTab
 from ui.tabs.settings_tab import SettingsTab
 from ui.tabs.history_tab import HistoryTab
 from ui.widgets.status_bar import StatusBar
@@ -422,6 +423,7 @@ class MainWindow(QMainWindow):
         tabs_config = [
             ("PRESENTATION", lambda: PresentationTab()),
             ("LIBRARY", lambda: LibraryTab()),
+            ("SLIDES", lambda: SlidesTab()),
             ("HISTORY", lambda: HistoryTab()),
             ("SETTINGS", lambda: SettingsTab()),
             ("THEME DESIGNER", self._init_theme_designer)
@@ -467,7 +469,7 @@ class MainWindow(QMainWindow):
             btn.setChecked(btn_name == name)
             
         # Hide sub-toolbar for tabs that don't need it
-        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS", "HISTORY"))
+        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SLIDES", "SETTINGS", "HISTORY"))
             
         # Switch stack
         self.stack.setCurrentIndex(index)
@@ -500,10 +502,7 @@ class MainWindow(QMainWindow):
 
     def _open_full_designer(self, theme_name: str):
         # Switch to the Theme Designer tab
-        for idx, (name, _) in enumerate([
-            ("PRESENTATION", None), ("LIBRARY", None), ("HISTORY", None),
-            ("SETTINGS", None), ("THEME DESIGNER", None)
-        ]):
+        for idx, name in enumerate(self._tabs.keys()):
             if name == "THEME DESIGNER":
                 self._switch_tab(idx, name)
                 break

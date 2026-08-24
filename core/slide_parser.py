@@ -7,7 +7,9 @@ Format:
   # or % at line start = title (first occurrence wins, not displayed)
   * at line start = section marker (not displayed, spans slides until next *)
   plain lines = slide content (displayed)
-  blank line (\\n\\n) = slide boundary — single newline = line break within slide
+  double blank line (\\n\\n\\n = two consecutive empty lines) = slide boundary
+    single newline = line break within same slide; single blank line is ignored
+    (not a boundary) to allow readable spacing without splitting slides
 
 Output: {"title": str, "slides": [{"section": str|None, "text": str}]}
 Each entry in slides = one displayable slide. Section may be None if none set.
@@ -26,9 +28,10 @@ def parse_slide_txt(raw: str) -> dict:
     Rules:
     - Title: first line matching ^[#%]\\s*(.+?)\\s*$ → title. Subsequent #/% lines ignored.
     - Section: line matching ^\\*\\s*(.+?)\\s*$ → sets current_section for following slides.
-    - Slide: one or more non-empty, non-marker lines grouped until blank line or EOF.
-      Single newlines within a contiguous block are joined with \\n preserved,
-      but final slide text is stripped and normalized where empty lines are boundaries.
+    - Slide: one or more non-empty, non-marker lines grouped until double blank line or EOF.
+      Single newline = line break within same slide (\"Line A\\nLine B\").
+      Single blank line (\\n\\n) is ignored — not a boundary, just readable spacing.
+      Double blank line (\\n\\n\\n, i.e. two consecutive empty lines) = slide boundary.
     - Empty/whitespace-only raw → title "" and no slides.
     """
     if raw is None:
@@ -64,13 +67,22 @@ def parse_slide_txt(raw: str) -> dict:
 
     lines = raw.split("\n")
 
+    consecutive_blank = 0
+
     for line in lines:
         stripped = line.strip()
 
-        # Blank line = slide boundary
+        # Blank line handling: double blank (two consecutive empty lines) = slide boundary
+        # Single blank is ignored (allows readable spacing without splitting)
         if stripped == "":
-            flush_slide()
+            consecutive_blank += 1
+            if consecutive_blank == 2:
+                flush_slide()
+            # For 1 or >2 consecutive blanks, do not flush again — already bounded
             continue
+
+        # Non-blank resets blank streak
+        consecutive_blank = 0
 
         # Title marker — only first occurrence wins
         if _TITLE_RE.match(line):
