@@ -125,11 +125,24 @@ class BookInput(QLineEdit):
             self.setSelection(len(self._typed), len(match) - len(self._typed))
 
     def _find_match(self, prefix: str) -> str | None:
-        """Find the first book matching the typed prefix (case-insensitive)."""
-        lower = prefix.lower()
+        """Find the first book matching the typed prefix (case-insensitive).
+        
+        Supports typed shortcuts like "1c" for "1 Chronicles" by also
+        trying the prefix with a space after leading digits.
+        """
+        lower = prefix.strip().lower()
+        if not lower:
+            return None
+        # Direct match
         for book in BIBLE_BOOKS:
             if book.lower().startswith(lower):
                 return book
+        # Try with space after leading digits (e.g., "1c" -> "1 c")
+        if lower[0].isdigit():
+            spaced = lower[0] + " " + lower[1:]
+            for book in BIBLE_BOOKS:
+                if book.lower().startswith(spaced):
+                    return book
         return None
 
     def _update_prediction(self):
@@ -174,8 +187,8 @@ class NumericInput(QLineEdit):
 
     def _autosize(self):
         text = self.text() or self.placeholderText()
-        w = self.fontMetrics().horizontalAdvance(text) + 2
-        self.setFixedWidth(w)
+        w = self.fontMetrics().horizontalAdvance(text) + 16
+        self.setFixedWidth(max(w, 48))
 
     def _sync_selection(self):
         if self.text() and self._sel_start < len(self.text()):
@@ -305,6 +318,7 @@ class PredictiveScriptureInput(QWidget):
         # Chapter — max validated against book
         self.chapter_input = NumericInput("Ch", max_value=self._chapter_max)
         self.chapter_input.setStyleSheet(field_style)
+        self.chapter_input.setMinimumWidth(48)
         self.chapter_input.advance.connect(self._advance_to_verse)
         self.chapter_input.push.connect(self._on_push)
         self.chapter_input.retreat.connect(self.book_input._on_focus_arrived)
@@ -322,6 +336,7 @@ class PredictiveScriptureInput(QWidget):
         # Verse — max validated against book:chapter
         self.verse_input = NumericInput("Vs", auto_size=False, max_value=self._verse_max)
         self.verse_input.setStyleSheet(field_style)
+        self.verse_input.setMinimumWidth(48)
         self.verse_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.verse_input.advance.connect(self._on_navigate)
         self.verse_input.push.connect(self._on_push)

@@ -697,12 +697,29 @@ class MainWindow(QMainWindow):
         for shortcut in getattr(self, '_shortcuts', []):
             shortcut.setEnabled(True)
 
+    def _defocus_navigator(self):
+        """Defocus the predictive scripture input fields if they have focus."""
+        from PyQt6.QtWidgets import QApplication
+        focused = QApplication.focusWidget()
+        if focused is None:
+            return
+        # Check if focused widget is part of the predictive input
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            browser = pres_tab.browser_panel
+            if hasattr(browser, "predictive_input"):
+                pi = browser.predictive_input
+                if focused in (pi.book_input, pi.chapter_input, pi.verse_input):
+                    self.setFocus()
+
     def _hotkey_next_verse(self):
+        self._defocus_navigator()
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.next_verse.emit()
 
     def _hotkey_prev_verse(self):
+        self._defocus_navigator()
         pres_tab = self._tabs.get("PRESENTATION")
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.prev_verse.emit()
@@ -725,6 +742,22 @@ class MainWindow(QMainWindow):
         target = QApplication.widgetAt(global_point)
         if not target:
             return
+
+        # Defocus navigator if cursor is outside it
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            browser = pres_tab.browser_panel
+            if hasattr(browser, "predictive_input"):
+                pi = browser.predictive_input
+                is_over_navigator = False
+                w = target
+                while w is not None:
+                    if w in (pi.book_input, pi.chapter_input, pi.verse_input):
+                        is_over_navigator = True
+                        break
+                    w = w.parentWidget() if hasattr(w, 'parentWidget') else None
+                if not is_over_navigator and QApplication.focusWidget() in (pi.book_input, pi.chapter_input, pi.verse_input):
+                    self.setFocus()
 
         local_pos = QPointF(target.mapFromGlobal(global_point))
         global_pos = QPointF(global_point)
@@ -769,7 +802,12 @@ class MainWindow(QMainWindow):
                 pres_tab.schedule_panel.add_item(item_data)
 
     def _hotkey_double_click(self):
-        """Simulate a mouse double-click at the current cursor position."""
+        """Simulate a mouse double-click at the current cursor position.
+        
+        Defocuses the navigator inputs if the cursor is outside them,
+        so the double-click goes to the intended target and next/prev
+        hotkeys work afterward.
+        """
         from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import Qt as QtCore, QPointF
@@ -778,6 +816,22 @@ class MainWindow(QMainWindow):
         target = QApplication.widgetAt(global_point)
         if not target:
             return
+
+        # Defocus navigator if cursor is outside it
+        pres_tab = self._tabs.get("PRESENTATION")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            browser = pres_tab.browser_panel
+            if hasattr(browser, "predictive_input"):
+                pi = browser.predictive_input
+                is_over_navigator = False
+                w = target
+                while w is not None:
+                    if w in (pi.book_input, pi.chapter_input, pi.verse_input):
+                        is_over_navigator = True
+                        break
+                    w = w.parentWidget() if hasattr(w, 'parentWidget') else None
+                if not is_over_navigator and QApplication.focusWidget() in (pi.book_input, pi.chapter_input, pi.verse_input):
+                    self.setFocus()
 
         local_pos = QPointF(target.mapFromGlobal(global_point))
         global_pos = QPointF(global_point)
