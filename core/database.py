@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'app.db')
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 def get_connection():
     """Returns a new SQLite connection with WAL mode enabled."""
@@ -76,14 +76,117 @@ def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS slide_decks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT    NOT NULL,
+                author      TEXT,
+                year        INTEGER,
+                ccli        TEXT,
+                tags        TEXT,
+                source_path TEXT,
+                raw_text    TEXT    NOT NULL,
+                slides_json TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL,
+                updated_at  TEXT    NOT NULL
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS slides_fts USING fts5(
+                title, slide_text, tags,
+                content='', content_rowid='id',
+                tokenize='porter unicode61'
+            );
         """)
         conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
     elif user_version < CURRENT_SCHEMA_VERSION:
-        # Future migrations go here (never drop columns - only add)
+        _run_migrations(conn, user_version, CURRENT_SCHEMA_VERSION)
         conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
-        
+
+    # Defensive fix: FTS must be content='' (slide_text is derived, not a column in slide_decks).
+    # Older builds used content='slide_decks' which breaks rebuild and triggers.
+    _ensure_slide_fts(conn)
+
     conn.commit()
     conn.close()
+
+
+def _ensure_slide_fts(conn: sqlite3.Connection):
+    """Recreate slides_fts with content='' if it was created with content='slide_decks'."""
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='slides_fts'").fetchone()
+        if not row or not row[0]:
+            return
+        sql = row[0]
+        if "content='slide_decks'" in sql or 'content="slide_decks"' in sql or "content=slide_decks" in sql:
+            # Preserve decks
+            decks = conn.execute("SELECT id, title, tags, slides_json FROM slide_decks").fetchall()
+            conn.executescript("""
+                DROP TABLE IF EXISTS slides_fts;
+                DROP TABLE IF EXISTS slides_fts_data;
+                DROP TABLE IF EXISTS slides_fts_idx;
+                DROP TABLE IF EXISTS slides_fts_docsize;
+                DROP TABLE IF EXISTS slides_fts_config;
+                CREATE VIRTUAL TABLE slides_fts USING fts5(
+                    title, slide_text, tags,
+                    content='', content_rowid='id',
+                    tokenize='porter unicode61'
+                );
+            """)
+            # Re-index existing decks
+            import json as _json
+            for d in decks:
+                try:
+                    slides = _json.loads(d["slides_json"]) if d["slides_json"] else []
+                except Exception:
+                    slides = []
+                slide_text = " \n ".join(s.get("text", "") for s in slides)
+                conn.execute(
+                    "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
+                    (d["id"], d["title"], slide_text, d["tags"] or ""),
+                )
+            # Also drop legacy triggers if any
+            conn.executescript("""
+                DROP TRIGGER IF EXISTS slide_decks_ai;
+                DROP TRIGGER IF EXISTS slide_decks_ad;
+                DROP TRIGGER IF EXISTS slide_decks_au;
+            """)
+    except Exception:
+        pass
+
+
+def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int):
+    """Apply incremental schema migrations."""
+    if from_version < 2 <= to_version:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS slide_decks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT    NOT NULL,
+                author      TEXT,
+                year        INTEGER,
+                ccli        TEXT,
+                tags        TEXT,
+                source_path TEXT,
+                raw_text    TEXT    NOT NULL,
+                slides_json TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL,
+                updated_at  TEXT    NOT NULL
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS slides_fts USING fts5(
+                title, slide_text, tags,
+                content='', content_rowid='id',
+                tokenize='porter unicode61'
+            );
+        """)
+        # FTS is maintained explicitly by slide_service._fts_sync_deck (slide_text derived
+        # from slides_json, not trigger-friendly). No triggers — service owns sync.
+        # Defensive: drop legacy triggers if this migration was previously run with them.
+        conn.executescript("""
+            DROP TRIGGER IF EXISTS slide_decks_ai;
+            DROP TRIGGER IF EXISTS slide_decks_ad;
+            DROP TRIGGER IF EXISTS slide_decks_au;
+        """)
+        # Ensure any FTS created with old content='' mismatch is fixed (also handled by _ensure_slide_fts)
+        _ensure_slide_fts(conn)
+
 
 def create_session() -> str:
     """Creates a new session and returns the session_id."""

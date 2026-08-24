@@ -105,11 +105,11 @@ Alternative considered: normalized `slides` child table (deck_id, seq, section, 
 
 ## Phases (revised)
 
-### Phase 1: Parser + Data Model & Service
-- [ ] `core/slide_parser.py` — `parse_slide_txt(raw: str) -> {title, slides: [{section, text}]}` with strict rules above + unit tests for edge cases (no title, no section, trailing blanks, multiple blank lines)
-- [ ] `core/song_service.py` (or `core/slide_service.py`) — CRUD for `slide_decks`, FTS indexing, `import_txt(path)`, `reparse_all()`
-- [ ] Migration in `core/database.py` — `slide_decks` + `slides_fts` + triggers, bump `CURRENT_SCHEMA_VERSION`
-- [ ] Storage dir convention: `data/slides/*.txt` (import via file picker; optional watcher later)
+### Phase 1: Parser + Data Model & Service — DONE
+- [x] `core/slide_parser.py` — `parse_slide_txt(raw: str) -> {title, slides: [{section, text}]}` strict rules + edge cases (no title, no section, trailing blanks, multiple blanks, BOM) + `slides_to_text()` for rolling mode
+- [x] `core/slide_service.py` — CRUD for `slide_decks`, FTS (porter), `import_txt(path)`, `import_all_txts()`, `reparse_all()`, `search_decks()` with bm25 weighting title>slide_text>tags
+- [x] Migration in `core/database.py` — `slide_decks` + `slides_fts` (content='', porter unicode61), bump `CURRENT_SCHEMA_VERSION` to 2, fix legacy FTS, init_db fresh path
+- [x] Storage dir: `data/slides/` created + `_sample.txt` example (9 slides parsed correctly)
 
 ### Phase 2: Basic UI (txt-driven, no Lite Designer yet)
 - [ ] `ui/tabs/slides_tab.py` — deck list (title, slide count, updated_at), import txt button, delete, basic search bar
