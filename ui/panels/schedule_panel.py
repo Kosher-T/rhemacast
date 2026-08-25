@@ -91,9 +91,16 @@ class ScheduleItem(QFrame):
 
         ref = data.get("ref", "")
         translation = data.get("translation", "")
-        from core.bible_service import get_display_name
-        display_name = get_display_name(translation) if translation else ""
-        display = f"[{display_name}] {ref}" if display_name else ref
+
+        is_slide = data.get("item_type") == "slide"
+        if is_slide:
+            title = data.get("name") or ref or "(untitled)"
+            count = len(data.get("slides", []))
+            display = f"\u266a {title}   \u00b7   {count} slides"
+        else:
+            from core.bible_service import get_display_name
+            display_name = get_display_name(translation) if translation else ""
+            display = f"[{display_name}] {ref}" if display_name else ref
 
         # Use property-based styling for selected state
         self.setProperty("selected", False)
@@ -383,6 +390,12 @@ class SchedulePanel(QWidget):
 
     def add_item(self, data: dict):
         """Add a verse to the schedule."""
+        # Unique id for reliable identification across Qt's UserRole copy
+        # round-trips (PyQt6 stores dicts by value, not reference).
+        import uuid
+        if "_sched_uid" not in data:
+            data["_sched_uid"] = uuid.uuid4().hex
+
         item_widget = ScheduleItem(data)
         item_widget.clicked.connect(lambda: self.item_clicked.emit(item_widget.data))
         item_widget.double_clicked.connect(lambda: self.item_double_clicked.emit(item_widget.data))
@@ -488,8 +501,12 @@ class SchedulePanel(QWidget):
             if not item_widget:
                 continue
             data = list_item.data(Qt.ItemDataRole.UserRole)
-            book = data.get("book", "")
-            chapter = data.get("chapter", "")
+            # Slides: color per deck (book slot = deck identity), shade per section
+            book = data.get("book") or (
+                f"\u266a{data.get('deck_id', data.get('ref', ''))}"
+                if data.get("item_type") == "slide" else ""
+            )
+            chapter = data.get("chapter", "") or data.get("section", "")
 
             if book != prev_book:
                 # Different book → next color in sequence

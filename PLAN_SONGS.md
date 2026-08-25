@@ -130,10 +130,13 @@ Alternative considered: normalized `slides` child table (deck_id, seq, section, 
 - [x] Slide preview: click deck → 16:9 slide cards in 2-col grid (index, muted uppercase section label, text rendered with hardcoded "default" theme scaled down)
 - [x] Added "SLIDES" tab to `main_window.py` (lazy-loaded PlaceholderTab, sub-toolbar hidden); fixed `_open_full_designer` hardcoded indices; made test_phase9 tab index dynamic
 
-### Phase 3: Display & Schedule Integration
-- [ ] Slide-by-slide display via existing WebSocket/OBS payload (one slide = one payload, theme applied)
-- [ ] Schedule integration: `item_type` on schedule items (`"verse"` | `"slide"`), multi-slide sequencing (shared `deck_id` + `slide_index`), Prev/Next steps through slides
-- [ ] Rolling/scrolling mode: joined slide text + separator, speed from `config.json` (defer until slide-by-slide solid)
+### Phase 3: Display & Schedule Integration — DONE (rolling mode deferred)
+- [x] Slide-by-slide display via existing WebSocket/OBS payload (`_apply_slide_display` in `presentation_tab.py`; ref = "Title · Section"; theme applied per-output)
+- [x] Schedule integration: `item_type: "slide"` items render as "♪ Title · N slides" in `ScheduleItem`; `_sched_uid` stamped on add (Qt UserRole copies dicts — identity unusable); slides embedded in item data so schedules are self-contained JSON
+- [x] Prev/Next sequencing: schedule-origin tracking; steps through deck slides, crosses into adjacent verse/deck items (skips empty decks); re-enters decks at first/last slide; falls back to Bible-verse neighbors when display didn't originate from schedule
+- [x] SlidesTab actions: "+ Schedule" adds whole deck to schedule; slide-card click selects + auto-previews; "Go Live" pushes selected slide live (switches to SCRIPTURE tab)
+- [x] Clear/Recall and per-output theme double-click are slide-aware (`_payload_for_display`)
+- [ ] Rolling/scrolling mode: joined slide text + separator, speed from `config.json` (deferred until slide-by-slide proven)
 
 ### Phase 4: EasyWorship Import (after txt flow works)
 - [ ] DB schema analysis (user provides DB file)

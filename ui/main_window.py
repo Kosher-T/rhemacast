@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
     def _setup_tabs(self):
         # Add tabs (name -> widget_init_function)
         tabs_config = [
-            ("PRESENTATION", lambda: PresentationTab()),
+            ("SCRIPTURE", lambda: PresentationTab()),
             ("LIBRARY", lambda: LibraryTab()),
             ("SLIDES", lambda: SlidesTab()),
             ("HISTORY", lambda: HistoryTab()),
@@ -442,6 +442,8 @@ class MainWindow(QMainWindow):
                 # Connect hotkey editor when Settings tab finishes loading
                 if name == "SETTINGS":
                     content.loaded.connect(self._on_settings_tab_loaded)
+                if name == "SLIDES":
+                    content.loaded.connect(self._on_slides_tab_loaded)
                 
             self.stack.addWidget(content)
             self._tabs[name] = content
@@ -480,10 +482,95 @@ class MainWindow(QMainWindow):
             widget._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
         if hasattr(widget, 'font_size_changed'):
             widget.font_size_changed.connect(self._on_font_size_changed)
+
+    # ── Slides tab → SCRIPTURE tab bridge ───────────────────────────────────
+
+    def _on_slides_tab_loaded(self, widget):
+        """Connect slides tab signals once the SLIDES tab finishes lazy-loading."""
+        widget.deck_to_schedule.connect(self._slides_add_to_schedule)
+        widget.slide_live_requested.connect(self._slides_go_live)
+        widget.slide_preview_requested.connect(self._slides_go_preview)
+
+    def _get_scripture_tab(self):
+        pres = self._tabs.get("SCRIPTURE")
+        if pres and hasattr(pres, "schedule_panel"):
+            return pres
+        return None
+
+    def _slides_add_to_schedule(self, deck: dict):
+        """Add a slide deck to the service schedule as a single multi-slide item."""
+        pres = self._get_scripture_tab()
+        if not pres:
+            return
+        item_data = {
+            "item_type": "slide",
+            "ref": deck.get("title") or "(untitled)",
+            "name": deck.get("title") or "(untitled)",
+            "deck_id": deck.get("id"),
+            "slides": deck.get("slides", []),
+            "theme": pres._current_theme,
+        }
+        pres.schedule_panel.add_item(item_data)
+        logger.info(f"Deck added to schedule: {item_data['ref']} ({len(item_data['slides'])} slides)")
+
+    def _fetch_deck(self, deck_id: int) -> dict | None:
+        from core.slide_service import get_deck
+        deck = get_deck(deck_id)
+        if not deck:
+            return None
+        return {
+            "id": deck["id"],
+            "title": deck["title"],
+            "slides": deck["slides"],
+        }
+
+    def _slides_go_live(self, deck_id: int, index: int):
+        pres = self._get_scripture_tab()
+        deck = self._fetch_deck(deck_id)
+        if pres and deck:
+            pres._apply_slide_display(None, deck["title"], deck["slides"], index)
+            self._switch_to_scripture_if_needed()
+
+    def _slides_go_preview(self, deck_id: int, index: int):
+        pres = self._get_scripture_tab()
+        deck = self._fetch_deck(deck_id)
+        if not (pres and deck):
+            return
+        slides = deck["slides"]
+        if not slides:
+            return
+        index = max(0, min(index, len(slides) - 1))
+        slide = slides[index]
+        section = slide.get("section")
+        title = deck["title"] or "(untitled)"
+        ref = f"{title} \u00b7 {section}" if section else title
+        pres._current_preview = {
+            "item_type": "slide",
+            "text": slide.get("text", ""),
+            "ref": ref,
+            "book": "", "chapter": "", "verse_num": "", "version": "",
+            "deck_title": title,
+            "section": section,
+            "slides": slides,
+            "slide_index": index,
+        }
+        payload = pres._build_payload(slide.get("text", ""), ref, "")
+        pres.live_preview.set_preview_payload(payload)
+
+    def _switch_to_scripture_if_needed(self):
+        """Bring the SCRIPTURE tab to front when live output is pushed from another tab."""
+        try:
+            idx = list(self._tabs.keys()).index("SCRIPTURE")
+            name = "SCRIPTURE"
+            current = self.stack.currentIndex()
+            if current != idx:
+                self._switch_tab(idx, name)
+        except ValueError:
+            pass
     
     def _on_font_size_changed(self, text_size: int, ref_size: int):
         """Propagate font size changes to the browser panel for live preview."""
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             pres_tab.browser_panel.update_verse_font_sizes(text_size, ref_size)
         
@@ -512,7 +599,7 @@ class MainWindow(QMainWindow):
 
     def _on_theme_saved(self, theme_name: str):
         # Reload themes in the presentation tab's queue panel
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, 'queue_panel'):
             pres_tab.queue_panel._themes_panel.reload()
 
@@ -549,7 +636,7 @@ class MainWindow(QMainWindow):
 
     def _defocus_search_if_outside(self, widget):
         """Clear focus from search panels if the clicked widget is outside them."""
-        pres = self._tabs.get("PRESENTATION")
+        pres = self._tabs.get("SCRIPTURE")
         if not pres:
             return
         qpanel = pres.queue_panel
@@ -703,7 +790,7 @@ class MainWindow(QMainWindow):
         if focused is None:
             return
         # Check if focused widget is part of the predictive input
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             browser = pres_tab.browser_panel
             if hasattr(browser, "predictive_input"):
@@ -713,18 +800,18 @@ class MainWindow(QMainWindow):
 
     def _hotkey_next_verse(self):
         self._defocus_navigator()
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.next_verse.emit()
 
     def _hotkey_prev_verse(self):
         self._defocus_navigator()
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.prev_verse.emit()
 
     def _hotkey_toggle_transcription(self):
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "stt_panel"):
             if pres_tab.stt_panel.is_recording:
                 pres_tab.stt_panel.transcription_stopped.emit()
@@ -743,7 +830,7 @@ class MainWindow(QMainWindow):
             return
 
         # Defocus navigator if cursor is outside it
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             browser = pres_tab.browser_panel
             if hasattr(browser, "predictive_input"):
@@ -779,7 +866,7 @@ class MainWindow(QMainWindow):
         QApplication.sendEvent(target, release)
 
         # Now add selected verses to schedule
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel") and hasattr(pres_tab, "schedule_panel"):
             browser = pres_tab.browser_panel
             selected = browser.get_all_selected_verses()
@@ -817,7 +904,7 @@ class MainWindow(QMainWindow):
             return
 
         # Defocus navigator if cursor is outside it
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             browser = pres_tab.browser_panel
             if hasattr(browser, "predictive_input"):
@@ -855,29 +942,29 @@ class MainWindow(QMainWindow):
     def _hotkey_clear(self):
         # Trigger clear/recall
         # The presentation tab handles this logic, we could signal it
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "live_preview"):
             pres_tab.live_preview.clear_recall.emit()
 
     def _hotkey_fuzzy_search(self):
         # Switch to Presentation tab, then to Fuzzy Search sub-tab
         pres_idx = 0  # PRESENTATION is the first tab
-        self._switch_tab(pres_idx, "PRESENTATION")
-        pres_tab = self._tabs.get("PRESENTATION")
+        self._switch_tab(pres_idx, "SCRIPTURE")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "queue_panel"):
             pres_tab.queue_panel.switch_to_fuzzy_search()
 
     def _hotkey_fts_search(self):
         # Switch to Presentation tab, then to FTS Search sub-tab
         pres_idx = 0  # PRESENTATION is the first tab
-        self._switch_tab(pres_idx, "PRESENTATION")
-        pres_tab = self._tabs.get("PRESENTATION")
+        self._switch_tab(pres_idx, "SCRIPTURE")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "queue_panel"):
             pres_tab.queue_panel.switch_to_fts_search()
 
     def _hotkey_switch_translation(self, version: str):
         """Switch browser to the specified translation."""
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             browser = pres_tab.browser_panel
             browser._on_translation_single_click(version)
@@ -903,7 +990,7 @@ class MainWindow(QMainWindow):
         from pathlib import Path
 
         # Get schedule panel from PresentationTab
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if not pres_tab or not hasattr(pres_tab, "schedule_panel"):
             return
 
@@ -947,7 +1034,7 @@ class MainWindow(QMainWindow):
 
     def _load_schedule(self, file_path: str):
         """Load a schedule file."""
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "schedule_panel"):
             pres_tab.schedule_panel.load_schedule(file_path)
 
@@ -955,7 +1042,7 @@ class MainWindow(QMainWindow):
         """Start a new empty schedule, prompting to save if current has items."""
         from PyQt6.QtWidgets import QMessageBox
 
-        pres_tab = self._tabs.get("PRESENTATION")
+        pres_tab = self._tabs.get("SCRIPTURE")
         if not pres_tab or not hasattr(pres_tab, "schedule_panel"):
             return
 

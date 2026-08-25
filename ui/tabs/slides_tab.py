@@ -107,8 +107,11 @@ class _DeckCard(QFrame):
 class _SlideCard(QFrame):
     """One previewed slide — section label + text, themed like the display."""
 
+    clicked = pyqtSignal()  # emits with no args; index bound by caller
+
     def __init__(self, index: int, section: str | None, text: str, theme: dict, parent=None):
         super().__init__(parent)
+        self._index = index
         self.setFixedSize(340, 191)  # 16:9
         self.setStyleSheet(f"""
             QFrame {{
@@ -177,9 +180,18 @@ class _SlideCard(QFrame):
 
         layout.addStretch()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
 
 class SlidesTab(QWidget):
     """SLIDES tab — deck management + preview."""
+
+    deck_to_schedule = pyqtSignal(dict)       # full deck dict
+    slide_live_requested = pyqtSignal(int, int)      # deck_id, slide_index
+    slide_preview_requested = pyqtSignal(int, int)   # deck_id, slide_index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -187,6 +199,7 @@ class SlidesTab(QWidget):
         self._decks: list[dict] = []
         self._cards: dict[int, _DeckCard] = {}
         self._current_deck: dict | None = None
+        self._selected_slide_idx: int | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -223,6 +236,18 @@ class SlidesTab(QWidget):
         self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import.clicked.connect(self._on_import)
         tb.addWidget(self.btn_import)
+
+        self.btn_schedule = QPushButton("+ Schedule")
+        self.btn_schedule.setEnabled(False)
+        self.btn_schedule.setToolTip("Add the selected deck to the service schedule")
+        self.btn_schedule.clicked.connect(self._on_add_to_schedule)
+        tb.addWidget(self.btn_schedule)
+
+        self.btn_live = QPushButton("Go Live")
+        self.btn_live.setEnabled(False)
+        self.btn_live.setToolTip("Push the selected slide to the live output")
+        self.btn_live.clicked.connect(self._on_go_live)
+        tb.addWidget(self.btn_live)
 
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setEnabled(False)
@@ -339,12 +364,18 @@ class SlidesTab(QWidget):
 
         if selected_id is None or not any(d["id"] == selected_id for d in self._decks):
             self._current_deck = None
+            self._selected_slide_idx = None
             self.btn_delete.setEnabled(False)
+            self.btn_schedule.setEnabled(False)
+            self.btn_live.setEnabled(False)
             self.preview_title.setText("Select a deck to preview")
             self._clear_preview()
 
     def _select_deck(self, deck: dict, scroll: bool = False):
         self._current_deck = deck
+        self._selected_slide_idx = None
+        self.btn_live.setEnabled(False)
+        self.btn_schedule.setEnabled(True)
         for did, card in self._cards.items():
             card.set_selected(did == deck["id"])
         self.btn_delete.setEnabled(True)
@@ -375,7 +406,38 @@ class SlidesTab(QWidget):
         cols = 2
         for i, slide in enumerate(deck.get("slides", [])):
             card = _SlideCard(i, slide.get("section"), slide.get("text", ""), theme)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.clicked.connect(lambda idx=i: self._on_slide_card_clicked(idx))
             self.preview_grid.addWidget(card, i // cols, i % cols)
+
+    def _on_slide_card_clicked(self, index: int):
+        """Select a slide card; single-click previews it, Go Live becomes armed."""
+        self._selected_slide_idx = index
+        # Highlight selected card
+        for i in range(self.preview_grid.count()):
+            w = self.preview_grid.itemAt(i).widget()
+            if w:
+                border = f"2px solid {BLUE_500}" if i == index else f"1px solid {BORDER_LIGHT}"
+                w.setStyleSheet(f"""
+                    QFrame {{
+                        background: #000000;
+                        border: {border};
+                        border-radius: 6px;
+                    }}
+                """)
+        self.btn_live.setEnabled(True)
+        if self._current_deck:
+            self.slide_preview_requested.emit(self._current_deck["id"], index)
+
+    def _on_add_to_schedule(self):
+        if self._current_deck:
+            self.deck_to_schedule.emit(dict(self._current_deck))
+
+    def _on_go_live(self):
+        if not self._current_deck:
+            return
+        idx = self._selected_slide_idx if self._selected_slide_idx is not None else 0
+        self.slide_live_requested.emit(self._current_deck["id"], idx)
 
     # ── Actions ─────────────────────────────────────────────────────────────
 

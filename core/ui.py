@@ -105,7 +105,7 @@ class RhemaCastApp(QApplication):
     def _init_workers(self):
         # Operator Queue Worker: reads from operator_queue → queue panel
         self.queue_worker = OperatorQueueWorker(self)
-        pres_tab = self.main_window._tabs.get("PRESENTATION")
+        pres_tab = self.main_window._tabs.get("SCRIPTURE")
         if pres_tab:
             self.queue_worker.new_item.connect(pres_tab.queue_panel.add_item)
         self.queue_worker.start()

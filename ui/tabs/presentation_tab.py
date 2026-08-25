@@ -50,6 +50,12 @@ class PresentationTab(QWidget):
         self._prev_verse_data = None      # Previous verse (for Prev button)
         self._next_verse_data = None      # Next verse (for Next button)
 
+        # Schedule-origin tracking: when current display came from the schedule,
+        # Prev/Next walks schedule items (stepping through deck slides) instead
+        # of Bible verse neighbors.
+        self._current_sched_data = None   # Identity of the schedule item dict
+        self._current_from_schedule = False
+
         # Per-output themes: {"1": "default", "2": "default", ...}
         from core.database import get_setting
         output_count = int(get_setting("display.output_count", 1))
@@ -215,6 +221,89 @@ class PresentationTab(QWidget):
             "theme_data": theme_data,
         }
 
+    def _payload_for_display(self, data: dict, output_id: str = "1") -> dict:
+        """Build a display payload from a stored display dict (verse or slide)."""
+        if data.get("item_type") == "slide":
+            return self._build_payload(
+                data.get("text", ""), data.get("ref", ""), "",
+                output_id=output_id,
+            )
+        book = data.get("book", "")
+        chapter = data.get("chapter", "")
+        verse_num = data.get("verse_num", "")
+        version = data.get("version", "")
+        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+        return self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num, output_id=output_id)
+
+    def _apply_slide_display(self, sched_data: dict | None, deck_title: str,
+                             slides: list, index: int):
+        """Display a single slide of a deck on live + broadcast.
+
+        Stores enough state (slides list + index + schedule identity) for
+        Prev/Next to step through slides and on into adjacent schedule items.
+        """
+        if not slides:
+            return
+        index = max(0, min(index, len(slides) - 1))
+        slide = slides[index]
+        section = slide.get("section")
+        text = slide.get("text", "")
+        title = deck_title or "(untitled)"
+        ref = f"{title} \u00b7 {section}" if section else title
+
+        self._current_sched_data = sched_data
+        self._current_from_schedule = sched_data is not None
+        self._current_display = {
+            "item_type": "slide",
+            "text": text,
+            "ref": ref,
+            "book": "", "chapter": "", "verse_num": "", "version": "",
+            "deck_title": title,
+            "section": section,
+            "slides": slides,
+            "slide_index": index,
+        }
+        self._is_cleared = False
+
+        payload = self._build_payload(text, ref, "")
+        self.live_preview.set_live_payload(payload)
+        self._broadcast_to_ws(payload)
+        logger.info(f"Slide display: {ref} ({index + 1}/{len(slides)})")
+
+    def _step_schedule(self, delta: int):
+        """Step forward/backward through schedule items from the current one.
+
+        Slide decks are entered at their first (delta>0) or last (delta<0)
+        slide; empty decks are skipped. Items are matched by their _sched_uid
+        because Qt's UserRole round-trips dicts by copy.
+        """
+        items = self.schedule_panel.get_schedule()
+        if not items or self._current_sched_data is None:
+            return
+        uid = self._current_sched_data.get("_sched_uid") if isinstance(self._current_sched_data, dict) else None
+        if not uid:
+            return
+        row = next((i for i, d in enumerate(items) if d.get("_sched_uid") == uid), None)
+        if row is None:
+            return
+
+        target = row + delta
+        while 0 <= target < len(items):
+            d = items[target]
+            if d.get("item_type") == "slide":
+                slides = d.get("slides", [])
+                if slides:
+                    idx = 0 if delta > 0 else len(slides) - 1
+                    self._apply_slide_display(d, d.get("name") or d.get("ref", ""), slides, idx)
+                    return
+                target += delta
+                continue
+            # Verse item
+            self._current_sched_data = d
+            self._current_from_schedule = True
+            self._display_schedule_item(d)
+            return
+
     def _on_display_verse(self, data: dict):
         """
         Called when operator clicks 'Show' on a queue item.
@@ -227,6 +316,8 @@ class PresentationTab(QWidget):
         version = data.get("version", "")
         ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
 
+        self._current_sched_data = None
+        self._current_from_schedule = False
         self._current_display = data
         self._is_cleared = False
 
@@ -466,6 +557,17 @@ class PresentationTab(QWidget):
             return
 
         data = self._current_preview
+
+        # ── Slide preview ──
+        if data.get("item_type") == "slide":
+            self._apply_slide_display(
+                self._current_sched_data, data.get("deck_title", ""),
+                data.get("slides", []), data.get("slide_index", 0),
+            )
+            logger.info(f"Preview pushed to live (slide): {data.get('ref', '')}")
+            return
+
+        # ── Verse preview (existing behavior) ──
         verse_text = data.get("text", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
@@ -499,7 +601,7 @@ class PresentationTab(QWidget):
             logger.info(f"Live click → navigate to {book} {chapter}:{verse}")
 
     def _on_clear_recall(self):
-        """Toggle between clear and recall of the last displayed verse."""
+        """Toggle between clear and recall of the last displayed verse/slide."""
         if not self._is_cleared and self._current_display:
             self._last_cleared_display = self._current_display
             self._current_display = None
@@ -511,7 +613,12 @@ class PresentationTab(QWidget):
             logger.info("Display cleared")
 
         elif self._is_cleared and self._last_cleared_display:
-            self._on_display_verse(self._last_cleared_display)
+            data = self._last_cleared_display
+            self._current_display = data
+            self._is_cleared = False
+            payload = self._payload_for_display(data)
+            self.live_preview.set_live_payload(payload)
+            self._broadcast_to_ws(payload)
             logger.info("Display recalled")
 
     def _on_theme_changed(self, output_id: str, theme_name: str):
@@ -540,15 +647,7 @@ class PresentationTab(QWidget):
             self._current_theme = theme_name
 
         if self._current_display:
-            data = self._current_display
-            verse_text = data.get("text", "")
-            book = data.get("book", "")
-            chapter = data.get("chapter", "")
-            verse_num = data.get("verse_num", "")
-            version = data.get("version", "")
-            ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
-
-            payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num, output_id=output_id)
+            payload = self._payload_for_display(self._current_display, output_id=output_id)
             if output_id == "1":
                 self.live_preview.set_live_payload(payload)
             self._broadcast_to_ws(payload)
@@ -557,8 +656,18 @@ class PresentationTab(QWidget):
             logger.info(f"Output {output_id} theme double-clicked: {theme_name} (no live verse)")
 
     def _on_prev_verse(self):
-        """Show the previous Bible verse from the stored neighbor."""
+        """Show the previous verse/slide (schedule-aware)."""
         logger.info("_on_prev_verse called")
+        cur = self._current_display
+        if cur and cur.get("item_type") == "slide":
+            idx = cur.get("slide_index", 0) - 1
+            if idx >= 0:
+                return self._apply_slide_display(
+                    self._current_sched_data, cur["deck_title"], cur["slides"], idx
+                )
+            return self._step_schedule(-1)
+        if self._current_from_schedule and self._current_sched_data is not None:
+            return self._step_schedule(-1)
         if not self._prev_verse_data:
             logger.info("prev_verse: no previous verse")
             return
@@ -567,8 +676,18 @@ class PresentationTab(QWidget):
         self._navigate_to_bible_verse(prev, version, skip_navigator=True)
 
     def _on_next_verse(self):
-        """Show the next Bible verse from the stored neighbor."""
+        """Show the next verse/slide (schedule-aware)."""
         logger.info("_on_next_verse called")
+        cur = self._current_display
+        if cur and cur.get("item_type") == "slide":
+            idx = cur.get("slide_index", 0) + 1
+            if idx < len(cur.get("slides", [])):
+                return self._apply_slide_display(
+                    self._current_sched_data, cur["deck_title"], cur["slides"], idx
+                )
+            return self._step_schedule(1)
+        if self._current_from_schedule and self._current_sched_data is not None:
+            return self._step_schedule(1)
         if not self._next_verse_data:
             logger.info("next_verse: no next verse")
             return
@@ -625,7 +744,12 @@ class PresentationTab(QWidget):
         logger.info(f"Prev/Next → {ref}")
 
     def _display_schedule_item(self, item: dict):
-        """Display a schedule item on the live output only."""
+        """Display a schedule item on the live output only (verse or slide deck)."""
+        if item.get("item_type") == "slide":
+            slides = item.get("slides", [])
+            self._apply_slide_display(item, item.get("name") or item.get("ref", ""), slides, 0)
+            return
+
         ref = item.get("ref", "")
         text = item.get("text", "")
         version = item.get("translation", "")
@@ -636,6 +760,13 @@ class PresentationTab(QWidget):
         verse = parts[1] if len(parts) == 2 else ""
         book = book_chapter.rsplit(" ", 1)[0] if " " in book_chapter else book_chapter
         chapter = book_chapter.rsplit(" ", 1)[1] if " " in book_chapter else ""
+
+        # Keep the operator's navigator in sync when stepping through the schedule
+        if book and chapter and verse and version:
+            self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
+
+        self._current_sched_data = item
+        self._current_from_schedule = True
 
         self._current_display = {
             "text": text,
@@ -656,13 +787,44 @@ class PresentationTab(QWidget):
 
     def _on_schedule_click(self, data: dict):
         """Single-click schedule item: navigate to verse in browser + update preview."""
+        theme = data.get("theme", "default")
+
+        # ── Slide deck item ──
+        if data.get("item_type") == "slide":
+            slides = data.get("slides", [])
+            if not slides:
+                return
+            slide = slides[0]
+            section = slide.get("section")
+            title = data.get("name") or data.get("ref") or "(untitled)"
+            ref = f"{title} \u00b7 {section}" if section else title
+
+            self._current_preview = {
+                "item_type": "slide",
+                "text": slide.get("text", ""),
+                "ref": ref,
+                "book": "", "chapter": "", "verse_num": "", "version": "",
+                "deck_title": title,
+                "section": section,
+                "slides": slides,
+                "slide_index": 0,
+            }
+
+            saved_theme = self._current_theme
+            self._current_theme = theme
+            payload = self._build_payload(slide.get("text", ""), ref, "")
+            self._current_theme = saved_theme
+            self.live_preview.set_preview_payload(payload)
+            logger.info(f"Schedule preview (slide): {ref}")
+            return
+
+        # ── Verse item (existing behavior) ──
         ref = data.get("ref", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
         verse = data.get("verse", "")
         text = data.get("text", "")
         version = data.get("translation", "")
-        theme = data.get("theme", "default")
 
         # Navigate browser to this verse
         self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
@@ -685,16 +847,32 @@ class PresentationTab(QWidget):
 
     def _on_schedule_double_click(self, data: dict):
         """Double-click schedule item: navigate to verse + push to live with its frozen theme."""
+        theme = data.get("theme", "default")
+
+        # ── Slide deck item ──
+        if data.get("item_type") == "slide":
+            slides = data.get("slides", [])
+            if not slides:
+                return
+            self._apply_slide_display(
+                data, data.get("name") or data.get("ref", ""), slides, 0
+            )
+            logger.info(f"Schedule live (slide deck): {data.get('ref', '')} (theme: {theme})")
+            return
+
+        # ── Verse item (existing behavior) ──
         ref = data.get("ref", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
         verse = data.get("verse", "")
         text = data.get("text", "")
         version = data.get("translation", "")
-        theme = data.get("theme", "default")
 
         # Navigate browser to this verse
         self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
+
+        self._current_sched_data = data
+        self._current_from_schedule = True
 
         self._current_display = {
             "text": text,

@@ -365,7 +365,7 @@ class _BibleVersionManager(QWidget):
                 # Add translation button to the browser panel (same as "+ Add")
                 main_win = self.window()
                 if hasattr(main_win, '_tabs'):
-                    pres_tab = main_win._tabs.get("PRESENTATION")
+                    pres_tab = main_win._tabs.get("SCRIPTURE")
                     if pres_tab and hasattr(pres_tab, 'browser_panel'):
                         bp = pres_tab.browser_panel
                         if hasattr(bp, '_add_translation_button'):

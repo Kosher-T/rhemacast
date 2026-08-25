@@ -27,7 +27,7 @@ def test_lazy_tab_loading(qapp):
     main_window = qapp.main_window
     
     # Presentation should be a PresentationTab
-    assert main_window._tabs["PRESENTATION"].__class__.__name__ == "PresentationTab"
+    assert main_window._tabs["SCRIPTURE"].__class__.__name__ == "PresentationTab"
     
     # Others should be PlaceholderTabs and not loaded
     settings_tab = main_window._tabs["SETTINGS"]
