@@ -7,6 +7,7 @@ rendered with the hardcoded "default" theme (Lite Designer comes later).
 """
 
 import logging
+import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -164,9 +165,16 @@ class _SlideCard(QFrame):
             """)
             layout.addWidget(sec_label)
 
-        body = QLabel(text)
+        body = QLabel()
         body.setAlignment(Qt.AlignmentFlag.AlignCenter)
         body.setWordWrap(True)
+        from core.slide_parser import has_inline_markup, inline_markup_to_html
+        if has_inline_markup(text):
+            # Rich text so inline [words: (#hex)] colors show in preview
+            body.setTextFormat(Qt.TextFormat.RichText)
+            body.setText(inline_markup_to_html(text))
+        else:
+            body.setText(text)
         body.setStyleSheet(f"""
             color: {text_color};
             font-family: {font_family};
@@ -236,6 +244,12 @@ class SlidesTab(QWidget):
         self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import.clicked.connect(self._on_import)
         tb.addWidget(self.btn_import)
+
+        self.btn_import_ew = QPushButton("Import EasyWorship")
+        self.btn_import_ew.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_import_ew.setToolTip("Import songs from an EasyWorship v6 Data folder (containing Songs.db)")
+        self.btn_import_ew.clicked.connect(self._on_import_easyworship)
+        tb.addWidget(self.btn_import_ew)
 
         self.btn_schedule = QPushButton("+ Schedule")
         self.btn_schedule.setEnabled(False)
@@ -471,6 +485,54 @@ class SlidesTab(QWidget):
         if failed:
             detail = "\n\n".join(f"{p}\n{err}" for p, err in failed)
             QMessageBox.warning(self, "Import Failed", f"Some files could not be imported:\n\n{detail}")
+
+    def _on_import_easyworship(self):
+        """Import songs from an EasyWorship v6 Data directory (Songs.db + SongWords.db)."""
+        from PyQt6.QtWidgets import QApplication
+        data_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select EasyWorship Data folder",
+            "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not data_dir:
+            return
+
+        if not os.path.isfile(os.path.join(data_dir, "Songs.db")):
+            QMessageBox.warning(
+                self,
+                "EasyWorship Import",
+                f"No Songs.db found in:\n{data_dir}\n\n"
+                "Select the folder that contains Songs.db and SongWords.db "
+                "(e.g. EasyWorship/Default/v6.1/Databases/Data).",
+            )
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            from core.easyworship_import import import_easyworship
+            result = import_easyworship(data_dir=data_dir)
+        except Exception as e:
+            logger.error(f"EasyWorship import failed: {e}")
+            QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.refresh(keep_selection=False)
+
+        failed = result.get("failed", [])
+        msg = (
+            f"New songs imported: {result['imported']}\n"
+            f"Existing updated:   {result['updated']}\n"
+            f"Skipped (no lyrics): {result['skipped']}"
+        )
+        if failed:
+            detail = "\n".join(f"{t}: {err}" for t, err in failed[:5])
+            more = f"\n… and {len(failed) - 5} more" if len(failed) > 5 else ""
+            QMessageBox.warning(self, "EasyWorship Import", f"{msg}\n\nFailed:\n{detail}{more}")
+        else:
+            QMessageBox.information(self, "EasyWorship Import", msg)
 
     def _on_delete(self):
         if not self._current_deck:

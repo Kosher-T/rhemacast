@@ -204,13 +204,23 @@ class PresentationTab(QWidget):
 
     def _build_payload(self, text: str, ref: str, version: str, book: str = "",
                        chapter: str = "", verse: str = "", output_id: str = "1") -> dict:
-        """Build a display payload matching the WS broadcast format."""
+        """Build a display payload matching the WS broadcast format.
+
+        Slide text may carry inline color markup ([words: (#rrggbb)]) which is
+        converted to HTML spans here — display.js renders text via innerHTML.
+        Plain verse text is escaped unchanged (no markers → identity).
+        """
         from core.theme_loader import get_theme
+        from core.slide_parser import inline_markup_to_html, has_inline_markup
         theme_name = self._themes_by_output.get(output_id, "default")
         theme_data = get_theme(theme_name)
+        if has_inline_markup(text):
+            display_text = inline_markup_to_html(text)
+        else:
+            display_text = text
         return {
             "action": "display",
-            "text": text,
+            "text": display_text,
             "ref": ref,
             "reference": f"{book} {chapter}:{verse}" if book else ref,
             "translation": get_display_name(version) if version else "",

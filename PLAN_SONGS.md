@@ -21,6 +21,10 @@ Markdown-like, strict rules for clean parsing into a basic render. Deferred text
 
 plain lines = slide content (displayed)
 
+inline color: this is [the text: (#ff0000)] I want to color
+  bracketed run renders in the given hex color; 3- or 6-digit hex; rest uses theme color.
+  Converted to <span style="color:#hex"> at payload build; FTS indexes stripped text.
+
 double blank line (\n\n\n = two consecutive empty lines) = slide boundary
   single \n = line break within same slide; single blank (\n\n) is ignored (readable spacing only)
 ```
@@ -138,16 +142,29 @@ Alternative considered: normalized `slides` child table (deck_id, seq, section, 
 - [x] Clear/Recall and per-output theme double-click are slide-aware (`_payload_for_display`)
 - [ ] Rolling/scrolling mode: joined slide text + separator, speed from `config.json` (deferred until slide-by-slide proven)
 
-### Phase 4: EasyWorship Import (after txt flow works)
-- [ ] DB schema analysis (user provides DB file)
-- [ ] Field mapping → `slide_decks` (title/author/year/ccli → columns, lyrics → `slides_json` via section inference)
-- [ ] Batch import with dedup (title+author or CCLI)
+### Phase 4: EasyWorship Import — DONE (v2 library live, colors supported)
+- [x] Schema mapped: `Songs.db: song.rowid` ↔ `SongWords.db: word.song_id` (1:1, zero orphans); `SongKeys.db` = EW's own keyword index (ignored — we build FTS5); `SongHistory.db` = usage log (ignored). Custom `UTF8_U_CI` collation registered when opening.
+- [x] `core/easyworship_import.py` — two RTF dialects parsed:
+  - Old (`\fntnamaut`): blank `\li0` blocks = boundaries, regex section headers
+  - EW2 (`\sdfsauto` + `\sdslidemarker`): explicit slide markers; `\sdparawysiwghidden` lines are section labels if header-shaped, else dropped (matches EW WYSIWYG)
+  - Handles `\'hh` cp1252 + `\uN?` unicode escapes; chorus-spanning-multiple-slides inherits section
+- [x] **Color support**: `\colortbl` palette parsed; `\cfN … \cf0` runs converted to our `[text: (#hex)]` markup mid-line and whole-line; stray EW control words (`\sdnotstroke`, `\shad0`, `{\*\sdfsreal…}`) stripped
+- [x] **source_path = `easyworship://song/<song_uid>`** — stable across library versions (v1→v2 rowids shift; uids don't). Re-import updates in place.
+- [x] `slide_service.create_deck_from_slides()` — inserts pre-parsed slides without the txt parser; `reparse_all()` skips `easyworship://` decks
+- [x] Slides tab "Import EasyWorship" button → directory picker → summary dialog
+- [x] **version_2 imported: 1212 songs (+7 skipped non-songs), ~7s**, dedup verified, lyric search markup-safe
 
-### Phase 5: Search (FTS + optional BM25)
-- [ ] FTS5 instant search over `slides_fts` (porter stemming — "basic stemming" per spec)
-- [ ] Ranking: title match > slide_text match > tags match; tie-break by `created_at` or `updated_at` (or explicit relevance toggle)
-- [ ] No semantic/indirect search — lexical only, must handle millions of lines "in a jiffy"
-- [ ] Optional: per-deck BM25 via `rank-bm25` if FTS ranking insufficient
+### Inline color pipeline — DONE
+- `core/slide_parser.py`: `_INLINE_COLOR_RE`, `strip_inline_markup()`, `inline_markup_to_html()` (HTML-escaped, 3/6-digit hex normalized)
+- FTS (`slides_fts`) indexes stripped text; search hits colored slides
+- `presentation_tab._build_payload()` emits `<span style="color:#hex">` HTML for display.js (already innerHTML-based); plain verse text passes through untouched
+- SlidesTab preview cards render rich-text QLabel when markup present
+- **Schema v3**: `slides_fts` recreated with `contentless_delete=1` — true rowid DELETE now works (previous contentless fallback was lossy on update/delete)
+
+### Phase 5: Search (FTS + optional BM25) — DONE via Phase 1/4
+- [x] FTS5 instant search over `slides_fts` with porter stemming (`search_decks`)
+- [x] Ranking: bm25 weights title(3.0) > slide_text(1.0) > tags(0.5); date fallback ordering available
+- [x] Lexical only, no semantic lane
 
 ### Deferred (Lite Designer + Theme Designer)
 - Lite Designer: per-slide text transforms (ALL CAPS, bullets, font/typeface, size, color, shadow/outline intensity/size), bg image/video via webhook

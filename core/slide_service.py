@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.database import DB_PATH, get_connection, init_db
-from core.slide_parser import parse_slide_txt
+from core.slide_parser import parse_slide_txt, strip_inline_markup
 
 _SLIDES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "slides")
 
@@ -25,8 +25,8 @@ def _now_iso() -> str:
 
 
 def _slides_to_fts_text(slides: list[dict]) -> str:
-    """Concatenate slide texts for FTS indexing."""
-    return " \n ".join(s.get("text", "") for s in slides)
+    """Concatenate slide texts for FTS indexing (markup stripped)."""
+    return " \n ".join(strip_inline_markup(s.get("text", "")) for s in slides)
 
 
 def _fts_sync_deck(conn: sqlite3.Connection, deck_id: int, title: str, slides: list[dict], tags: str | None):
@@ -76,34 +76,77 @@ def create_deck(
     Parse raw_text, insert deck, sync FTS. Returns deck dict.
     Raises ValueError if no title could be parsed (title may be "" — we allow it, but caller can validate).
     """
-    init_db()
     parsed = parse_slide_txt(raw_text)
-    title = parsed["title"]
-    slides = parsed["slides"]
+    return create_deck_from_slides(
+        title=parsed["title"],
+        slides=parsed["slides"],
+        source_path=source_path,
+        author=author,
+        year=year,
+        ccli=ccli,
+        tags=tags,
+        raw_text=raw_text,
+    )
+
+
+def create_deck_from_slides(
+    title: str,
+    slides: list[dict],
+    source_path: str | None = None,
+    author: str | None = None,
+    year: int | None = None,
+    ccli: str | None = None,
+    tags: str | None = None,
+    raw_text: str = "",
+) -> dict:
+    """
+    Insert a deck from pre-parsed slides (bypasses the txt parser).
+    If a deck with the same source_path exists it is updated in place.
+    Returns deck dict with "_was_created" flag (True=new row, False=updated).
+    """
+    init_db()
     slides_json = json.dumps(slides, ensure_ascii=False)
     now = _now_iso()
 
     conn = get_connection()
-    cur = conn.execute(
-        """INSERT INTO slide_decks
-           (title, author, year, ccli, tags, source_path, raw_text, slides_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (title, author, year, ccli, tags, source_path, raw_text, slides_json, now, now),
-    )
-    deck_id = cur.lastrowid
-    # FTS sync — delete is no-op on insert, but keep symmetric
-    try:
+    existing = None
+    if source_path:
+        existing = conn.execute(
+            "SELECT id FROM slide_decks WHERE source_path = ?", (source_path,)
+        ).fetchone()
+
+    if existing:
+        deck_id = existing["id"]
         conn.execute(
-            "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
-            (deck_id, title, _slides_to_fts_text(slides), tags or ""),
+            """UPDATE slide_decks
+               SET title=?, author=?, year=?, ccli=?, tags=?, raw_text=?, slides_json=?, updated_at=?
+               WHERE id=?""",
+            (title, author, year, ccli, tags, raw_text, slides_json, now, deck_id),
         )
-    except Exception:
-        # fallback to sync helper
         _fts_sync_deck(conn, deck_id, title, slides, tags)
+        was_created = False
+    else:
+        cur = conn.execute(
+            """INSERT INTO slide_decks
+               (title, author, year, ccli, tags, source_path, raw_text, slides_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (title, author, year, ccli, tags, source_path, raw_text, slides_json, now, now),
+        )
+        deck_id = cur.lastrowid
+        try:
+            conn.execute(
+                "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
+                (deck_id, title, _slides_to_fts_text(slides), tags or ""),
+            )
+        except Exception:
+            _fts_sync_deck(conn, deck_id, title, slides, tags)
+        was_created = True
 
     conn.commit()
     conn.close()
-    return get_deck(deck_id)
+    deck = get_deck(deck_id)
+    deck["_was_created"] = was_created
+    return deck
 
 
 def get_deck(deck_id: int) -> Optional[dict]:
@@ -271,10 +314,14 @@ def import_all_txts(directory: str | None = None) -> list[dict]:
 
 
 def reparse_all() -> int:
-    """Re-parse raw_text for every deck (after parser change). Returns count updated."""
+    """Re-parse raw_text for every txt-sourced deck (after parser change).
+    Skips EasyWorship decks (their raw_text is RTF, not our txt format)."""
     init_db()
     conn = get_connection()
-    rows = conn.execute("SELECT id, raw_text FROM slide_decks").fetchall()
+    rows = conn.execute(
+        "SELECT id, raw_text FROM slide_decks "
+        "WHERE source_path IS NULL OR source_path NOT LIKE 'easyworship://%'"
+    ).fetchall()
     # Collect to avoid cursor invalidation during update
     items = [(r["id"], r["raw_text"]) for r in rows]
     conn.close()

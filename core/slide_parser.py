@@ -15,10 +15,46 @@ Output: {"title": str, "slides": [{"section": str|None, "text": str}]}
 Each entry in slides = one displayable slide. Section may be None if none set.
 """
 
+import html
 import re
 
 _TITLE_RE = re.compile(r"^[#%]\s*(.+?)\s*$")
 _SECTION_RE = re.compile(r"^\*\s*(.+?)\s*$")
+
+# Inline color markup:  this is [the text: (#ff0000)] I want to color
+# The bracketed run is displayed in the given hex color; rest uses theme color.
+_INLINE_COLOR_RE = re.compile(r"\[([^\[\]:]+):\s*\(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\)\]")
+
+
+def strip_inline_markup(text: str) -> str:
+    """Remove inline color markup, keeping the inner text (for FTS indexing)."""
+    return _INLINE_COLOR_RE.sub(lambda m: m.group(1), text or "")
+
+
+def inline_markup_to_html(text: str) -> str:
+    """Convert inline color markup to HTML spans; everything else escaped.
+
+    'this is [the text: (#ff0000)] I want' →
+    'this is &lt;...&gt;<span style="color:#ff0000">the text</span>...'
+    """
+    if not text:
+        return ""
+    out = []
+    pos = 0
+    for m in _INLINE_COLOR_RE.finditer(text):
+        out.append(html.escape(text[pos:m.start()]))
+        color = m.group(2)
+        # Normalize 3-digit hex (#f00 → #ff0000)
+        if len(color) == 3:
+            color = "".join(c * 2 for c in color)
+        out.append(f'<span style="color:#{color.lower()}">{html.escape(m.group(1))}</span>')
+        pos = m.end()
+    out.append(html.escape(text[pos:]))
+    return "".join(out)
+
+
+def has_inline_markup(text: str) -> bool:
+    return bool(_INLINE_COLOR_RE.search(text or ""))
 
 
 def parse_slide_txt(raw: str) -> dict:
