@@ -721,6 +721,141 @@ def get_all_display_names() -> Dict[str, str]:
     return dict(_display_names_cache)
 
 
+# Last rename as (canonical, old_display, new_display) for cascade hooks.
+_last_rename: tuple | None = None
+
+
+def get_last_rename():
+    """Return the most recent rename_translation() record, if any."""
+    return _last_rename
+
+
+def _rewrite_item_translation(item: dict, old_display: str, new_display: str) -> bool:
+    """Rewrite one schedule-style dict in place. Returns True if changed.
+
+    Only the ref "[Old] ..." prefix is rewritten. The translation field is
+    deliberately untouched: schedule items store canonical CODES there, and
+    rewriting a code that textually matches would corrupt switching logic.
+    (History display rows store display names — those are rewritten by SQL.)
+    """
+    ref = item.get("ref")
+    if isinstance(ref, str):
+        prefix, new_prefix = f"[{old_display}]", f"[{new_display}]"
+        if ref.startswith(prefix):
+            item["ref"] = new_prefix + ref[len(prefix):]
+            return True
+    return False
+
+
+def rename_translation(canonical: str, new_display: str) -> str:
+    """Rename a translation everywhere, permanently.
+
+    Updates the display-name mapping, rewrites stored copies (schedule files
+    on disk, history display rows), and records the rename for UI cascade
+    hooks (see get_last_rename). In-memory schedule model + live screens are
+    refreshed by the caller (main window). Raises ValueError on bad names.
+    Returns the previous display name.
+    """
+    global _last_rename
+    canonical = (canonical or "").strip()
+    new_display = (new_display or "").strip()
+    if not canonical:
+        raise ValueError("No translation specified.")
+    if not new_display:
+        raise ValueError("Display name cannot be empty.")
+    if len(new_display) > 20:
+        raise ValueError("Display name must be 20 characters or fewer.")
+    try:
+        available = [c.upper() for c in get_available_translations()]
+    except Exception:
+        available = []
+    if new_display.upper() in available and new_display.upper() != canonical.upper():
+        raise ValueError(f"“{new_display}” collides with a translation code.")
+    _load_display_names()
+    for code, display in _display_names_cache.items():
+        if code != canonical and display.lower() == new_display.lower():
+            raise ValueError(f"“{new_display}” is already used by {code}.")
+
+    old_display = get_display_name(canonical)
+    set_display_name(canonical, new_display)
+    # Verify the write actually landed (a silent settings failure would look
+    # exactly like "the rename doesn't stick" — badge updated, mapping lost
+    # on restart). _load bypass: read the raw setting back.
+    try:
+        from core.database import get_setting
+        import json as _json2
+        raw = get_setting(_DISPLAY_NAMES_KEY, "{}")
+        persisted = _json2.loads(raw).get(canonical)
+        if persisted != new_display and not (persisted is None and new_display == canonical):
+            raise ValueError(
+                f"Rename did not persist (read back {persisted!r}). "
+                f"Database write failed — check disk/permissions.")
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.warning(f"Could not verify rename persistence: {e}")
+    _last_rename = (canonical, old_display, new_display)
+
+    if old_display != new_display:
+        _rewrite_schedule_files(old_display, new_display)
+        _rewrite_history_translations(old_display, new_display)
+    return old_display
+
+
+def _rewrite_schedule_files(old_display: str, new_display: str) -> int:
+    """Rewrite stored refs/translations in every saved schedule file."""
+    from pathlib import Path
+    schedules_dir = Path(__file__).resolve().parent.parent / "data" / "schedules"
+    changed_files = 0
+    if not schedules_dir.is_dir():
+        return 0
+    for path in sorted(schedules_dir.glob("*.json")):
+        try:
+            import json as _json
+            with open(path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+        except Exception as e:
+            logger.warning(f"Skipping schedule file during rename: {path.name}: {e}")
+            continue
+        items = data.get("items", []) if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            continue
+        changed = False
+        for item in items:
+            if isinstance(item, dict) and _rewrite_item_translation(item, old_display, new_display):
+                changed = True
+        if changed:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    _json.dump(data, f, indent=2, ensure_ascii=False)
+                changed_files += 1
+            except Exception as e:
+                logger.warning(f"Failed to rewrite schedule file {path.name}: {e}")
+    if changed_files:
+        logger.info(f"Rename {old_display!r} → {new_display!r}: rewrote {changed_files} schedule file(s)")
+    return changed_files
+
+
+def _rewrite_history_translations(old_display: str, new_display: str) -> int:
+    """Rewrite stored translation labels in history display rows."""
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        cur = conn.execute(
+            "UPDATE display_events SET translation=? WHERE translation=?",
+            (new_display, old_display),
+        )
+        count = cur.rowcount or 0
+        conn.commit()
+        conn.close()
+        if count:
+            logger.info(f"Rename {old_display!r} → {new_display!r}: rewrote {count} history row(s)")
+        return count
+    except Exception as e:
+        logger.warning(f"Failed to rewrite history translations: {e}")
+        return 0
+
+
 # ─── Translation Order ───────────────────────────────────────────────────────
 
 _ORDER_KEY = "bible.translation_order"

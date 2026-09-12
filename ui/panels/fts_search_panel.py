@@ -282,6 +282,13 @@ class FtsSearchPanel(QWidget):
         self.search_btn.clicked.connect(self._on_search)
         input_row.addWidget(self.search_btn)
 
+        # History: record which result the operator picks (self-connection).
+        self._last_search_row: int | None = None
+        self.verse_to_navigator.connect(self._on_result_chosen)
+        self.verse_to_live.connect(self._on_result_chosen)
+        self.trans_badge_to_navigator.connect(self._on_result_chosen)
+        self.trans_badge_to_live.connect(self._on_result_chosen)
+
         layout.addLayout(input_row)
 
         # Results list
@@ -344,6 +351,7 @@ class FtsSearchPanel(QWidget):
         if not query:
             self.results_list.clear()
             self.status_label.setText("")
+            self._last_search_row = None
             return
 
         t0 = time.monotonic()
@@ -407,6 +415,27 @@ class FtsSearchPanel(QWidget):
         self.status_label.setText(
             f"{len(sorted_verses)} verses across {len(FTS_TRANSLATIONS)} translations ({elapsed_ms:.0f}ms)"
         )
+
+        # History: document the search (query + top hits). Keystroke runs
+        # coalesce in log_search_event — no debounce needed here.
+        from core.database import (current_operator_session, log_search_event)
+        top = [f"{v['book']} {v['chapter']}:{v['verse_num']}"
+               for v in sorted_verses[:5]]
+        self._last_search_row = log_search_event(
+            current_operator_session(), "fts", query,
+            len(sorted_verses), top)
+
+    @staticmethod
+    def _verse_ref(data: dict) -> str:
+        return (f"{data.get('book', '')} {data.get('chapter', '')}:"
+                f"{data.get('verse_num', data.get('verse', ''))}".strip())
+
+    def _on_result_chosen(self, data: dict):
+        """Record which search result the operator picked."""
+        if not isinstance(data, dict):
+            return
+        from core.database import mark_search_chosen
+        mark_search_chosen(self._last_search_row, self._verse_ref(data))
 
     def _on_trans_single(self, version: str, data: dict):
         """Single-click on translation badge → navigate in that translation."""

@@ -6,6 +6,7 @@ Strict parser for slide/song txt files.
 Format:
   # or % at line start = title (first occurrence wins, not displayed)
   * at line start = section marker (not displayed, spans slides until next *)
+  a bare * alone on a line clears the current section (for section-less slides)
   plain lines = slide content (displayed)
   double blank line (\\n\\n\\n = two consecutive empty lines) = slide boundary
     single newline = line break within same slide; single blank line is ignored
@@ -15,57 +16,518 @@ Output: {"title": str, "slides": [{"section": str|None, "text": str}]}
 Each entry in slides = one displayable slide. Section may be None if none set.
 """
 
+"""
+core/slide_parser.py
+
+Strict parser for slide/song txt files.
+
+Format:
+  Top-level format line (optional, before the title — overrides theme):
+    size=35, 25, 35; bold=true; color=#66ff00; italics=false; case=origin
+    size = nominal, min, max px for autoresize (missing parts inherit theme)
+    case = upper | lower | origin (origin = text as written)
+  # or % at line start = title (first occurrence wins, not displayed)
+  * at line start = section marker (not displayed, spans slides until next *)
+  a bare * alone on a line clears the current section (for section-less slides)
+  plain lines = slide content (displayed)
+  double blank line (\\n\\n\\n = two consecutive empty lines) = slide boundary
+    single newline = line break within same slide; single blank line is ignored
+    (not a boundary) to allow readable spacing without splitting slides
+  Inline runs (override deck + theme for the bracketed words):
+    [words (color=#ff6600; size=20; italics=true; bold=false; case=upper)]
+    params must be the final (...) group; unknown/invalid params are skipped.
+    Legacy [words: (#hex)] still parses as color-only.
+
+  Cascade (ascending importance): theme → deck format line → inline run.
+
+Output: {"title": str, "slides": [{"section": str|None, "text": str}],
+          "format": {"size_nominal"|"size_min"|"size_max"|"bold"|"color"|"italics"|"case"}}
+  Slide text keeps inline markers RAW; renderers convert at display time.
+  Unset format values are None (= inherit). Full agent-editable spec lives in
+  docs/slide-format.md.
+"""
+
 import html
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _TITLE_RE = re.compile(r"^[#%]\s*(.+?)\s*$")
 _SECTION_RE = re.compile(r"^\*\s*(.+?)\s*$")
 
-# Inline color markup:  this is [the text: (#ff0000)] I want to color
-# The bracketed run is displayed in the given hex color; rest uses theme color.
-_INLINE_COLOR_RE = re.compile(r"\[([^\[\]:]+):\s*\(#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\)\]")
+# Inline run: [display text (k=v; k=v)] — text has no brackets; the params
+# group holds no parens. Legacy [text: (#hex)] matches this shape too and is
+# reinterpreted as color-only when the params don't parse as k=v pairs.
+# Paragraph gap: a bare \n marker (typed backslash-n) is a line break whose
+# size is controllable — [\n (size=14)] renders a 14px gap, [\n] a plain one.
+_INLINE_RUN_RE = re.compile(r"\[([^\[\]]+?)(?:\s*\(([^()]*)\))?\]")
+_LEGACY_HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_LEGACY_TEXT_RE = re.compile(r"^(.*):\s*$")
+
+_FORMAT_KEYS = ("size", "bold", "color", "italics", "case",
+                 "underline", "strike", "align", "spacing",
+                 "super", "sub", "outline", "dir", "hr", "font")
+_TRUE_SET = {"true", "1", "yes"}
+_FALSE_SET = {"false", "0", "no"}
+_CASE_SET = {"upper", "lower", "origin"}
+_ALIGN_SET = {"left", "center", "right", "justify"}
+_DIR_SET = {"rtl", "ltr"}
+
+
+def blank_deck_format() -> dict:
+    """All-None deck format (= inherit everything from the theme)."""
+    return {"size_nominal": None, "size_min": None, "size_max": None,
+            "bold": None, "color": None, "italics": None, "case": None,
+            "underline": None, "strike": None, "align": None,
+            "spacing": None, "super": None, "sub": None, "outline": None,
+            "dir": None, "hr": None, "font": None}
+
+
+def _parse_bool(value: str):
+    v = value.strip().lower()
+    if v in _TRUE_SET:
+        return True
+    if v in _FALSE_SET:
+        return False
+    return None
+
+
+def _parse_hex_color(value: str):
+    """Normalize #rgb/#rrggbb → lowercase #rrggbb, or None if invalid."""
+    m = re.match(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", value.strip())
+    if not m:
+        return None
+    digits = m.group(1)
+    if len(digits) == 3:
+        digits = "".join(c * 2 for c in digits)
+    return "#" + digits.lower()
+
+
+def _parse_int_list(value: str) -> list[int]:
+    """Parse '35, 25, 35' (optional px suffixes) → ints, skipping junk."""
+    out = []
+    for part in value.split(","):
+        part = part.strip()
+        if part.lower().endswith("px"):
+            part = part[:-2].strip()
+        try:
+            out.append(int(part))
+        except ValueError:
+            logger.warning(f"Ignoring unparsable size component: {part!r}")
+    return out
+
+
+def _apply_format_pair(fmt: dict, key: str, value: str, inline: bool):
+    """Apply one k=v pair into a deck-format dict. Unknown/invalid → warn+skip."""
+    key = key.strip().lower()
+    if key not in _FORMAT_KEYS:
+        logger.warning(f"Ignoring unknown format parameter: {key!r}")
+        return
+    if key == "size":
+        nums = _parse_int_list(value)
+        if inline:
+            if nums:
+                fmt["size_nominal"] = nums[0]  # spans take absolute px only
+        else:
+            # Positional: nominal, min, max — missing parts inherit the theme.
+            for dest, num in zip(("size_nominal", "size_min", "size_max"), nums):
+                fmt[dest] = num
+    elif key in ("bold", "italics", "underline", "strike",
+                   "super", "sub", "hr"):
+        parsed = _parse_bool(value)
+        if parsed is None:
+            logger.warning(f"Ignoring invalid {key} value: {value!r} (want true/false)")
+        else:
+            fmt[key] = parsed
+    elif key == "color" or key == "outline":
+        parsed = _parse_hex_color(value)
+        if parsed is None:
+            logger.warning(f"Ignoring invalid {key} value: {value!r} (want #rgb/#rrggbb)")
+        else:
+            fmt[key] = parsed
+    elif key == "case":
+        v = value.strip().lower()
+        if v not in _CASE_SET:
+            logger.warning(f"Ignoring invalid case value: {value!r} (want upper/lower/origin)")
+        else:
+            fmt[key] = v
+    elif key == "align":
+        v = value.strip().lower()
+        if v not in _ALIGN_SET:
+            logger.warning(f"Ignoring invalid align value: {value!r} (want left/center/right/justify)")
+        else:
+            fmt[key] = v
+    elif key == "dir":
+        v = value.strip().lower()
+        if v not in _DIR_SET:
+            logger.warning(f"Ignoring invalid dir value: {value!r} (want rtl/ltr)")
+        else:
+            fmt[key] = v
+    elif key == "spacing":
+        try:
+            num = float(value.strip())
+        except ValueError:
+            num = None
+        if num is None or not 0.5 <= num <= 3.0:
+            logger.warning(f"Ignoring invalid spacing value: {value!r} (want 0.5–3.0)")
+        else:
+            fmt[key] = num
+    elif key == "font":
+        name = value.strip().strip("\"'").strip()
+        # Keep the txt shape safe: no structural characters inside a font name.
+        name = re.sub(r"[;()\[\]]", "", name).strip()
+        if not name or len(name) > 60:
+            logger.warning(f"Ignoring invalid font value: {value!r}")
+        else:
+            fmt[key] = name
+
+
+def parse_format_segments(segments: list[str], inline: bool) -> dict | None:
+    """Parse ['k=v', ...] into a sparse format dict, or None if nothing valid."""
+    fmt = blank_deck_format()
+    found = False
+    for seg in segments:
+        seg = seg.strip()
+        if not seg or "=" not in seg:
+            continue
+        key, _, value = seg.partition("=")
+        before = dict(fmt)
+        _apply_format_pair(fmt, key, value, inline)
+        if fmt != before:
+            found = True
+    return fmt if found else None
+
+
+def parse_format_line(line: str) -> dict | None:
+    """Parse a top-level 'k=v; k=v' line → format dict, or None if not shaped so.
+
+    Shape = every ';'-separated segment is k=v with a known key. Values are
+    validated leniently (bad ones warn + skip); a shaped line with zero valid
+    values still counts as a format line (all-None) so it never leaks on
+    screen as a lyric.
+    """
+    segments = [s for s in line.split(";")]
+    if not segments:
+        return None
+    pairs = []
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        if "=" not in seg:
+            return None
+        key, _, _ = seg.partition("=")
+        if key.strip().lower() not in _FORMAT_KEYS:
+            return None
+        pairs.append(seg)
+    if not pairs:
+        return None
+    return parse_format_segments(pairs, inline=False) or blank_deck_format()
+
+
+def parse_deck_format(raw: str) -> dict:
+    """Scan only the header zone (leading lines before title/section/content).
+
+    Cheap enough to call per deck row; the full parse reuses it.
+    """
+    fmt = blank_deck_format()
+    for line in (raw or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        stripped = line.strip()
+        if stripped == "":
+            continue
+        if _TITLE_RE.match(line) or _SECTION_RE.match(line) or stripped == "*":
+            break
+        parsed = parse_format_line(line)
+        if parsed is None:
+            break  # first content line ends the header zone
+        for key, value in parsed.items():
+            if value is not None:
+                fmt[key] = value
+    return fmt
+
+
+def _iter_inline_parts(text: str):
+    """Yield (display_text, params|None) for plain text and formatted runs.
+
+    A bracket matches as a run when its final (...) group parses to ≥1 valid
+    k=v pair; legacy [text: (#hex)] falls back to color-only; a bracket
+    holding only a \\n marker (with or without params) is a paragraph gap;
+    anything else stays literal (brackets preserved). A bare \\n outside
+    brackets passes through as display text for the renderers to convert.
+    """
+    pos = 0
+    for m in _INLINE_RUN_RE.finditer(text or ""):
+        start, end = m.span()
+        if start > pos:
+            yield (text[pos:start], None)
+        raw_text, raw_params = m.group(1), m.group(2)
+        if raw_params is None:
+            if raw_text.strip() == "\\n":
+                yield ("", blank_deck_format())  # bare [\n] gap, inherited size
+            else:
+                yield (m.group(0), None)  # literal — keep brackets as typed
+            pos = end
+            continue
+        params = parse_format_segments(raw_params.split(";"), inline=True)
+        if params is None:
+            text_part = _LEGACY_TEXT_RE.match(raw_text)
+            hex_part = _LEGACY_HEX_RE.match(raw_params.strip())
+            if text_part and hex_part:
+                legacy = blank_deck_format()
+                legacy["color"] = _parse_hex_color(raw_params)
+                yield (text_part.group(1), legacy)
+            else:
+                yield (m.group(0), None)  # literal — keep brackets as typed
+        else:
+            yield (raw_text.strip(), params)
+        pos = end
+    if pos < len(text or ""):
+        yield (text[pos:], None)
+
+
+def _span_style(params: dict, allow: frozenset | None = None) -> str:
+    """CSS for one inline run (shared contract with display renderers).
+
+    allow restricts which params render — navigation surfaces pass only
+    ("color", "italics"): display-only sizing/weight/case must never leak
+    into strips. None renders everything (real displays).
+    """
+    styles = []
+    if allow is None or "color" in allow:
+        if params.get("color"):
+            styles.append(f"color:{params['color']}")
+    if allow is None or "size" in allow:
+        if params.get("size_nominal") is not None:
+            styles.append(f"font-size:{params['size_nominal']}px")
+    if allow is None or "bold" in allow:
+        if params.get("bold") is True:
+            styles.append("font-weight:700")
+        elif params.get("bold") is False:
+            styles.append("font-weight:400")
+    if allow is None or "italics" in allow:
+        if params.get("italics") is True:
+            styles.append("font-style:italic")
+        elif params.get("italics") is False:
+            styles.append("font-style:normal")
+    if allow is None or "case" in allow:
+        case = params.get("case")
+        if case == "upper":
+            styles.append("text-transform:uppercase")
+        elif case == "lower":
+            styles.append("text-transform:lowercase")
+        elif case == "origin":
+            styles.append("text-transform:none")
+    if allow is None or "underline" in allow or "strike" in allow:
+        deco = []
+        if (allow is None or "underline" in allow) and params.get("underline") is True:
+            deco.append("underline")
+        if (allow is None or "strike" in allow) and params.get("strike") is True:
+            deco.append("line-through")
+        if deco:
+            styles.append(f"text-decoration:{' '.join(deco)}")
+        elif allow is None and (params.get("underline") is False
+                                or params.get("strike") is False):
+            styles.append("text-decoration:none")
+    if allow is None or "align" in allow:
+        if params.get("align"):
+            # Inline runs are spans: full-width block span so alignment lands.
+            styles.append(f"display:inline-block;width:100%;text-align:{params['align']}")
+    if allow is None or "spacing" in allow:
+        if params.get("spacing") is not None:
+            styles.append(f"line-height:{params['spacing']}")
+    if allow is None or "outline" in allow:
+        if params.get("outline"):
+            styles.append(f"-webkit-text-stroke:1px {params['outline']}")
+    if allow is None or "dir" in allow:
+        if params.get("dir"):
+            styles.append(f"direction:{params['dir']};unicode-bidi:embed")
+    if allow is None or "font" in allow:
+        if params.get("font"):
+            styles.append(f"font-family:'{params['font']}'")
+    return ";".join(styles)
+
+
+def _run_wrapper(params: dict) -> str | None:
+    """Structural wrapper tag for a run: 'sup' / 'sub' / None.
+
+    Vertical script has no CSS equivalent — renderers wrap the run text.
+    """
+    if params.get("super") is True:
+        return "sup"
+    if params.get("sub") is True:
+        return "sub"
+    return None
+
+
+def is_hr_run(params: dict | None) -> bool:
+    """An hr=true run renders as a horizontal rule, whatever its text."""
+    return bool(params and params.get("hr") is True)
+
+
+def hr_html() -> str:
+    """Horizontal-rule markup shared by the Python renderers."""
+    return '<div style="border-top:2px solid currentColor;margin:8px 0"></div>'
+
+
+def _is_gap_text(part: str) -> bool:
+    """Display text that renders as a paragraph gap, not words."""
+    return part == "" or part == "\\n"
 
 
 def strip_inline_markup(text: str) -> str:
-    """Remove inline color markup, keeping the inner text (for FTS indexing)."""
-    return _INLINE_COLOR_RE.sub(lambda m: m.group(1), text or "")
+    """Remove inline runs/legacy markup, keeping display text (for FTS indexing).
+
+    Gap markers (bare \\n, [\\n], [\\n (size=N)]) become real newlines so
+    surrounding words stay separated and searchable.
+    """
+    out = []
+    for part, params in _iter_inline_parts(text):
+        if params is not None and _is_gap_text(part):
+            out.append("\n")
+        elif params is None:
+            out.append(part.replace("\\n", "\n"))
+        else:
+            out.append(part)
+    return "".join(out)
 
 
-def inline_markup_to_html(text: str) -> str:
-    """Convert inline color markup to HTML spans; everything else escaped.
+def inline_markup_to_html(text: str, allow: frozenset | None = None) -> str:
+    """Convert inline runs to HTML spans; everything else escaped.
 
-    'this is [the text: (#ff0000)] I want' →
-    'this is &lt;...&gt;<span style="color:#ff0000">the text</span>...'
+    Single newlines become <br/> (a \\n is a line break within a slide).
+    Paragraph gaps (bare \\n marker, [\\n], [\\n (size=N)]) become a sized
+    <br/> — the gap height follows the given size, else the current size.
+    allow restricts rendered params (strips pass color+italics only).
     """
     if not text:
         return ""
     out = []
-    pos = 0
-    for m in _INLINE_COLOR_RE.finditer(text):
-        out.append(html.escape(text[pos:m.start()]))
-        color = m.group(2)
-        # Normalize 3-digit hex (#f00 → #ff0000)
-        if len(color) == 3:
-            color = "".join(c * 2 for c in color)
-        out.append(f'<span style="color:#{color.lower()}">{html.escape(m.group(1))}</span>')
-        pos = m.end()
-    out.append(html.escape(text[pos:]))
-    return "".join(out)
+    for part, params in _iter_inline_parts(text):
+        if params is None:
+            # Escape first (escape leaves backslashes alone), then convert
+            # bare markers to real newlines for the <br/> pass below.
+            out.append(html.escape(part).replace("\\n", "\n"))
+        elif is_hr_run(params):
+            out.append(hr_html())
+        elif _is_gap_text(part):
+            out.append(f'<span style="{_span_style(params, allow)}"><br/></span>')
+        else:
+            tag = _run_wrapper(params)
+            inner = html.escape(part)
+            if tag:
+                inner = f"<{tag}>{inner}</{tag}>"
+            out.append(f'<span style="{_span_style(params, allow)}">{inner}</span>')
+    return "".join(out).replace("\r\n", "<br/>").replace("\n", "<br/>").replace("\r", "<br/>")
 
 
 def has_inline_markup(text: str) -> bool:
-    return bool(_INLINE_COLOR_RE.search(text or ""))
+    return any(params is not None for _, params in _iter_inline_parts(text or ""))
+
+
+# ── Multi-song splitting ─────────────────────────────────────────────────────
+# A run of 5+ consecutive \n characters followed (after optional spaces/tabs)
+# by a title marker line (# or %) starts a NEW song within the same txt file.
+_MULTISONG_SPLIT_RE = re.compile(r"\n{5,}[ \t]*(?=[#%])")
+
+
+def format_to_line(fmt: dict | None) -> str | None:
+    """Serialize a deck-format dict to a top-level format line (or None if empty).
+
+    Stable key order (size, bold, color, italics, case, underline, strike,
+    align, spacing, dir, outline, font). Size emits the longest valid prefix
+    (nominal[, min[, max]]) — the only shapes the parser produces. super/sub
+    are run-only concepts but round-trip harmlessly if present.
+    """
+    if not fmt:
+        return None
+    parts = []
+    sizes = [fmt.get("size_nominal"), fmt.get("size_min"), fmt.get("size_max")]
+    while sizes and sizes[-1] is None:
+        sizes.pop()
+    if sizes and all(isinstance(n, int) for n in sizes):
+        parts.append("size=" + ", ".join(str(n) for n in sizes))
+    if fmt.get("bold") is not None:
+        parts.append(f"bold={'true' if fmt['bold'] else 'false'}")
+    if fmt.get("color"):
+        parts.append(f"color={fmt['color']}")
+    if fmt.get("italics") is not None:
+        parts.append(f"italics={'true' if fmt['italics'] else 'false'}")
+    if fmt.get("case"):
+        parts.append(f"case={fmt['case']}")
+    if fmt.get("underline") is not None:
+        parts.append(f"underline={'true' if fmt['underline'] else 'false'}")
+    if fmt.get("strike") is not None:
+        parts.append(f"strike={'true' if fmt['strike'] else 'false'}")
+    if fmt.get("align"):
+        parts.append(f"align={fmt['align']}")
+    if fmt.get("spacing") is not None:
+        parts.append(f"spacing={fmt['spacing']}")
+    if fmt.get("dir"):
+        parts.append(f"dir={fmt['dir']}")
+    if fmt.get("outline"):
+        parts.append(f"outline={fmt['outline']}")
+    if fmt.get("font"):
+        parts.append(f"font={fmt['font']}")
+    return "; ".join(parts) or None
+
+
+def deck_to_txt(title: str, slides: list[dict], format: dict | None = None) -> str:
+    """Serialize a deck back to raw txt format (round-trips parse_slide_txt).
+
+    Emits an optional format line, then `# title`, then per slide an optional
+    `*section` marker plus text lines with real line breaks. Slide blocks are
+    joined by TWO blank lines — the parser ignores a single blank, so one
+    blank would merge everything back into a single slide. Two blanks stay
+    well clear of the multi-song split (5+ blanks + title).
+    """
+    blocks = []
+    header = format_to_line(format)
+    if header:
+        blocks.append(header)
+    blocks.append(f"# {(title or '').strip() or '(untitled)'}")
+    emitted: str | None = None  # section marker currently in force
+    for slide in slides or []:
+        lines: list[str] = []
+        section = (slide.get("section") or "").strip() or None
+        if section != emitted:
+            # Marker only on change: repeat markers bloat the file, and a
+            # bare `*` clears the inherited section so the slide stays
+            # section-less on re-parse (exact round-trip).
+            lines.append(f"*{section}" if section else "*")
+            emitted = section
+        text = slide.get("text", "") or ""
+        lines.append(text.strip())
+        blocks.append("\n".join(lines))
+    return "\n\n\n".join(blocks) + "\n"
+
+
+def split_multisong(raw: str) -> list[str]:
+    """Split a txt file containing several songs into per-song chunks.
+
+    Boundary: \\n × 5 or more immediately followed by a title line (#/%).
+    Gaps without a following title marker do NOT split. A file with no
+    boundaries returns [raw] (single chunk).
+    """
+    if not raw:
+        return []
+    normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+    chunks = _MULTISONG_SPLIT_RE.split(normalized)
+    return [c for c in chunks if c.strip() != ""] or []
 
 
 def parse_slide_txt(raw: str) -> dict:
     """
-    Parse raw txt content into title + slides.
+    Parse raw txt content into title + slides + deck format overrides.
 
     Rules:
+    - Deck format: leading 'k=v; k=v' line(s) before the title (size, bold,
+      color, italics, case) → format dict; later lines win per key.
     - Title: first line matching ^[#%]\\s*(.+?)\\s*$ → title. Subsequent #/% lines ignored.
     - Section: line matching ^\\*\\s*(.+?)\\s*$ → sets current_section for following slides.
+      A bare `*` clears the section.
     - Slide: one or more non-empty, non-marker lines grouped until double blank line or EOF.
-      Single newline = line break within same slide (\"Line A\\nLine B\").
+      Single newline = line break within same slide ("Line A\\nLine B").
       Single blank line (\\n\\n) is ignored — not a boundary, just readable spacing.
       Double blank line (\\n\\n\\n, i.e. two consecutive empty lines) = slide boundary.
     - Empty/whitespace-only raw → title "" and no slides.
@@ -77,6 +539,8 @@ def parse_slide_txt(raw: str) -> dict:
     raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     if raw.startswith("\ufeff"):
         raw = raw.lstrip("\ufeff")
+
+    fmt = parse_deck_format(raw)
 
     title: str | None = None
     current_section: str | None = None
@@ -104,6 +568,7 @@ def parse_slide_txt(raw: str) -> dict:
     lines = raw.split("\n")
 
     consecutive_blank = 0
+    in_header = True  # format lines only count before title/section/content
 
     for line in lines:
         stripped = line.strip()
@@ -120,8 +585,13 @@ def parse_slide_txt(raw: str) -> dict:
         # Non-blank resets blank streak
         consecutive_blank = 0
 
+        # Deck format line — only in the header zone; elsewhere it's a lyric
+        if in_header and parse_format_line(line) is not None:
+            continue
+
         # Title marker — only first occurrence wins
         if _TITLE_RE.match(line):
+            in_header = False
             if title is None:
                 m = _TITLE_RE.match(line)
                 title = m.group(1).strip() if m else ""
@@ -131,8 +601,15 @@ def parse_slide_txt(raw: str) -> dict:
                 # Subsequent title-like lines are ignored per spec (not displayed)
                 continue
 
-        # Section marker
+        # Section marker — `*name` sets it, a bare `*` clears it
+        if stripped == "*":
+            in_header = False
+            flush_slide()
+            current_section = None
+            continue
+
         if _SECTION_RE.match(line):
+            in_header = False
             # Flush any pending slide before switching section
             flush_slide()
             m = _SECTION_RE.match(line)
@@ -140,6 +617,7 @@ def parse_slide_txt(raw: str) -> dict:
             continue
 
         # Plain content line — part of current slide
+        in_header = False
         # Preserve as-is trimmed? Keep original leading/trailing stripped but internal intact
         # Use stripped version for display (user typed content, trim edges)
         current_lines.append(stripped)
@@ -150,7 +628,7 @@ def parse_slide_txt(raw: str) -> dict:
     if title is None:
         title = ""
 
-    return {"title": title, "slides": slides}
+    return {"title": title, "slides": slides, "format": fmt}
 
 
 def slides_to_text(slides: list[dict], separator: str = " \u2022 ") -> str:

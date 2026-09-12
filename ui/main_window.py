@@ -6,6 +6,8 @@ Implements window dragging, resizing, and global hotkeys.
 """
 
 import os
+import logging
+import time
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -24,6 +26,15 @@ from ui.tabs.slides_tab import SlidesTab
 from ui.tabs.settings_tab import SettingsTab
 from ui.tabs.history_tab import HistoryTab
 from ui.widgets.status_bar import StatusBar
+
+logger = logging.getLogger(__name__)
+
+# Key-event tap for diagnosing swallowed hotkeys. Enable with
+# RHEMACAST_KEYTAP=1 in the environment. Logs every key event (with focus
+# + spontaneity), every shortcut activation, and focus/activation changes.
+# Off by default: zero overhead, zero console spam.
+import os as _os
+_KEYTAP_ENABLED = _os.environ.get("RHEMACAST_KEYTAP") == "1"
 
 
 class ChromeTab(QPushButton):
@@ -230,7 +241,13 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        
+
+        # Keypresses that arrive while the window is inactive (e.g. the press
+        # that reactivates it) are skipped by QShortcut matching — recorded
+        # here as (key, modifiers, monotonic) and replayed on activation.
+        self._inactive_keypresses: list = []
+        self._last_shortcut_at: float = 0.0
+
         # Accessibility
         self.setWindowTitle("RhemaCast — Sermon Transcription & Verse Display")
         self.setAccessibleName("RhemaCast Main Window")
@@ -436,15 +453,17 @@ class MainWindow(QMainWindow):
                 content = init_func()
                 # Connect theme quick-edit from queue panel
                 content.queue_panel.theme_edit_requested.connect(self._open_theme_quick_editor)
+                # Far-reaching translation rename cascade
+                content.browser_panel.translation_renamed.connect(self._on_translation_renamed)
             else:
                 # Other tabs are lazy-loaded Placeholders
                 content = PlaceholderTab(init_func)
                 # Connect hotkey editor when Settings tab finishes loading
                 if name == "SETTINGS":
                     content.loaded.connect(self._on_settings_tab_loaded)
-                if name == "SLIDES":
-                    content.loaded.connect(self._on_slides_tab_loaded)
-                
+                # Connect history verse navigation when History finishes loading
+                if name == "HISTORY":
+                    content.loaded.connect(self._on_history_tab_loaded)                
             self.stack.addWidget(content)
             self._tabs[name] = content
             
@@ -471,10 +490,82 @@ class MainWindow(QMainWindow):
             btn.setChecked(btn_name == name)
             
         # Hide sub-toolbar for tabs that don't need it
-        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SLIDES", "SETTINGS", "HISTORY"))
+        # (SLIDES keeps it: same View/Schedule/Remote/LiveSync + Start Service strip)
+        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS", "HISTORY"))
             
         # Switch stack
         self.stack.setCurrentIndex(index)
+
+    def _on_history_tab_loaded(self, widget):
+        """Route History Ctrl+click verse navigation into the SCRIPTURE tab."""
+        if hasattr(widget, "navigate_to_verse_requested"):
+            widget.navigate_to_verse_requested.connect(self._on_history_navigate)
+
+    def _on_translation_renamed(self, canonical: str):
+        """Cascade a translation rename across schedules, screens, history.
+
+        Data (mapping, schedule files, history rows) was already rewritten by
+        bible_service.rename_translation; this syncs the live model, views,
+        current screens, and the history tab.
+        """
+        from core.bible_service import get_last_rename
+        info = get_last_rename()
+        if not info or info[0] != canonical:
+            return
+        _, old_display, new_display = info
+        if old_display == new_display:
+            return
+        logger.info(f"Translation renamed: {canonical} {old_display!r} → {new_display!r}")
+
+        # In-memory schedule: reload the rewritten file when clean, else
+        # patch items in place (keeps unsaved user edits). Views on both
+        # tabs rebuild via items_changed either way.
+        try:
+            from core.schedule_model import schedule_model
+            if schedule_model.is_modified():
+                schedule_model.rename_translation_in_model(old_display, new_display)
+            elif schedule_model.current_file:
+                schedule_model.load(schedule_model.current_file)
+        except Exception as e:
+            logger.warning(f"Schedule rename sync failed: {e}")
+
+        # Re-render the ACTIVE tab's screens (shared state → all screens,
+        # operator + OBS, follow from the single republish).
+        try:
+            tab = self._active_workspace_tab()
+            if tab is not None and hasattr(tab, "refresh_display_names"):
+                tab.refresh_display_names(old_display, new_display)
+        except Exception as e:
+            logger.warning(f"Screen rename refresh failed: {e}")
+
+        # History tab reads the rewritten rows on reload.
+        try:
+            hist = self._tabs.get("HISTORY")
+            real = getattr(hist, "real_widget", None)
+            if real is not None and getattr(hist, "_loaded", False):
+                hist = real
+            if hist is not None and hasattr(hist, "reload"):
+                hist.reload()
+        except Exception as e:
+            logger.warning(f"History rename refresh failed: {e}")
+
+    def _on_history_navigate(self, book: str, chapter: str, verse: str,
+                             translation: str):
+        names = list(self._tabs.keys())
+        if "SCRIPTURE" in names:
+            self._switch_tab(names.index("SCRIPTURE"), "SCRIPTURE")
+        tab = self._tabs.get("SCRIPTURE")
+        real = getattr(tab, "real_widget", None)
+        if real is not None and getattr(tab, "_loaded", False):
+            tab = real
+        browser = getattr(tab, "browser_panel", None)
+        if browser is not None and hasattr(browser, "navigate_to_reference"):
+            try:
+                browser.navigate_to_reference(book, chapter, verse,
+                                              translation=translation)
+            except TypeError:
+                browser.navigate_to_reference(book, chapter, verse)
+            logger.info(f"History navigate → {book} {chapter}:{verse}")
 
     def _on_settings_tab_loaded(self, widget):
         """Connect hotkey editor and font size signals once the Settings tab finishes lazy-loading."""
@@ -483,91 +574,6 @@ class MainWindow(QMainWindow):
         if hasattr(widget, 'font_size_changed'):
             widget.font_size_changed.connect(self._on_font_size_changed)
 
-    # ── Slides tab → SCRIPTURE tab bridge ───────────────────────────────────
-
-    def _on_slides_tab_loaded(self, widget):
-        """Connect slides tab signals once the SLIDES tab finishes lazy-loading."""
-        widget.deck_to_schedule.connect(self._slides_add_to_schedule)
-        widget.slide_live_requested.connect(self._slides_go_live)
-        widget.slide_preview_requested.connect(self._slides_go_preview)
-
-    def _get_scripture_tab(self):
-        pres = self._tabs.get("SCRIPTURE")
-        if pres and hasattr(pres, "schedule_panel"):
-            return pres
-        return None
-
-    def _slides_add_to_schedule(self, deck: dict):
-        """Add a slide deck to the service schedule as a single multi-slide item."""
-        pres = self._get_scripture_tab()
-        if not pres:
-            return
-        item_data = {
-            "item_type": "slide",
-            "ref": deck.get("title") or "(untitled)",
-            "name": deck.get("title") or "(untitled)",
-            "deck_id": deck.get("id"),
-            "slides": deck.get("slides", []),
-            "theme": pres._current_theme,
-        }
-        pres.schedule_panel.add_item(item_data)
-        logger.info(f"Deck added to schedule: {item_data['ref']} ({len(item_data['slides'])} slides)")
-
-    def _fetch_deck(self, deck_id: int) -> dict | None:
-        from core.slide_service import get_deck
-        deck = get_deck(deck_id)
-        if not deck:
-            return None
-        return {
-            "id": deck["id"],
-            "title": deck["title"],
-            "slides": deck["slides"],
-        }
-
-    def _slides_go_live(self, deck_id: int, index: int):
-        pres = self._get_scripture_tab()
-        deck = self._fetch_deck(deck_id)
-        if pres and deck:
-            pres._apply_slide_display(None, deck["title"], deck["slides"], index)
-            self._switch_to_scripture_if_needed()
-
-    def _slides_go_preview(self, deck_id: int, index: int):
-        pres = self._get_scripture_tab()
-        deck = self._fetch_deck(deck_id)
-        if not (pres and deck):
-            return
-        slides = deck["slides"]
-        if not slides:
-            return
-        index = max(0, min(index, len(slides) - 1))
-        slide = slides[index]
-        section = slide.get("section")
-        title = deck["title"] or "(untitled)"
-        ref = f"{title} \u00b7 {section}" if section else title
-        pres._current_preview = {
-            "item_type": "slide",
-            "text": slide.get("text", ""),
-            "ref": ref,
-            "book": "", "chapter": "", "verse_num": "", "version": "",
-            "deck_title": title,
-            "section": section,
-            "slides": slides,
-            "slide_index": index,
-        }
-        payload = pres._build_payload(slide.get("text", ""), ref, "")
-        pres.live_preview.set_preview_payload(payload)
-
-    def _switch_to_scripture_if_needed(self):
-        """Bring the SCRIPTURE tab to front when live output is pushed from another tab."""
-        try:
-            idx = list(self._tabs.keys()).index("SCRIPTURE")
-            name = "SCRIPTURE"
-            current = self.stack.currentIndex()
-            if current != idx:
-                self._switch_tab(idx, name)
-        except ValueError:
-            pass
-    
     def _on_font_size_changed(self, text_size: int, ref_size: int):
         """Propagate font size changes to the browser panel for live preview."""
         pres_tab = self._tabs.get("SCRIPTURE")
@@ -581,8 +587,9 @@ class MainWindow(QMainWindow):
         return tab
 
     def _open_theme_quick_editor(self, theme_name: str):
-        from ui.widgets.theme_quick_editor import ThemeQuickEditor
-        editor = ThemeQuickEditor(theme_name, parent=self)
+        from ui.widgets.lite_designer.lite_designer import LiteDesigner
+        editor = LiteDesigner(parent=self, theme_name=theme_name,
+                              default_tab="theme", freeform_enabled=False)
         editor.edit_full_requested.connect(self._open_full_designer)
         editor.theme_saved.connect(self._on_theme_saved)
         editor.show()
@@ -607,7 +614,52 @@ class MainWindow(QMainWindow):
         """App-wide event filter: intercept Alt+Click and defocus search panels."""
         from PyQt6.QtCore import QEvent as _QE
         from PyQt6.QtWebEngineWidgets import QWebEngineView
-        
+
+        if _KEYTAP_ENABLED and event.type() in (_QE.Type.KeyPress, _QE.Type.KeyRelease):
+            try:
+                from PyQt6.QtWidgets import QApplication as _QA
+                _fw = _QA.focusWidget()
+                logger.info(
+                    "KEYTAP %s key=%s mods=%s spont=%s focus=%s obj=%s active=%s",
+                    "KeyPress" if event.type() == _QE.Type.KeyPress else "KeyRelease",
+                    event.key(), event.modifiers(),
+                    event.spontaneous(),
+                    type(_fw).__name__ if _fw is not None else None,
+                    type(obj).__name__, self.isActiveWindow())
+            except Exception:
+                pass
+
+        # Ctrl release ends slide section-hop navigation — but only if a full
+        # Ctrl+Arrow combo started one; a bare Ctrl press/release never arms it.
+        if event.type() == _QE.Type.KeyRelease:
+            if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
+                self._end_song_nav_if_any()
+
+        # Presses arriving while the window is inactive are skipped by
+        # QShortcut matching (and must not arm song-nav either) — record them
+        # for replay on activation instead of acting now. Skipped entirely
+        # while an app-modal dialog owns input (those keys belong to it).
+        if event.type() == _QE.Type.KeyPress and not event.isAutoRepeat():
+            try:
+                from PyQt6.QtWidgets import QApplication as _QA2
+                if (not self.isActiveWindow()
+                        and _QA2.activeModalWidget() is None):
+                    now = time.monotonic()
+                    pending = getattr(self, "_inactive_keypresses", [])
+                    self._inactive_keypresses = [
+                        (k, m, t) for (k, m, t) in pending if now - t < 1.0]
+                    self._inactive_keypresses.append(
+                        (event.key(), event.modifiers(), now))
+            except Exception:
+                pass
+
+        # Slide section-hop combos are intercepted here (not via QShortcut):
+        # the app filter runs before delivery, so QWebEngineView viewports
+        # can't swallow these as browser back/forward first.
+        if event.type() == _QE.Type.KeyPress:
+            if self.isActiveWindow() and self._maybe_song_nav_key(event):
+                return True
+
         if event.type() == _QE.Type.MouseButtonPress:
             if (event.button() == Qt.MouseButton.LeftButton
                     and event.modifiers() & Qt.KeyboardModifier.AltModifier):
@@ -669,6 +721,17 @@ class MainWindow(QMainWindow):
         # to MainWindow, so QShortcut (parented to self) won't fire until a
         # second keypress. Grab focus on window activation.
         if e.type() == _QE.Type.WindowActivate:
+            self._resync_modifiers()
+            self._replay_inactive_presses()
+            if _KEYTAP_ENABLED:
+                try:
+                    from PyQt6.QtWidgets import QApplication as _QA2
+                    _fw2 = _QA2.focusWidget()
+                    logger.info("KEYTAP WindowActivate focus=%s pending=%d",
+                                type(_fw2).__name__ if _fw2 is not None else None,
+                                len(getattr(self, "_inactive_keypresses", [])))
+                except Exception:
+                    pass
             # Use a short delay to ensure the window is fully activated
             # before attempting to set focus
             def _ensure_focus():
@@ -702,6 +765,19 @@ class MainWindow(QMainWindow):
         KeyboardHandler._instance.capture_started.connect(self._disable_shortcuts)
         KeyboardHandler._instance.capture_finished.connect(self._enable_shortcuts)
 
+        # Losing focus (Alt+Tab) swallows the Ctrl release — finalize any
+        # in-progress slide navigation instead of stranding it.
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt as _Qt
+        _app = QApplication.instance()
+        if _app is not None:
+            _app.applicationStateChanged.connect(self._on_app_state_changed)
+
+    def _on_app_state_changed(self, state):
+        from PyQt6.QtCore import Qt as _Qt
+        if state != _Qt.ApplicationState.ApplicationActive:
+            self._end_song_nav_if_any()
+
     def _load_hotkey_bindings(self):
         """Load saved bindings from settings database."""
         from core.database import get_setting
@@ -712,20 +788,25 @@ class MainWindow(QMainWindow):
         except Exception:
             self._hotkey_bindings = {}
         
-        # Defaults
-        defaults = {
-            "clear_recall": "F6",
-            "fts_search": "Ctrl+Shift+F",
-            "fuzzy_search": "Ctrl+Shift+S",
-            "next_verse": "Right",
-            "prev_verse": "Left",
-            "toggle_transcription": "F7",
-            "add_to_schedule": "Alt+Return",
-            "double_click": "D",
-        }
-        for action, key in defaults.items():
+        # Defaults (single source: _HOTKEY_DEFAULTS)
+        for action, key in self._HOTKEY_DEFAULTS.items():
             if action not in self._hotkey_bindings:
                 self._hotkey_bindings[action] = key
+        # Prune fossils: saved action IDs from older schemas (and only those —
+        # a user's chosen keys for live actions are sacred).
+        pruned = [a for a in list(self._hotkey_bindings)
+                  if a not in self._HOTKEY_DEFAULTS]
+        if pruned:
+            for a in pruned:
+                del self._hotkey_bindings[a]
+            logger.info(f"Pruned obsolete hotkey bindings: {pruned}")
+            try:
+                import json
+                from core.database import set_setting
+                set_setting("hotkeys.bindings",
+                            json.dumps(self._hotkey_bindings))
+            except Exception:
+                pass
 
     def _create_shortcuts(self):
         """Create QShortcuts from current bindings."""
@@ -735,7 +816,11 @@ class MainWindow(QMainWindow):
             shortcut.deleteLater()
         self._shortcuts = []
 
-        # Map action IDs to handler methods
+        # Map action IDs to handler methods.
+        # NOTE: song_prev/next_section are NOT here — QShortcuts for those
+        # combos never fire when focus sits inside a QWebEngineView (Chromium
+        # reserves Ctrl+Left/Right as back/forward). They are intercepted in
+        # eventFilter() below, which runs before delivery, instead.
         action_handlers = {
             "clear_recall": self._hotkey_clear,
             "fts_search": self._hotkey_fts_search,
@@ -745,12 +830,20 @@ class MainWindow(QMainWindow):
             "toggle_transcription": self._hotkey_toggle_transcription,
             "add_to_schedule": self._hotkey_add_to_schedule,
             "double_click": self._hotkey_double_click,
+            "navigate_scripture": self._hotkey_navigate_scripture,
         }
+        # Kept for replaying presses lost to window inactivation (see below).
+        self._hotkey_actions = dict(action_handlers)
 
         for action_id, key in self._hotkey_bindings.items():
-            if action_id in action_handlers and key:
+            if action_id in action_handlers and key and not QKeySequence(key).isEmpty():
                 shortcut = QShortcut(QKeySequence(key), self)
                 shortcut.activated.connect(action_handlers[action_id])
+                shortcut.activated.connect(
+                    lambda _=False: setattr(self, "_last_shortcut_at", time.monotonic()))
+                if _KEYTAP_ENABLED:
+                    shortcut.activated.connect(
+                        lambda _=False, a=action_id: logger.info(f"KEYTAP shortcut fired: {a}"))
                 self._shortcuts.append(shortcut)
 
         # Translation shortcuts (stored as trans_<VERSION> in bindings)
@@ -767,19 +860,50 @@ class MainWindow(QMainWindow):
                 shortcut = QShortcut(QKeySequence(key), self)
                 shortcut.activated.connect(lambda v=version: self._hotkey_switch_translation(v))
                 self._shortcuts.append(shortcut)
+        logger.info(f"Hotkeys active: {len(self._shortcuts)}")
+
+    _HOTKEY_DEFAULTS = {
+        "clear_recall": "Esc",
+        "fts_search": "Ctrl+Shift+F",
+        "fuzzy_search": "Ctrl+Shift+S",
+        "next_verse": "Right",
+        "prev_verse": "Left",
+        "toggle_transcription": "F7",
+        "add_to_schedule": "Alt+Return",
+            "double_click": "F1",
+            "song_prev_section": "Ctrl+Left",
+            "song_next_section": "Ctrl+Right",
+            "navigate_scripture": "Ctrl+N",
+    }
 
     def _on_hotkey_bindings_changed(self, bindings: dict):
         """Called when user changes bindings in Settings."""
-        self._hotkey_bindings = bindings
+        # Merge over defaults: the editor only sends previously-saved keys,
+        # so a bare replace would permanently kill shortcuts for actions the
+        # user never customized (e.g. newly added ones).
+        import json
+        from core.database import set_setting
+        merged = dict(self._HOTKEY_DEFAULTS)
+        merged.update({k: v for k, v in (bindings or {}).items() if k in merged})
+        self._hotkey_bindings = merged
+        try:
+            set_setting("hotkeys.bindings", json.dumps(merged))
+        except Exception:
+            pass
         self._create_shortcuts()
+        logger.info(f"Hotkeys rebuilt: {len(self._shortcuts)} active")
 
     def _disable_shortcuts(self):
         """Disable all shortcuts during hotkey capture."""
+        if _KEYTAP_ENABLED:
+            logger.info("KEYTAP shortcuts disabled (capture started)")
         for shortcut in getattr(self, '_shortcuts', []):
             shortcut.setEnabled(False)
 
     def _enable_shortcuts(self):
         """Re-enable all shortcuts after hotkey capture."""
+        if _KEYTAP_ENABLED:
+            logger.info("KEYTAP shortcuts re-enabled (capture finished)")
         for shortcut in getattr(self, '_shortcuts', []):
             shortcut.setEnabled(True)
 
@@ -798,17 +922,38 @@ class MainWindow(QMainWindow):
                 if focused in (pi.book_input, pi.chapter_input, pi.verse_input):
                     self.setFocus()
 
+    def _active_workspace_tab(self):
+        """Return the workspace tab (SCRIPTURE or SLIDES) currently shown.
+
+        Both expose live_preview with next_verse/prev_verse signals, so
+        arrow-key stepping follows the operator's context.
+        """
+        try:
+            names = list(self._tabs.keys())
+            current = self.stack.currentIndex()
+            if 0 <= current < len(names):
+                tab = self._tabs[names[current]]
+                # Unwrap lazy placeholder if already loaded
+                real = getattr(tab, "real_widget", None)
+                if real is not None and getattr(tab, "_loaded", False):
+                    tab = real
+                if hasattr(tab, "live_preview"):
+                    return tab
+        except Exception:
+            pass
+        return self._tabs.get("SCRIPTURE")
+
     def _hotkey_next_verse(self):
         self._defocus_navigator()
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "live_preview"):
-            pres_tab.live_preview.next_verse.emit()
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "live_preview"):
+            tab.live_preview.next_verse.emit()
 
     def _hotkey_prev_verse(self):
         self._defocus_navigator()
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "live_preview"):
-            pres_tab.live_preview.prev_verse.emit()
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "live_preview"):
+            tab.live_preview.prev_verse.emit()
 
     def _hotkey_toggle_transcription(self):
         pres_tab = self._tabs.get("SCRIPTURE")
@@ -819,7 +964,30 @@ class MainWindow(QMainWindow):
                 pres_tab.stt_panel.transcription_started.emit()
 
     def _hotkey_add_to_schedule(self):
-        """Simulate a single click at cursor position (updates preview) and send to schedule."""
+        """Global hotkey: add what's selected to the schedule, per active tab.
+
+        SCRIPTURE tab → selected browser verses (existing behavior).
+        SLIDES tab → the selected deck (click first to select one under cursor).
+        """
+        tab = self._active_workspace_tab()
+        if tab is None:
+            return
+        if hasattr(tab, "deck_panel"):
+            self._hotkey_add_deck_to_schedule(tab)
+        elif hasattr(tab, "browser_panel"):
+            self._hotkey_add_verses_to_schedule(tab)
+
+    def _hotkey_add_deck_to_schedule(self, tab):
+        """SLIDES path: click at cursor (selects deck/card under it), then queue."""
+        self._synth_click_at_cursor()
+        deck = None
+        if hasattr(tab, "deck_panel"):
+            deck = tab.deck_panel.selected_deck()
+        if deck and hasattr(tab, "_on_deck_to_schedule"):
+            tab._on_deck_to_schedule(dict(deck))
+
+    def _synth_click_at_cursor(self):
+        """Synthesize a left press+release at the cursor position."""
         from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import Qt as QtCore, QPointF
@@ -828,22 +996,6 @@ class MainWindow(QMainWindow):
         target = QApplication.widgetAt(global_point)
         if not target:
             return
-
-        # Defocus navigator if cursor is outside it
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "browser_panel"):
-            browser = pres_tab.browser_panel
-            if hasattr(browser, "predictive_input"):
-                pi = browser.predictive_input
-                is_over_navigator = False
-                w = target
-                while w is not None:
-                    if w in (pi.book_input, pi.chapter_input, pi.verse_input):
-                        is_over_navigator = True
-                        break
-                    w = w.parentWidget() if hasattr(w, 'parentWidget') else None
-                if not is_over_navigator and QApplication.focusWidget() in (pi.book_input, pi.chapter_input, pi.verse_input):
-                    self.setFocus()
 
         local_pos = QPointF(target.mapFromGlobal(global_point))
         global_pos = QPointF(global_point)
@@ -865,9 +1017,35 @@ class MainWindow(QMainWindow):
         QApplication.sendEvent(target, press)
         QApplication.sendEvent(target, release)
 
+    def _hotkey_add_verses_to_schedule(self, pres_tab):
+        """SCRIPTURE path: single click at cursor (updates preview) + queue verses."""
+        from PyQt6.QtGui import QCursor
+        from PyQt6.QtWidgets import QApplication
+
+        global_point = QCursor.pos()
+        target = QApplication.widgetAt(global_point)
+        if not target:
+            return
+
+        # Defocus navigator if cursor is outside it
+        if hasattr(pres_tab, "browser_panel"):
+            browser = pres_tab.browser_panel
+            if hasattr(browser, "predictive_input"):
+                pi = browser.predictive_input
+                is_over_navigator = False
+                w = target
+                while w is not None:
+                    if w in (pi.book_input, pi.chapter_input, pi.verse_input):
+                        is_over_navigator = True
+                        break
+                    w = w.parentWidget() if hasattr(w, 'parentWidget') else None
+                if not is_over_navigator and QApplication.focusWidget() in (pi.book_input, pi.chapter_input, pi.verse_input):
+                    self.setFocus()
+
+        self._synth_click_at_cursor()
+
         # Now add selected verses to schedule
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "browser_panel") and hasattr(pres_tab, "schedule_panel"):
+        if hasattr(pres_tab, "browser_panel") and hasattr(pres_tab, "schedule_panel"):
             browser = pres_tab.browser_panel
             selected = browser.get_all_selected_verses()
             if not selected:
@@ -940,11 +1118,183 @@ class MainWindow(QMainWindow):
         QApplication.sendEvent(target, _make_event(QMouseEvent.Type.MouseButtonRelease))
 
     def _hotkey_clear(self):
-        # Trigger clear/recall
-        # The presentation tab handles this logic, we could signal it
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "live_preview"):
-            pres_tab.live_preview.clear_recall.emit()
+        # Trigger clear/recall on the ACTIVE workspace tab: each tab recalls
+        # with its own theme (scripture vs slides). Hardcoding SCRIPTURE here
+        # recalled slides with a scripture theme (gold title line).
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "live_preview"):
+            tab.live_preview.clear_recall.emit()
+
+    def _hotkey_navigate_scripture(self):
+        """Switch to SCRIPTURE and focus the navigator book field for typing."""
+        names = list(self._tabs.keys())
+        if "SCRIPTURE" in names:
+            self._switch_tab(names.index("SCRIPTURE"), "SCRIPTURE")
+        tab = self._tabs.get("SCRIPTURE")
+        real = getattr(tab, "real_widget", None)
+        if real is not None and getattr(tab, "_loaded", False):
+            tab = real
+        book = getattr(getattr(getattr(tab, "browser_panel", None),
+                               "predictive_input", None), "book_input", None)
+        if book is None:
+            logger.warning("Navigate hotkey: book input not available")
+            return
+        # Use the widget's arrival hook (not raw setFocus): it marks the
+        # predictive state fresh so the first keystroke starts a new prefix
+        # instead of appending to a stale one and redisplaying the same text.
+        if hasattr(book, "_on_focus_arrived"):
+            book._on_focus_arrived()
+        else:
+            book.setFocus()
+            try:
+                book.selectAll()
+            except Exception:
+                pass
+
+    def _resync_modifiers(self):
+        """Flush phantom modifiers on window return.
+
+        Alt/Ctrl released while unfocused can stay 'held' in Qt's eyes, so
+        the next hotkey arrives with foreign modifiers and matches nothing;
+        that press resyncs state, which is why only the FIRST press dies.
+        Synthetic releases clear it upfront — harmless when nothing is stuck,
+        since physical state reasserts itself on the next real event.
+        Logs when modifiers look stuck so the console proves the diagnosis.
+        """
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtGui import QKeyEvent
+        from PyQt6.QtCore import QEvent as _QE
+        believed = QApplication.keyboardModifiers()
+        if believed != Qt.KeyboardModifier.NoModifier:
+            logger.info(f"Window reactivated with modifiers still held: {believed} — flushing")
+        target = QApplication.focusWidget() or self
+        for key in (Qt.Key.Key_Control, Qt.Key.Key_Alt,
+                    Qt.Key.Key_Shift, Qt.Key.Key_Meta):
+            QApplication.sendEvent(
+                target, QKeyEvent(_QE.Type.KeyRelease, key,
+                                  Qt.KeyboardModifier.NoModifier))
+
+    def _end_song_nav_if_any(self):
+        """Ctrl released (or app deactivated): finish section-hop navigation."""
+        try:
+            tab = self._active_workspace_tab()
+        except Exception:
+            return
+        if tab is not None and hasattr(tab, "_end_song_nav"):
+            tab._end_song_nav()
+
+    def _maybe_song_nav_key(self, event) -> bool:
+        """Intercept rebinding-aware slide section-hop combos. Returns True if consumed."""
+        # Never steal keys while the user is rebinding hotkeys in Settings.
+        from ui.widgets.hotkey_editor import KeyboardHandler
+        _kh = KeyboardHandler._instance
+        if (_kh is not None and getattr(_kh, "_target", None) is not None
+                and getattr(_kh._target, "_capturing", False)):
+            return False
+        for action_id, delta in (("song_prev_section", -1), ("song_next_section", 1)):
+            combo = self._binding_combo(action_id)
+            if combo is None:
+                continue
+            if event.key() == combo[0] and event.modifiers() == combo[1]:
+                self._fire_song_nav(delta)
+                return True
+        return False
+
+    def _fire_song_nav(self, delta: int) -> bool:
+        """Route one section-hop step (shared by live interception + replay)."""
+        from PyQt6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
+        fw = QApplication.focusWidget()
+        if fw is not None and isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return False  # text inputs keep word-jump
+        tab = None
+        try:
+            tab = self._active_workspace_tab()
+        except Exception:
+            pass
+        if tab is not None and hasattr(tab, "song_nav_step"):
+            logger.info(f"Slide section-hop {'next' if delta > 0 else 'prev'}")
+            tab.song_nav_step(delta)
+            return True
+        return False
+
+    def _match_binding(self, key, mods):
+        """Bound action id whose sequence is exactly (key, mods), else None."""
+        for action_id in getattr(self, "_hotkey_bindings", {}):
+            combo = self._binding_combo(action_id)
+            if combo is not None and combo[0] == key and combo[1] == mods:
+                return action_id
+        return None
+
+    def _invoke_hotkey_action(self, action_id: str) -> bool:
+        """Invoke a hotkey action outside the shortcut system (replay path)."""
+        if action_id == "song_prev_section":
+            return self._fire_song_nav(-1)
+        if action_id == "song_next_section":
+            return self._fire_song_nav(1)
+        handler = getattr(self, "_hotkey_actions", {}).get(action_id)
+        if handler is None:
+            return False
+        try:
+            handler()
+        except Exception as e:
+            logger.warning(f"Replayed hotkey {action_id} failed: {e}")
+            return False
+        return True
+
+    def _replay_inactive_presses(self):
+        """Fire actions for keypresses lost to window inactivation.
+
+        A press that arrives while the window is inactive is skipped by
+        QShortcut matching (and skipped by _maybe_song_nav_key) — yet the
+        press itself usually activates the window. On activation, replay any
+        fresh unmatched presses so every physical press yields one action.
+        """
+        pending = getattr(self, "_inactive_keypresses", [])
+        self._inactive_keypresses = []
+        if _KEYTAP_ENABLED:
+            logger.info(f"KEYTAP replay check: {len(pending)} pending")
+        if not pending:
+            return
+        try:
+            from PyQt6.QtWidgets import QApplication as _QA4
+            if _QA4.activeModalWidget() is not None:
+                return
+        except Exception:
+            pass
+        now = time.monotonic()
+        last_fired = getattr(self, "_last_shortcut_at", 0.0)
+        for key, mods, t in pending:
+            age = now - t
+            if age > 1.0:
+                if _KEYTAP_ENABLED:
+                    logger.info(f"KEYTAP replay skip (stale {age:.2f}s): key={key}")
+                continue
+            if last_fired >= t:
+                if _KEYTAP_ENABLED:
+                    logger.info(f"KEYTAP replay skip (already fired): key={key}")
+                continue
+            action = self._match_binding(key, mods)
+            if action is None:
+                if _KEYTAP_ENABLED:
+                    logger.info(f"KEYTAP replay skip (unbound): key={key} mods={mods}")
+                continue
+            logger.info(f"Replaying hotkey lost to inactive window: {action}")
+            if _KEYTAP_ENABLED:
+                logger.info(f"KEYTAP replaying lost press: {action}")
+            self._invoke_hotkey_action(action)
+
+    def _binding_combo(self, action_id: str):
+        """Current (key, modifiers) for a binding id, or None if unbound."""
+        from PyQt6.QtGui import QKeySequence
+        key = getattr(self, "_hotkey_bindings", {}).get(
+            action_id, self._HOTKEY_DEFAULTS.get(action_id, ""))
+        if not key:
+            return None
+        seq = QKeySequence(key)
+        if seq.count() == 0:
+            return None
+        combo = seq[0]
+        return (combo.key(), combo.keyboardModifiers())
 
     def _hotkey_fuzzy_search(self):
         # Switch to Presentation tab, then to Fuzzy Search sub-tab

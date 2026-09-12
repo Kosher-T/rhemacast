@@ -1,552 +1,820 @@
 """
 ui/tabs/slides_tab.py
 
-SLIDES tab — songs / freeform slide decks.
-Left: deck list with search + import/delete. Right: ordered slide preview
-rendered with the hardcoded "default" theme (Lite Designer comes later).
+SLIDES tab — songs / announcements / freeform workspace.
+
+Layout (composition of modular panels, see ui/panels/README.md):
+  LEFT    SchedulePanel      (same widget as SCRIPTURE tab)
+  MIDDLE  LivePreviewPanel   (live + preview screens)
+          + SlideGridPanel "PREVIEW" (preview deck's slides)
+          + SlideGridPanel "LIVE"    (live deck's slides)
+  RIGHT   DeckListPanel      (deck library + import/delete)
+
+The tab owns NO panel internals — it only wires panel signals to panel
+public methods plus its own display state (preview/live payloads, schedule
+stepping, WebSocket broadcast).
 """
 
+import asyncio
 import logging
 import os
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QSplitter, QLineEdit, QFileDialog,
-    QMessageBox, QSizePolicy, QGridLayout,
-)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter
+from PyQt6.QtCore import Qt
 
-from ui.styles import (
-    SLATE_950, SLATE_900, SLATE_800, SLATE_700, SLATE_600,
-    SLATE_500, SLATE_400, SLATE_300, WHITE,
-    BLUE_500, BLUE_400, RED_500,
-    BORDER_SUBTLE, BORDER_LIGHT,
-)
+from ui.styles import SLATE_950
+from ui.panels.schedule_panel import SchedulePanel
+from ui.panels.live_preview_panel import LivePreviewPanel
+from ui.panels.slide_grid_panel import SlideGridPanel
+from ui.panels.deck_list_panel import DeckListPanel
+from core.bible_service import get_display_name
 
 logger = logging.getLogger(__name__)
 
-_PREVIEW_THEME_NAME = "default"
-
-
-def _parse_px(value: str | None, default: float) -> float:
-    """Parse '44px' → 44.0, falling back to default."""
-    try:
-        return float(str(value).strip().rstrip("px"))
-    except (TypeError, ValueError):
-        return default
-
-
-class _DeckCard(QFrame):
-    """Clickable card for one slide deck."""
-
-    clicked = pyqtSignal(int)  # deck_id
-
-    def __init__(self, deck: dict, parent=None):
-        super().__init__(parent)
-        self.deck_id = deck["id"]
-        self._selected = False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(64)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(10)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(3)
-
-        title = deck.get("title") or "(untitled)"
-        name_label = QLabel(title)
-        name_label.setStyleSheet(
-            f"color: {WHITE}; font-size: 13px; font-weight: 700; background: transparent;"
-        )
-        name_label.setWordWrap(False)
-        text_col.addWidget(name_label)
-
-        updated = (deck.get("updated_at") or "")[:10]
-        meta = QLabel(f"{deck.get('slide_count', 0)} slides  ·  {updated}")
-        meta.setStyleSheet(
-            f"color: {SLATE_400}; font-size: 10px; background: transparent;"
-        )
-        text_col.addWidget(meta)
-        text_col.addStretch()
-
-        layout.addLayout(text_col, 1)
-        self._apply_style()
-
-    def _apply_style(self):
-        if self._selected:
-            self.setStyleSheet(f"""
-                QFrame {{
-                    background: rgba(59, 130, 246, 0.18);
-                    border: 1px solid {BLUE_500};
-                    border-radius: 8px;
-                }}
-            """)
-        else:
-            self.setStyleSheet(f"""
-                QFrame {{
-                    background: {SLATE_800};
-                    border: 1px solid transparent;
-                    border-radius: 8px;
-                }}
-                QFrame:hover {{
-                    background: {SLATE_700};
-                }}
-            """)
-
-    def set_selected(self, selected: bool):
-        self._selected = selected
-        self._apply_style()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.deck_id)
-        super().mousePressEvent(event)
-
-
-class _SlideCard(QFrame):
-    """One previewed slide — section label + text, themed like the display."""
-
-    clicked = pyqtSignal()  # emits with no args; index bound by caller
-
-    def __init__(self, index: int, section: str | None, text: str, theme: dict, parent=None):
-        super().__init__(parent)
-        self._index = index
-        self.setFixedSize(340, 191)  # 16:9
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: #000000;
-                border: 1px solid {BORDER_LIGHT};
-                border-radius: 6px;
-            }}
-        """)
-
-        t = theme.get("text", {})
-        r = theme.get("reference", {})
-
-        text_color = t.get("color", "#ffffff")
-        font_family = t.get("font_family", "'Nunito', sans-serif")
-        weight = int(t.get("weight", 700))
-        size_px = max(11.0, _parse_px(t.get("size"), 44) * 0.30)
-        line_height = float(t.get("line_height", 1.2))
-        letter_spacing = t.get("letter_spacing", "-0.02em")
-
-        ref_color = r.get("color", "#cccccc")
-        ref_size = max(8.0, _parse_px(r.get("size"), 34) * 0.22)
-        ref_transform = r.get("text_transform", "uppercase").lower()
-        ref_spacing = r.get("letter_spacing", "0.1em")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(4)
-
-        top_row = QHBoxLayout()
-        idx_label = QLabel(str(index + 1))
-        idx_label.setStyleSheet(
-            f"color: {SLATE_600}; font-size: 9px; font-weight: 700; background: transparent;"
-        )
-        top_row.addWidget(idx_label)
-        top_row.addStretch()
-        layout.addLayout(top_row)
-
-        layout.addStretch()
-
-        if section:
-            sec_label = QLabel(section.upper() if ref_transform == "uppercase" else section)
-            sec_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            sec_label.setWordWrap(True)
-            sec_label.setStyleSheet(f"""
-                color: {ref_color};
-                font-size: {ref_size:.0f}px;
-                font-weight: 600;
-                letter-spacing: {ref_spacing};
-                background: transparent;
-            """)
-            layout.addWidget(sec_label)
-
-        body = QLabel()
-        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        body.setWordWrap(True)
-        from core.slide_parser import has_inline_markup, inline_markup_to_html
-        if has_inline_markup(text):
-            # Rich text so inline [words: (#hex)] colors show in preview
-            body.setTextFormat(Qt.TextFormat.RichText)
-            body.setText(inline_markup_to_html(text))
-        else:
-            body.setText(text)
-        body.setStyleSheet(f"""
-            color: {text_color};
-            font-family: {font_family};
-            font-size: {size_px:.0f}px;
-            font-weight: {weight};
-            line-height: {line_height};
-            letter-spacing: {letter_spacing};
-            background: transparent;
-        """)
-        layout.addWidget(body)
-
-        layout.addStretch()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
 
 class SlidesTab(QWidget):
-    """SLIDES tab — deck management + preview."""
-
-    deck_to_schedule = pyqtSignal(dict)       # full deck dict
-    slide_live_requested = pyqtSignal(int, int)      # deck_id, slide_index
-    slide_preview_requested = pyqtSignal(int, int)   # deck_id, slide_index
+    """SLIDES workspace tab."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(f"background: {SLATE_950};")
-        self._decks: list[dict] = []
-        self._cards: dict[int, _DeckCard] = {}
-        self._current_deck: dict | None = None
-        self._selected_slide_idx: int | None = None
+
+        # Shared display state (see core/display_state.py) — same contract
+        # as the SCRIPTURE tab. Never plain attrs here: constructing this
+        # lazy tab must not wipe the other tab's screens.
+        from core.display_state import display_state
+        self._display = display_state
+
+        from core.database import get_setting
+        output_count = int(get_setting("display.output_count", 1))
+        # Slides use their OWN per-output theme namespace, independent of the
+        # scripture output themes — changing a theme in one tab never affects
+        # the other. Defaults to the "slides" theme (no title line).
+        self._themes_by_output: dict[str, str] = {}
+        for i in range(1, output_count + 1):
+            oid = str(i)
+            self._themes_by_output[oid] = get_setting(f"display.slides_output_{oid}_theme", "slides")
+        self._current_theme = self._themes_by_output.get("1", "slides")
+        # Verses shown here (schedule items, recall) render with the SCRIPTURE
+        # output themes — theme follows content type, not the tab.
+        self._verse_themes_by_output: dict[str, str] = {}
+        for i in range(1, output_count + 1):
+            oid = str(i)
+            self._verse_themes_by_output[oid] = get_setting(f"display.output_{oid}_theme", "default")
+
+        # Slide section-hop navigation (Ctrl+Left/Right) transient state:
+        # highlight position decoupled from the displayed slide while held.
+        self._song_nav_active = False
+        self._song_nav_index: int | None = None
+
+        # ── Panels ──
+        self.schedule_panel = SchedulePanel()
+        self.live_preview = LivePreviewPanel()
+        self.preview_grid = SlideGridPanel("PREVIEW")
+        self.live_grid = SlideGridPanel("LIVE")
+        self.live_grid.edit_menu_enabled = False  # live strip is inviolable
+        self.deck_panel = DeckListPanel()
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(0)
 
-        # ── Toolbar ──
-        toolbar = QWidget()
-        toolbar.setFixedHeight(48)
-        toolbar.setStyleSheet(f"""
-            QWidget {{
-                background: {SLATE_900};
-                border-bottom: 1px solid {BORDER_SUBTLE};
-            }}
-        """)
-        tb = QHBoxLayout(toolbar)
-        tb.setContentsMargins(16, 0, 16, 0)
-        tb.setSpacing(10)
+        outer = QSplitter(Qt.Orientation.Horizontal)
+        outer.setChildrenCollapsible(False)
+        outer.addWidget(self._wrap(self.schedule_panel))
+        middle = QWidget()
+        middle_layout = QVBoxLayout(middle)
+        middle_layout.setContentsMargins(4, 4, 4, 4)
+        middle_layout.setSpacing(6)
 
-        header_col = QVBoxLayout()
-        header_col.setSpacing(0)
-        title = QLabel("Slides")
-        title.setStyleSheet(f"color: {WHITE}; font-size: 15px; font-weight: 800;")
-        header_col.addWidget(title)
-        subtitle = QLabel("SONGS · ANNOUNCEMENTS · FREEFORM")
-        subtitle.setStyleSheet(
-            f"color: {SLATE_500}; font-size: 8px; font-weight: 700; letter-spacing: 1px;"
-        )
-        header_col.addWidget(subtitle)
-        tb.addLayout(header_col)
+        # Vertical splitter: screens on top, strips below. Drag the handle
+        # to enlarge the operator screens (same pattern as SCRIPTURE tab).
+        vertical = QSplitter(Qt.Orientation.Vertical)
+        vertical.setChildrenCollapsible(False)
+        vertical.addWidget(self.live_preview)
 
-        tb.addSpacing(16)
+        strips = QSplitter(Qt.Orientation.Horizontal)
+        strips.setChildrenCollapsible(False)
+        strips.addWidget(self.preview_grid)
+        strips.addWidget(self.live_grid)
+        vertical.addWidget(strips)
+        middle_layout.addWidget(vertical)
+        outer.addWidget(middle)
 
-        self.btn_import = QPushButton("Import .txt")
-        self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import.clicked.connect(self._on_import)
-        tb.addWidget(self.btn_import)
+        outer.addWidget(self.deck_panel)
+        outer.setStretchFactor(0, 0)
+        outer.setStretchFactor(1, 1)
+        outer.setStretchFactor(2, 0)
 
-        self.btn_import_ew = QPushButton("Import EasyWorship")
-        self.btn_import_ew.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import_ew.setToolTip("Import songs from an EasyWorship v6 Data folder (containing Songs.db)")
-        self.btn_import_ew.clicked.connect(self._on_import_easyworship)
-        tb.addWidget(self.btn_import_ew)
+        root.addWidget(outer)
 
-        self.btn_schedule = QPushButton("+ Schedule")
-        self.btn_schedule.setEnabled(False)
-        self.btn_schedule.setToolTip("Add the selected deck to the service schedule")
-        self.btn_schedule.clicked.connect(self._on_add_to_schedule)
-        tb.addWidget(self.btn_schedule)
+        # Persisted layouts (defaults on first run; saved sizes win after).
+        from core.panel_layout import track_splitter
+        self._outer_splitter = track_splitter("slides.outer", outer, [280, 900, 300])
+        self._strips_splitter = track_splitter("slides.strips", strips, [500, 500])
+        self._vertical_splitter = track_splitter("slides.vertical", vertical, [380, 620])
 
-        self.btn_live = QPushButton("Go Live")
-        self.btn_live.setEnabled(False)
-        self.btn_live.setToolTip("Push the selected slide to the live output")
-        self.btn_live.clicked.connect(self._on_go_live)
-        tb.addWidget(self.btn_live)
+        self._connect_signals()
+        self._restore_last_schedule()
 
-        self.btn_delete = QPushButton("Delete")
-        self.btn_delete.setEnabled(False)
-        self.btn_delete.clicked.connect(self._on_delete)
-        tb.addWidget(self.btn_delete)
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Pick up font-size changes made in Settings while away
+        self.preview_grid.refresh_strip_size()
+        self.live_grid.refresh_strip_size()
+        self.deck_panel.refresh_card_size()
+        # Re-apply saved splitter layouts once real sizes exist
+        from core.panel_layout import restore_splitter
+        restore_splitter("slides.outer", self._outer_splitter)
+        restore_splitter("slides.strips", self._strips_splitter)
+        restore_splitter("slides.vertical", self._vertical_splitter)
 
-        tb.addStretch()
+    # ── Shared-state aliases (read/write core.display_state) ──────────────
 
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search title or lyrics…")
-        self.search_box.setFixedWidth(260)
-        self.search_box.textChanged.connect(self._on_search)
-        tb.addWidget(self.search_box)
+    @property
+    def _current_display(self):
+        return self._display.live_data
 
-        root.addWidget(toolbar)
+    @_current_display.setter
+    def _current_display(self, value):
+        self._display.live_data = value
 
-        # ── Body ──
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
-        splitter.setStyleSheet(f"QSplitter::handle {{ background: {BORDER_SUBTLE}; }}")
+    @property
+    def _current_preview(self):
+        return self._display.preview_data
 
-        # Left: deck list
-        left_panel = QWidget()
-        left_panel.setStyleSheet(f"background: {SLATE_950};")
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(8, 8, 0, 8)
-        left_layout.setSpacing(6)
+    @_current_preview.setter
+    def _current_preview(self, value):
+        self._display.preview_data = value
 
-        self.deck_scroll = QScrollArea()
-        self.deck_scroll.setWidgetResizable(True)
-        self.deck_scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: none;
-            }}
-        """)
-        self.deck_list_container = QWidget()
-        self.deck_list_container.setStyleSheet("background: transparent;")
-        self.deck_list_layout = QVBoxLayout(self.deck_list_container)
-        self.deck_list_layout.setContentsMargins(0, 0, 0, 0)
-        self.deck_list_layout.setSpacing(6)
-        self.deck_list_layout.addStretch()
-        self.deck_scroll.setWidget(self.deck_list_container)
+    @property
+    def _last_cleared_display(self):
+        return self._display.last_cleared_data
 
-        left_layout.addWidget(self.deck_scroll)
-        splitter.addWidget(left_panel)
+    @_last_cleared_display.setter
+    def _last_cleared_display(self, value):
+        self._display.last_cleared_data = value
 
-        # Right: slide preview
-        right_panel = QWidget()
-        right_panel.setStyleSheet(f"background: {SLATE_950};")
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(8, 8, 8, 8)
-        right_layout.setSpacing(6)
+    @property
+    def _is_cleared(self):
+        return self._display.is_cleared
 
-        self.preview_title = QLabel("Select a deck to preview")
-        self.preview_title.setStyleSheet(
-            f"color: {SLATE_400}; font-size: 11px; font-weight: 700;"
-        )
-        right_layout.addWidget(self.preview_title)
+    @_is_cleared.setter
+    def _is_cleared(self, value):
+        self._display.is_cleared = value
 
-        self.preview_scroll = QScrollArea()
-        self.preview_scroll.setWidgetResizable(True)
-        self.preview_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self.preview_container = QWidget()
-        self.preview_container.setStyleSheet("background: transparent;")
-        self.preview_grid = QGridLayout(self.preview_container)
-        self.preview_grid.setContentsMargins(0, 0, 0, 0)
-        self.preview_grid.setSpacing(10)
-        self.preview_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.preview_scroll.setWidget(self.preview_container)
-        right_layout.addWidget(self.preview_scroll, 1)
+    @property
+    def _live_sched_uid(self):
+        return self._display.live_sched_uid
 
-        splitter.addWidget(right_panel)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([300, 900])
+    @_live_sched_uid.setter
+    def _live_sched_uid(self, value):
+        self._display.live_sched_uid = value
 
-        root.addWidget(splitter, 1)
+    @property
+    def _live_from_schedule(self):
+        return self._display.live_from_schedule
 
-        self.refresh()
+    @_live_from_schedule.setter
+    def _live_from_schedule(self, value):
+        self._display.live_from_schedule = bool(value)
 
-    # ── Data ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _wrap(panel: QWidget) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(0)
+        panel.setProperty("class", "MainPanel")
+        layout.addWidget(panel)
+        return wrapper
 
-    def refresh(self, keep_selection: bool = True):
-        """Reload decks from the service, preserving selection when possible."""
-        from core.slide_service import list_decks
-        selected_id = self._current_deck["id"] if keep_selection and self._current_deck else None
-        self._decks = list_decks()
-        self._populate_deck_list(selected_id)
+    # ── Wiring ──────────────────────────────────────────────────────────────
 
-    def _populate_deck_list(self, selected_id: int | None = None):
-        while self.deck_list_layout.count() > 1:
-            item = self.deck_list_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self._cards.clear()
+    def _connect_signals(self):
+        # Deck library → preview / schedule / live
+        self.deck_panel.deck_selected.connect(self._on_deck_selected)
+        self.deck_panel.add_to_schedule_requested.connect(self._on_deck_to_schedule)
+        self.deck_panel.go_live_requested.connect(self._on_deck_go_live)
+        self.deck_panel.deck_deleted.connect(self._on_deck_deleted)
+        self.deck_panel.deck_text_updated.connect(self._on_deck_text_updated)
+        self.deck_panel.deck_edit_requested.connect(self._open_lite_designer)
+        # Single-slide edits refresh the preview side only (live rule kept).
+        # Only the preview strip offers slide editing — never the live one.
+        self.preview_grid.slide_edit_requested.connect(self.deck_panel.open_slide_editor)
+        self.deck_panel.deck_slide_updated.connect(self._on_deck_slide_updated)
 
-        if not self._decks:
-            empty = QLabel("No decks yet.\nImport a .txt file to begin.")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setStyleSheet(
-                f"color: {SLATE_600}; font-size: 11px; background: transparent; padding-top: 24px;"
-            )
-            self.deck_list_layout.insertWidget(0, empty)
-        else:
-            for deck in self._decks:
-                card = _DeckCard(deck)
-                card.clicked.connect(self._on_deck_clicked)
-                self.deck_list_layout.insertWidget(self.deck_list_layout.count() - 1, card)
-                self._cards[deck["id"]] = card
-                if selected_id is not None and deck["id"] == selected_id:
-                    self._select_deck(deck, scroll=False)
+        # Preview strip → preview screen; double-click → live
+        self.preview_grid.slide_clicked.connect(self._on_preview_slide_clicked)
+        self.preview_grid.slide_double_clicked.connect(self._on_preview_slide_double_clicked)
 
-        if selected_id is None or not any(d["id"] == selected_id for d in self._decks):
-            self._current_deck = None
-            self._selected_slide_idx = None
-            self.btn_delete.setEnabled(False)
-            self.btn_schedule.setEnabled(False)
-            self.btn_live.setEnabled(False)
-            self.preview_title.setText("Select a deck to preview")
-            self._clear_preview()
+        # Live strip → live screen + broadcast
+        self.live_grid.slide_clicked.connect(self._on_live_slide_clicked)
+        self.live_grid.slide_double_clicked.connect(self._on_live_slide_clicked)
 
-    def _select_deck(self, deck: dict, scroll: bool = False):
-        self._current_deck = deck
-        self._selected_slide_idx = None
-        self.btn_live.setEnabled(False)
-        self.btn_schedule.setEnabled(True)
-        for did, card in self._cards.items():
-            card.set_selected(did == deck["id"])
-        self.btn_delete.setEnabled(True)
-        label = deck.get("title") or "(untitled)"
-        self.preview_title.setText(f"{label}  ·  {deck['slide_count']} slides")
-        self._render_preview(deck)
-        if scroll:
-            card = self._cards.get(deck["id"])
-            if card:
-                self.deck_scroll.ensureWidgetVisible(card)
+        # Schedule (same behavior as SCRIPTURE tab)
+        self.schedule_panel.item_clicked.connect(self._on_schedule_click)
+        self.schedule_panel.item_double_clicked.connect(self._on_schedule_double_click)
+        self.schedule_panel.schedule_loaded.connect(self._on_schedule_loaded)
 
-    def _clear_preview(self):
-        while self.preview_grid.count():
-            item = self.preview_grid.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        # Live/preview screens
+        self.live_preview.clear_recall.connect(self._on_clear_recall)
+        self.live_preview.prev_verse.connect(self._on_prev)
+        self.live_preview.next_verse.connect(self._on_next)
+        self.live_preview.preview_double_clicked.connect(self._on_preview_double_click)
 
-    def _render_preview(self, deck: dict):
+        # Screens render the SHARED display state — updates from any tab
+        # appear here (and vice versa).
+        self._display.live_changed.connect(self.live_preview.set_live_payload)
+        self._display.preview_changed.connect(self.live_preview.set_preview_payload)
+        self._display.cleared.connect(self.live_preview.clear_live)
+        if self._display.live_payload:
+            self.live_preview.set_live_payload(self._display.live_payload)
+        if self._display.preview_payload:
+            self.live_preview.set_preview_payload(self._display.preview_payload)
+
+    # ── Payloads + broadcast ────────────────────────────────────────────────
+
+    def _build_payload(self, text: str, ref: str, version: str = "",
+                       output_id: str = "1", slide_format: dict | None = None,
+                       is_slide: bool = True, deck_id: int | None = None) -> dict:
         from core.theme_loader import get_theme
-        try:
-            theme = get_theme(_PREVIEW_THEME_NAME)
-        except Exception as e:
-            logger.warning(f"Theme '{_PREVIEW_THEME_NAME}' unavailable ({e}); using bare styling")
-            theme = {}
-
-        self._clear_preview()
-        cols = 2
-        for i, slide in enumerate(deck.get("slides", [])):
-            card = _SlideCard(i, slide.get("section"), slide.get("text", ""), theme)
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
-            card.clicked.connect(lambda idx=i: self._on_slide_card_clicked(idx))
-            self.preview_grid.addWidget(card, i // cols, i % cols)
-
-    def _on_slide_card_clicked(self, index: int):
-        """Select a slide card; single-click previews it, Go Live becomes armed."""
-        self._selected_slide_idx = index
-        # Highlight selected card
-        for i in range(self.preview_grid.count()):
-            w = self.preview_grid.itemAt(i).widget()
-            if w:
-                border = f"2px solid {BLUE_500}" if i == index else f"1px solid {BORDER_LIGHT}"
-                w.setStyleSheet(f"""
-                    QFrame {{
-                        background: #000000;
-                        border: {border};
-                        border-radius: 6px;
-                    }}
-                """)
-        self.btn_live.setEnabled(True)
-        if self._current_deck:
-            self.slide_preview_requested.emit(self._current_deck["id"], index)
-
-    def _on_add_to_schedule(self):
-        if self._current_deck:
-            self.deck_to_schedule.emit(dict(self._current_deck))
-
-    def _on_go_live(self):
-        if not self._current_deck:
-            return
-        idx = self._selected_slide_idx if self._selected_slide_idx is not None else 0
-        self.slide_live_requested.emit(self._current_deck["id"], idx)
-
-    # ── Actions ─────────────────────────────────────────────────────────────
-
-    def _on_deck_clicked(self, deck_id: int):
-        deck = next((d for d in self._decks if d["id"] == deck_id), None)
-        if deck:
-            self._select_deck(deck, scroll=False)
-
-    def _on_search(self, text: str):
-        from core.slide_service import list_decks, search_decks
-        query = text.strip()
-        self._decks = search_decks(query) if query else list_decks()
-        self._populate_deck_list(selected_id=None)
-
-    def _on_import(self):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Import slide txt files", "", "Text files (*.txt);;All files (*)"
-        )
-        if not paths:
-            return
-        from core.slide_service import import_txt
-        imported, failed = [], []
-        for path in paths:
-            try:
-                deck = import_txt(path)
-                imported.append(deck)
-            except Exception as e:
-                logger.error(f"Failed to import {path}: {e}")
-                failed.append((path, str(e)))
-        self.refresh(keep_selection=False)
-        if failed:
-            detail = "\n\n".join(f"{p}\n{err}" for p, err in failed)
-            QMessageBox.warning(self, "Import Failed", f"Some files could not be imported:\n\n{detail}")
-
-    def _on_import_easyworship(self):
-        """Import songs from an EasyWorship v6 Data directory (Songs.db + SongWords.db)."""
-        from PyQt6.QtWidgets import QApplication
-        data_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select EasyWorship Data folder",
-            "",
-            QFileDialog.Option.ShowDirsOnly,
-        )
-        if not data_dir:
-            return
-
-        if not os.path.isfile(os.path.join(data_dir, "Songs.db")):
-            QMessageBox.warning(
-                self,
-                "EasyWorship Import",
-                f"No Songs.db found in:\n{data_dir}\n\n"
-                "Select the folder that contains Songs.db and SongWords.db "
-                "(e.g. EasyWorship/Default/v6.1/Databases/Data).",
-            )
-            return
-
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            from core.easyworship_import import import_easyworship
-            result = import_easyworship(data_dir=data_dir)
-        except Exception as e:
-            logger.error(f"EasyWorship import failed: {e}")
-            QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        self.refresh(keep_selection=False)
-
-        failed = result.get("failed", [])
-        msg = (
-            f"New songs imported: {result['imported']}\n"
-            f"Existing updated:   {result['updated']}\n"
-            f"Skipped (no lyrics): {result['skipped']}"
-        )
-        if failed:
-            detail = "\n".join(f"{t}: {err}" for t, err in failed[:5])
-            more = f"\n… and {len(failed) - 5} more" if len(failed) > 5 else ""
-            QMessageBox.warning(self, "EasyWorship Import", f"{msg}\n\nFailed:\n{detail}{more}")
+        if is_slide:
+            theme_name = self._themes_by_output.get(output_id, "slides")
         else:
-            QMessageBox.information(self, "EasyWorship Import", msg)
+            theme_name = self._verse_themes_by_output.get(output_id, "default")
+        payload = {
+            "action": "display",
+            "text": text,
+            "ref": ref,
+            "reference": ref,
+            "translation": get_display_name(version) if version else "",
+            "book": "",
+            "chapter": "",
+            "verse": "",
+            "content": "slide" if is_slide else "verse",
+            "theme": theme_name,
+            "theme_data": get_theme(theme_name),
+        }
+        if slide_format is not None:
+            payload["slide_format"] = slide_format
+        if deck_id is not None:
+            payload["deck_id"] = deck_id
+        return payload
 
-    def _on_delete(self):
-        if not self._current_deck:
-            return
-        deck = self._current_deck
-        confirm = QMessageBox.question(
-            self,
-            "Delete Deck",
-            f"Delete \"{deck.get('title') or '(untitled)'}\"?\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    def _payload_for_display(self, data: dict, output_id: str = "1") -> dict:
+        if data.get("item_type") == "slide":
+            return self._build_payload(data.get("text", ""),
+                                       self._slide_display_ref(data, output_id),
+                                       "", output_id,
+                                       slide_format=data.get("slide_format"),
+                                       deck_id=data.get("deck_id"))
+        # Verse display dicts carry a prebuilt ref — or book/chapter parts
+        # (SCRIPTURE-tab shape); never emit a blank ref when parts exist.
+        ref = data.get("ref", "")
+        if not ref and data.get("book"):
+            ref = (f"[{get_display_name(data.get('version', ''))}] "
+                   f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}")
+        return self._build_payload(
+            data.get("text", ""), ref, data.get("version", ""), output_id,
+            is_slide=False,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+
+    def _broadcast_to_ws(self, payload: dict, data: dict | None = None):
+        from core.database import log_live_payload
+        is_slide = data is not None and data.get("item_type") == "slide"
+        # History: anything hitting live gets documented (display + clear),
+        # independent of whether a WS loop is up for OBS. Slides log their
+        # stored ref (identity) even when the theme hides it on screen.
+        log_live_payload(payload, kind=("slide" if is_slide else "verse"),
+                         ref=(data.get("ref") if is_slide else None))
+        try:
+            from core.websocket_server import broadcast_display, _server_loop
+            if _server_loop is None or _server_loop.is_closed():
+                return
+            if payload.get("action") == "clear":
+                asyncio.run_coroutine_threadsafe(broadcast_display(payload), _server_loop)
+            else:
+                for oid in self._themes_by_output:
+                    # Slide title visibility is per-output (each output has its
+                    # own slides theme); verses pass their ref through as-is.
+                    # Theme namespace follows content type, not the tab.
+                    ref = (self._slide_display_ref(data, oid) if is_slide
+                           else payload.get("ref", ""))
+                    themed = self._build_payload(
+                        payload.get("text", ""), ref,
+                        payload.get("translation", ""), output_id=oid,
+                        slide_format=(data.get("slide_format") if is_slide else None),
+                        is_slide=is_slide,
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast_display(themed, target=oid), _server_loop
+                    )
+        except Exception as e:
+            logger.error(f"Failed to initiate WebSocket broadcast: {e}")
+
+    # ── Slide display core ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _slide_ref(title: str, section: str | None) -> str:
+        title = title or "(untitled)"
+        return f"{title} · {section}" if section else title
+
+    def _slide_display_ref(self, data: dict, output_id: str = "1") -> str:
+        """Reference line for a slide payload, honoring the theme's show_title.
+
+        The stored display dict keeps the full "Title · Section" ref (logs,
+        identity); the payload blanks it when the rendering theme opts out
+        with {"slide": {"show_title": false}}.
+        """
+        from core.theme_loader import get_theme, slide_title_visible
+        theme = get_theme(self._themes_by_output.get(output_id, "slides"))
+        if not slide_title_visible(theme):
+            return ""
+        if data.get("ref"):
+            return data["ref"]
+        return self._slide_ref(data.get("deck_title", ""), data.get("section"))
+
+    @staticmethod
+    def _same_deck(a: dict | None, b: dict | None) -> bool:
+        """True if two deck dicts describe the same deck (stable across copies)."""
+        if not a or not b:
+            return False
+        if a.get("id") is not None and b.get("id") is not None:
+            return a.get("id") == b.get("id")
+        if a.get("source_path") and b.get("source_path"):
+            return a.get("source_path") == b.get("source_path")
+        return a.get("slides") is not None and a.get("slides") is b.get("slides")
+
+    def _sync_grid(self, grid, deck: dict, index: int, title: str, force: bool = False):
+        """Show index on a strip WITHOUT rebuilding when the deck is unchanged.
+
+        Rebuilding on every step reset the scrollbar to the top and dropped
+        transient view state — selection-only updates keep scroll position.
+        Pass force=True when the deck object is fresh (edited / re-sent to
+        live): same id, new slides — the fast path would keep stale cards.
+        """
+        if not force and self._same_deck(grid.deck, deck):
+            grid.set_selected_index(index)
+        else:
+            grid.set_deck(deck, select_index=index)
+            grid.set_title(title)
+
+    def _show_slide(self, deck: dict, index: int, live: bool,
+                    sched_data: dict | None = None, force_grid: bool = False):
+        """Show one slide on preview or live (+broadcast when live)."""
+        slides = deck.get("slides", []) if deck else []
+        if not slides:
             return
-        from core.slide_service import delete_deck
-        delete_deck(deck["id"])
-        self._current_deck = None
-        self.refresh(keep_selection=False)
+        index = max(0, min(index, len(slides) - 1))
+        title = deck.get("title") or "(untitled)"
+        slide = slides[index]
+        ref = self._slide_ref(title, slide.get("section"))
+        data = {
+            "item_type": "slide",
+            "text": slide.get("text", ""),
+            "ref": ref,
+            "version": "",
+            "deck_id": deck.get("id"),
+            "deck_title": title,
+            "slide_format": deck.get("format") or None,
+            "slides": slides,
+            "slide_index": index,
+        }
+        payload = self._build_payload(data["text"],
+                                       self._slide_display_ref(data), "",
+                                       slide_format=data["slide_format"],
+                                       deck_id=data.get("deck_id"))
+        if live:
+            # A fresh live send (click, schedule, recall…) cancels any
+            # in-progress Ctrl-navigation; nav steps re-arm after calling.
+            self._song_nav_active = False
+            self._song_nav_index = None
+            self._current_display = data
+            self._live_sched_uid = (
+                sched_data.get("_sched_uid") if isinstance(sched_data, dict) else None
+            )
+            self._live_from_schedule = sched_data is not None
+            self._is_cleared = False
+            self._display.publish_live(payload, data,
+                                       self._live_sched_uid, self._live_from_schedule)
+            self._sync_grid(self.live_grid, deck, index, f"LIVE · {title}", force=force_grid)
+            self._broadcast_to_ws(payload, data)
+            logger.info(f"Slide live: {ref} ({index + 1}/{len(slides)})")
+        else:
+            self._current_preview = data
+            self._display.publish_preview(payload, data)
+            self._sync_grid(self.preview_grid, deck, index, f"PREVIEW · {title}", force=force_grid)
+            logger.info(f"Slide preview: {ref}")
+
+    def _show_verse(self, ref: str, text: str, version: str, live: bool,
+                    sched_data: dict | None = None):
+        """Show a schedule verse item on preview or live (scripture theme)."""
+        data = {"item_type": "verse", "text": text, "ref": ref, "version": version}
+        payload = self._build_payload(text, ref, version, is_slide=False)
+        if live:
+            self._song_nav_active = False
+            self._song_nav_index = None
+            self._current_display = data
+            self._live_sched_uid = (
+                sched_data.get("_sched_uid") if isinstance(sched_data, dict) else None
+            )
+            self._live_from_schedule = sched_data is not None
+            self._is_cleared = False
+            self._display.publish_live(payload, data,
+                                       self._live_sched_uid, self._live_from_schedule)
+            self._broadcast_to_ws(payload)
+            logger.info(f"Verse live: {ref}")
+        else:
+            self._current_preview = data
+            self._display.publish_preview(payload, data)
+            logger.info(f"Verse preview: {ref}")
+
+    # ── Deck library handlers ───────────────────────────────────────────────
+
+    def _on_deck_selected(self, deck: dict):
+        """Deck click → load its slides into the preview strip + preview slide 0."""
+        # Library rows are summaries (no slides) — fetch the full deck.
+        if deck.get("slides") is None and deck.get("id") is not None:
+            from core.slide_service import get_deck
+            deck = get_deck(deck["id"]) or deck
+        if deck.get("slides"):
+            self._show_slide(deck, 0, live=False)
+
+    def _on_deck_to_schedule(self, deck: dict):
+        if deck.get("slides") is None and deck.get("id") is not None:
+            from core.slide_service import get_deck
+            deck = get_deck(deck["id"]) or deck
+        item_data = {
+            "item_type": "slide",
+            "ref": deck.get("title") or "(untitled)",
+            "name": deck.get("title") or "(untitled)",
+            "deck_id": deck.get("id"),
+            "slides": deck.get("slides", []),
+            "format": deck.get("format"),
+            "theme": self._current_theme,
+        }
+        self.schedule_panel.add_item(item_data)
+        logger.info(f"Deck added to schedule: {item_data['ref']}")
+
+    def _open_lite_designer(self, deck_id: int):
+        """Deck menu → Edit…: Lite Designer, Freeform tab first."""
+        from ui.widgets.lite_designer.lite_designer import LiteDesigner
+        live = (self._current_display or {}).get("deck_id") == deck_id
+        editor = LiteDesigner(parent=self.window(), deck_id=deck_id,
+                              default_tab="freeform", freeform_enabled=True,
+                              live=live)
+        editor.deck_saved.connect(self._on_lite_designer_saved)
+        editor.edit_full_requested.connect(self._open_theme_designer_tab)
+        editor.show()
+
+    def _on_lite_designer_saved(self, deck_id: int):
+        # Titles may have changed → refresh the library, then preview side.
+        self.deck_panel.refresh(keep_selection=True)
+        self._on_deck_text_updated(deck_id)
+
+    def _open_theme_designer_tab(self, theme_name: str):
+        window = self.window()
+        if window is not None and hasattr(window, "_open_full_designer"):
+            window._open_full_designer(theme_name)
+
+    def _on_deck_go_live(self, deck_id: int):
+        from core.slide_service import get_deck
+        deck = get_deck(deck_id)
+        if deck and deck.get("slides"):
+            self._show_slide(deck, 0, live=True, force_grid=True)
+
+    def _on_deck_deleted(self, deck_id: int):
+        for grid, attr in ((self.preview_grid, "_current_preview"),
+                           (self.live_grid, "_current_display")):
+            state = getattr(self, attr)
+            if state and state.get("item_type") == "slide" and state.get("deck_id") == deck_id:
+                grid.clear()
+                grid.set_title("PREVIEW" if grid is self.preview_grid else "LIVE")
+                setattr(self, attr, None)
+        if self._current_display is None:
+            self._is_cleared = True
+
+    def _on_deck_text_updated(self, deck_id: int):
+        """A deck was edited as text: refresh PREVIEW only.
+
+        Preview strip + preview screen re-show the same index from the fresh
+        deck (clamped if slides were removed). Live is deliberately untouched —
+        it keeps the old deck state until the operator double-clicks a
+        preview slide, which is the only thing that ever sends to live.
+        """
+        from core.slide_service import get_deck
+        deck = get_deck(deck_id)
+        if not deck or not deck.get("slides"):
+            return
+        state = self._current_preview
+        if not (state and state.get("item_type") == "slide"
+                and state.get("deck_id") == deck_id):
+            return
+        idx = min(state.get("slide_index", 0), len(deck["slides"]) - 1)
+        # Forced rebuild: _sync_grid's same-deck fast path only moves
+        # selection, so edited card text would never refresh otherwise.
+        self.preview_grid.set_deck(deck, select_index=idx)
+        self.preview_grid.set_title(f"PREVIEW · {deck.get('title') or '(untitled)'}")
+        self._show_slide(deck, idx, live=False)
+
+    def _on_deck_slide_updated(self, deck_id: int, index: int):
+        """One slide edited: refresh that preview card (+screen) only.
+
+        No rebuild, no scroll jump, no selection change. Live is deliberately
+        untouched — it keeps the old deck until a preview double-click.
+        """
+        from core.slide_service import get_deck
+        deck = get_deck(deck_id)
+        if not deck or not deck.get("slides"):
+            return
+        if not (0 <= index < len(deck["slides"])):
+            return
+        state = self._current_preview
+        if not (state and state.get("item_type") == "slide"
+                and state.get("deck_id") == deck_id):
+            return
+        fresh = deck["slides"]
+        state["slides"] = fresh
+        state["deck_title"] = deck.get("title") or "(untitled)"
+        grid = self.preview_grid
+        if grid.deck is not None and grid.deck.get("id") == deck_id:
+            grid.deck["slides"] = fresh
+            grid.deck["title"] = deck.get("title")
+            grid.update_slide_card(index, fresh[index]["text"])
+        if state.get("slide_index", 0) == index:
+            self._show_slide(
+                {"id": deck_id, "title": deck.get("title") or "(untitled)",
+                 "slides": fresh, "format": deck.get("format")},
+                index, live=False,
+            )
+
+    # ── Strip handlers ──────────────────────────────────────────────────────
+
+    def _on_preview_slide_clicked(self, index: int):
+        deck = self.preview_grid.deck
+        if deck:
+            self._show_slide(deck, index, live=False)
+
+    def _on_preview_slide_double_clicked(self, index: int):
+        deck = self.preview_grid.deck
+        if deck:
+            # Forced: live may hold a stale copy of this deck (same id, old
+            # slides) — without it the live screen updates but its strip keeps
+            # the old cards.
+            self._show_slide(deck, index, live=True, force_grid=True)
+
+    def _on_live_slide_clicked(self, index: int):
+        deck = self.live_grid.deck
+        if deck:
+            self._show_slide(deck, index, live=True)
+
+    # ── Schedule handlers (mirror SCRIPTURE behavior) ───────────────────────
+
+    def _on_schedule_click(self, data: dict):
+        if data.get("item_type") == "slide":
+            slides = data.get("slides", [])
+            if slides:
+                self._show_slide(
+                    {"id": data.get("deck_id"), "title": data.get("name") or data.get("ref", ""),
+                     "slides": slides, "format": data.get("format")},
+                    0, live=False,
+                )
+            return
+        self._show_verse(data.get("ref", ""), data.get("text", ""),
+                         data.get("translation", ""), live=False)
+
+    def _on_schedule_double_click(self, data: dict):
+        if data.get("item_type") == "slide":
+            slides = data.get("slides", [])
+            if slides:
+                self._show_slide(
+                    {"id": data.get("deck_id"), "title": data.get("name") or data.get("ref", ""),
+                     "slides": slides, "format": data.get("format")},
+                    0, live=True, sched_data=data,
+                )
+            return
+        self._show_verse(data.get("ref", ""), data.get("text", ""),
+                         data.get("translation", ""), live=True, sched_data=data)
+
+    def _on_schedule_loaded(self, file_path: str):
+        from core.database import set_setting
+        set_setting("display.last_schedule", file_path)
+
+    def _restore_last_schedule(self):
+        from core.database import get_setting
+        from core.schedule_model import schedule_model
+        last_path = get_setting("display.last_schedule", "")
+        if not (last_path and os.path.exists(last_path)):
+            return
+        # The model is shared: skip if this exact file is already loaded
+        # (re-loading would re-stamp uids and break step anchors).
+        if schedule_model.current_file == last_path and schedule_model.get_items():
+            return
+        try:
+            self.schedule_panel.load_schedule(last_path)
+        except Exception as e:
+            logger.warning(f"Could not restore last schedule: {e}")
+
+    def refresh_display_names(self, old_display: str, new_display: str):
+        """Re-render current screens after a translation rename.
+
+        Stored "[Old] ref" strings are patched, then preview/live rebuild
+        (resolving the new name) and live re-broadcasts.
+        """
+        prefix, new_prefix = f"[{old_display}]", f"[{new_display}]"
+        for attr in ("_current_preview", "_current_display",
+                     "_last_cleared_display"):
+            data = getattr(self, attr, None)
+            if isinstance(data, dict):
+                ref = data.get("ref")
+                if isinstance(ref, str) and ref.startswith(prefix):
+                    data["ref"] = new_prefix + ref[len(prefix):]
+        if self._current_preview:
+            self._display.publish_preview(
+                self._payload_for_display(self._current_preview),
+                self._current_preview)
+        if self._current_display and not self._is_cleared:
+            payload = self._payload_for_display(self._current_display)
+            self._display.publish_live(payload, self._current_display,
+                                        self._display.live_sched_uid,
+                                        self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, self._current_display)
+
+    # ── Screens ─────────────────────────────────────────────────────────────
+
+    def _on_preview_double_click(self):
+        """Double-click preview screen → push preview to live."""
+        if not self._current_preview:
+            return
+        data = self._current_preview
+        if data.get("item_type") == "slide":
+            self._show_slide(
+                {"id": data.get("deck_id"), "title": data.get("deck_title", ""),
+                 "slides": data.get("slides", []), "format": data.get("slide_format")},
+                data.get("slide_index", 0), live=True,
+            )
+        else:
+            self._show_verse(data.get("ref", ""), data.get("text", ""),
+                             data.get("version", ""), live=True)
+
+    def _on_clear_recall(self):
+        if not self._is_cleared and self._current_display:
+            self._last_cleared_display = self._current_display
+            self._current_display = None
+            self._is_cleared = True
+            self._display.publish_clear()
+            self._broadcast_to_ws({"action": "clear"}, self._last_cleared_display)
+            logger.info("Display cleared")
+        elif self._is_cleared and self._last_cleared_display:
+            data = self._last_cleared_display
+            self._current_display = data
+            self._is_cleared = False
+            self._song_nav_active = False
+            self._song_nav_index = None
+            payload = self._payload_for_display(data)
+            self._display.publish_live(payload, data,
+                                       self._display.live_sched_uid,
+                                       self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, data)
+            if data.get("item_type") == "slide" and data.get("slides"):
+                from core.slide_service import get_deck
+                deck = None
+                if data.get("deck_id"):
+                    deck = get_deck(data["deck_id"])
+                recall_deck = deck or {"title": data.get("deck_title", ""), "slides": data["slides"]}
+                self._sync_grid(self.live_grid, recall_deck,
+                                data.get("slide_index", 0),
+                                f"LIVE · {recall_deck.get('title') or '(untitled)'}")
+            logger.info("Display recalled")
+
+    # ── Prev / Next ─────────────────────────────────────────────────────────
+
+    def _on_prev(self):
+        self._step_live(-1)
+
+    def _on_next(self):
+        self._step_live(1)
+
+    def _step_live(self, delta: int):
+        cur = self._current_display
+        if cur and cur.get("item_type") == "slide":
+            idx = cur.get("slide_index", 0) + delta
+            if 0 <= idx < len(cur.get("slides", [])):
+                return self._show_slide(
+                    {"id": cur.get("deck_id"), "title": cur.get("deck_title", ""),
+                     "slides": cur["slides"], "format": cur.get("slide_format")},
+                    idx, live=True,
+                    sched_data={"_sched_uid": self._live_sched_uid}
+                    if self._live_from_schedule else None,
+                )
+            if self._live_from_schedule and self._live_sched_uid:
+                return self._step_schedule(delta)
+            return
+        if self._live_from_schedule and self._live_sched_uid:
+            return self._step_schedule(delta)
+        logger.info("prev/next: nothing to step to")
+
+    def _step_schedule(self, delta: int):
+        items = self.schedule_panel.get_schedule()
+        row = next((i for i, d in enumerate(items)
+                    if d.get("_sched_uid") == self._live_sched_uid), None)
+        if row is None:
+            return
+        target = row + delta
+        while 0 <= target < len(items):
+            d = items[target]
+            if d.get("item_type") == "slide":
+                slides = d.get("slides", [])
+                if slides:
+                    idx = 0 if delta > 0 else len(slides) - 1
+                    return self._show_slide(
+                        {"id": d.get("deck_id"), "title": d.get("name") or d.get("ref", ""),
+                         "slides": slides, "format": d.get("format")},
+                        idx, live=True, sched_data=d,
+                    )
+                target += delta
+                continue
+            return self._show_verse(d.get("ref", ""), d.get("text", ""),
+                                    d.get("translation", ""), live=True, sched_data=d)
+
+    # ── Slide section-hop navigation (Ctrl+Left/Right) ────────────────────
+
+    @staticmethod
+    def _nav_mode() -> str:
+        """Display behavior while section-hopping: instant / deferred / blank."""
+        from core.database import get_setting
+        return get_setting("slides.nav_mode", "deferred")
+
+    def song_nav_step(self, delta: int):
+        """Jump the live-strip highlight to the first slide of the prev/next section.
+
+        Only the highlight moves here (except instant mode, which also sends).
+        The display decision happens on Ctrl release in _end_song_nav — so a
+        bare Ctrl press/release, without the full combo, does nothing.
+        No-ops unless live is showing a slide deck.
+        """
+        from core.slide_service import section_run_starts
+        cur = self._current_display
+        if not (cur and cur.get("item_type") == "slide" and cur.get("slides")):
+            logger.info("Slide nav ignored: live is not showing a slide deck")
+            return
+        slides = cur["slides"]
+        runs = section_run_starts(slides)
+        base = cur.get("slide_index", 0)
+        if self._song_nav_active and self._song_nav_index is not None:
+            base = max(0, min(self._song_nav_index, len(slides) - 1))
+        if delta > 0:
+            targets = [r for r in runs if r > base]
+        else:
+            targets = [r for r in runs if r < base]
+        if not targets:
+            return
+        target = targets[0] if delta > 0 else targets[-1]
+        mode = self._nav_mode()
+        if not self._song_nav_active:
+            self._song_nav_active = True
+            if mode == "blank":
+                # Soft blank: wire + own live screen only. Shared live_data
+                # stays intact so release can re-send (publish_clear would
+                # wipe it — stranding the screen blank — and clobber the
+                # Esc-recall memory as a side effect).
+                self.live_preview.clear_live()
+                self._broadcast_to_ws({"action": "clear"}, cur)
+        self._song_nav_index = target
+        if mode == "instant":
+            deck = {"id": cur.get("deck_id"), "title": cur.get("deck_title", ""),
+                    "slides": slides}
+            anchor = ({"_sched_uid": self._live_sched_uid}
+                      if self._live_from_schedule else None)
+            self._show_slide(deck, target, live=True, sched_data=anchor)
+            self._song_nav_active = True
+            self._song_nav_index = target
+        else:
+            # Highlight only — display stays until Ctrl is released.
+            self.live_grid.set_selected_index(target)
+
+    def _end_song_nav(self):
+        """Ctrl released (or app deactivated): finish section-hop navigation."""
+        if not self._song_nav_active:
+            return
+        mode = self._nav_mode()
+        self._song_nav_active = False
+        idx = self._song_nav_index
+        self._song_nav_index = None
+        if mode == "instant" or idx is None:
+            return
+        cur = self._current_display
+        if not (cur and cur.get("item_type") == "slide" and cur.get("slides")):
+            return
+        if not (0 <= idx < len(cur["slides"])):
+            return
+        if mode == "deferred" and idx == cur.get("slide_index"):
+            return  # released without moving — already showing
+        # Blank mode always re-sends: the screen is blank even if the index
+        # happens to match the pre-navigation slide.
+        deck = {"id": cur.get("deck_id"), "title": cur.get("deck_title", ""),
+                "slides": cur["slides"]}
+        anchor = ({"_sched_uid": self._live_sched_uid}
+                  if self._live_from_schedule else None)
+        self._show_slide(deck, idx, live=True, sched_data=anchor)

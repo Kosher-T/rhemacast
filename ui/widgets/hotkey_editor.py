@@ -539,17 +539,27 @@ class HotkeyEditor(QWidget):
 
         layout.addWidget(scroll, 1)
 
-        # Define default actions
+        # Define default actions as (label, description, default key, scope).
+        # Scope is display-only grouping: "global" works in any tab (acting on
+        # the active workspace), "scripture" always targets the SCRIPTURE tab.
         self._default_bindings = {
-            "clear_recall": ("Clear / Recall", "Clear live display or recall last verse", "F6"),
-            "fts_search": ("FTS Search", "Open FTS5+BM25 search across 6 translations", "Ctrl+Shift+F"),
-            "fuzzy_search": ("Fuzzy Search", "Open semantic/FAISS search panel", "Ctrl+Shift+S"),
-            "next_verse": ("Next", "Navigate to next scheduled verse", "Right"),
-            "prev_verse": ("Previous", "Navigate to previous scheduled verse", "Left"),
-            "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7"),
-            "add_to_schedule": ("Add to Schedule", "Add selected verse to schedule", "Alt+Return"),
-            "double_click": ("Double Click", "Simulate mouse double-click at cursor", "D"),
+            "clear_recall": ("Clear / Recall", "Clear live display or recall last verse", "Esc", "global"),
+            "next_verse": ("Next", "Navigate to next scheduled verse", "Right", "global"),
+            "prev_verse": ("Previous", "Navigate to previous scheduled verse", "Left", "global"),
+            "add_to_schedule": ("Add to Schedule", "Add selection to schedule (verse or deck, per active tab)", "Alt+Return", "global"),
+            "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7", "global"),
+            "double_click": ("Double Click", "Simulate mouse double-click at cursor", "F1", "global"),
+            "fts_search": ("FTS Search", "Open FTS5+BM25 search across 6 translations", "Ctrl+Shift+F", "scripture"),
+            "fuzzy_search": ("Fuzzy Search", "Open semantic/FAISS search panel", "Ctrl+Shift+S", "scripture"),
+            "navigate_scripture": ("Navigate", "Go to SCRIPTURE and focus the navigator book field", "Ctrl+N", "scripture"),
+            "song_prev_section": ("Previous Section", "Jump live slide strip to first slide of previous section", "Ctrl+Left", "slides"),
+            "song_next_section": ("Next Section", "Jump live slide strip to first slide of next section", "Ctrl+Right", "slides"),
         }
+        self._scopes = (
+            ("global", "Global", "Work in any tab, acting on the active workspace"),
+            ("scripture", "Scripture Tab", "Always target the SCRIPTURE tab"),
+            ("slides", "Slides Tab", "Only act on the SLIDES tab"),
+        )
 
         self._load_bindings()
         self._build_rows()
@@ -571,14 +581,28 @@ class HotkeyEditor(QWidget):
         set_setting("hotkeys.bindings", json.dumps(self._bindings))
 
     def _build_rows(self):
-        """Build the UI rows for each action."""
-        for action_id, (name, desc, default_key) in self._default_bindings.items():
-            # Get saved key or use default
-            key = self._bindings.get(action_id, default_key)
-            row = HotkeyRow(action_id, name, desc, key)
-            row.changed.connect(self._on_binding_changed)
-            self._container_layout.addWidget(row)
-            self._rows[action_id] = row
+        """Build the UI rows for each action, grouped by scope section."""
+        for scope, title, subtitle in self._scopes:
+            ids = [a for a, spec in self._default_bindings.items() if spec[3] == scope]
+            if not ids:
+                continue
+            if scope != "global":
+                self._container_layout.addSpacing(20)
+            header = QLabel(title)
+            header.setStyleSheet(f"color: {WHITE}; font-size: 17px; font-weight: 800;")
+            self._container_layout.addWidget(header)
+            desc = QLabel(subtitle)
+            desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+            self._container_layout.addWidget(desc)
+            self._container_layout.addSpacing(4)
+            for action_id in ids:
+                name, desc_text, default_key, _ = self._default_bindings[action_id]
+                # Get saved key or use default
+                key = self._bindings.get(action_id, default_key)
+                row = HotkeyRow(action_id, name, desc_text, key)
+                row.changed.connect(self._on_binding_changed)
+                self._container_layout.addWidget(row)
+                self._rows[action_id] = row
 
         # ── Translation Shortcuts section ──
         self._container_layout.addSpacing(16)
@@ -704,7 +728,7 @@ class HotkeyEditor(QWidget):
     def _reset_to_defaults(self):
         """Reset all bindings to defaults."""
         self._bindings = {}
-        for action_id, (_, _, default_key) in self._default_bindings.items():
+        for action_id, (_, _, default_key, _) in self._default_bindings.items():
             self._bindings[action_id] = default_key
             if action_id in self._rows:
                 self._rows[action_id].capture_btn.set_key(default_key)

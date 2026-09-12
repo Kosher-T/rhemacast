@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'app.db')
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 5
 
 def get_connection():
     """Returns a new SQLite connection with WAL mode enabled."""
@@ -58,6 +58,19 @@ def init_db():
                 text TEXT,
                 translation TEXT,
                 theme TEXT,
+                kind TEXT DEFAULT 'verse',
+                deck_id INTEGER,
+                timestamp_ms INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS operator_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                lane TEXT,
+                query TEXT,
+                result_count INTEGER,
+                top_refs_json TEXT,
+                chosen_ref TEXT,
                 timestamp_ms INTEGER
             );
             
@@ -202,6 +215,26 @@ def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int
         """)
         # Ensure any FTS created with old content='' mismatch is fixed (also handled by _ensure_slide_fts)
         _ensure_slide_fts(conn)
+    if from_version < 4 <= to_version:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(display_events)").fetchall()]
+        if "kind" not in cols:
+            conn.execute("ALTER TABLE display_events ADD COLUMN kind TEXT DEFAULT 'verse'")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS operator_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                lane TEXT,
+                query TEXT,
+                result_count INTEGER,
+                top_refs_json TEXT,
+                chosen_ref TEXT,
+                timestamp_ms INTEGER
+            );
+        """)
+    if from_version < 5 <= to_version:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(display_events)").fetchall()]
+        if "deck_id" not in cols:
+            conn.execute("ALTER TABLE display_events ADD COLUMN deck_id INTEGER")
 
 
 def create_session() -> str:
@@ -320,3 +353,212 @@ def delete_setting(key: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── Operator history (History tab) ──────────────────────────────────────────
+# Rule: anything pushed to the live screen gets documented here, grouped per
+# session, plus every operator search (query + top hits + chosen result).
+# Writes are direct (operator-paced, low volume) so the History tab always
+# reads fresh rows without waiting on the T4 streaming queue.
+
+import json as _json
+
+
+def current_operator_session() -> str:
+    """Session id for history rows: the live transcription session, else 'global'."""
+    try:
+        from core.service_manager import service_active
+        from core import stt_inference
+        running = getattr(stt_inference, "_stt_running", None)
+        if service_active.is_set() and running is not None and running.is_set():
+            sid = getattr(stt_inference, "session_id", None) or "global"
+            try:
+                conn = get_connection()
+                conn.execute(
+                    "INSERT OR IGNORE INTO sessions (session_id, start_time, audio_source)"
+                    " VALUES (?, ?, ?)",
+                    (sid, int(time.time() * 1000), "wireless"),
+                )
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+            return sid
+    except Exception:
+        pass
+    return "global"
+
+
+def log_display_event(session_id: str, action: str, kind: str, ref: str,
+                      text: str, translation: str, theme: str,
+                      deck_id: int | None = None) -> None:
+    """Document one live-screen push (display or clear). Never raises."""
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO display_events (session_id, action, ref, text, translation, theme, kind, deck_id, timestamp_ms)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, action, ref or "", text or "",
+             translation or "", theme or "", kind, deck_id, int(time.time() * 1000)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def log_live_payload(payload: dict, kind: str | None = None,
+                     ref: str | None = None) -> None:
+    """Document a broadcast live payload (display or clear). Never raises."""
+    if not isinstance(payload, dict):
+        return
+    action = payload.get("action", "display")
+    if action not in ("display", "clear"):
+        return
+    log_display_event(
+        current_operator_session(), action,
+        kind or payload.get("content") or "verse",
+        ref or payload.get("reference") or payload.get("ref") or "",
+        payload.get("text") or "",
+        payload.get("translation") or "",
+        payload.get("theme") or "",
+        payload.get("deck_id"),
+    )
+
+
+def log_search_event(session_id: str, lane: str, query: str,
+                     result_count: int, top_refs: list) -> int | None:
+    """Document an operator search. Keystroke runs coalesce: when the newest
+    row for this session+lane has a query that is a prefix of (or equal to)
+    the new one within 60s, it is UPDATED instead of inserting a new row.
+    Returns the row id (for mark_search_chosen) or None. Never raises."""
+    try:
+        now = int(time.time() * 1000)
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT id, query, timestamp_ms FROM operator_searches"
+            " WHERE session_id = ? AND lane = ? ORDER BY id DESC LIMIT 1",
+            (session_id, lane),
+        ).fetchone()
+        if row and (query == row["query"] or query.startswith(row["query"] or "")) \
+                and now - (row["timestamp_ms"] or 0) < 60000:
+            conn.execute(
+                "UPDATE operator_searches SET query=?, result_count=?,"
+                " top_refs_json=?, timestamp_ms=? WHERE id=?",
+                (query, result_count, _json.dumps(top_refs or []), now, row["id"]),
+            )
+            conn.commit()
+            conn.close()
+            return row["id"]
+        cur = conn.execute(
+            "INSERT INTO operator_searches (session_id, lane, query, result_count,"
+            " top_refs_json, chosen_ref, timestamp_ms)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, lane, query, result_count,
+             _json.dumps(top_refs or []), None, now),
+        )
+        row_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return row_id
+    except Exception:
+        return None
+
+
+def mark_search_chosen(row_id: int | None, chosen_ref: str) -> None:
+    """Record which result the operator picked. Never raises."""
+    if not row_id:
+        return
+    try:
+        conn = get_connection()
+        conn.execute("UPDATE operator_searches SET chosen_ref=? WHERE id=?",
+                     (chosen_ref, row_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_history_sessions() -> list:
+    """Session groups newest-first: real sessions plus any extra session ids
+    found on operator rows (including 'global'). Groups without items are
+    skipped so empty transcription sessions don't clutter the view."""
+    try:
+        conn = get_connection()
+        seen: dict[str, dict] = {}
+        for row in conn.execute(
+                "SELECT session_id, start_time FROM sessions").fetchall():
+            sid = row["session_id"]
+            if sid not in seen:
+                seen[sid] = {"session_id": sid, "start_time": row["start_time"]}
+        for table in ("display_events", "operator_searches"):
+            for row in conn.execute(
+                    f"SELECT DISTINCT session_id FROM {table}").fetchall():
+                sid = row["session_id"] or "global"
+                if sid not in seen:
+                    seen[sid] = {"session_id": sid, "start_time": None}
+        groups = []
+        for sid, meta in seen.items():
+            if sid == "global":
+                de_scope = "session_id='global' OR session_id IS NULL"
+                se_scope = "session_id='global'"
+            else:
+                safe = sid.replace("'", "''")
+                de_scope = f"session_id='{safe}'"
+                se_scope = de_scope
+            pushes = conn.execute(
+                f"SELECT COUNT(*) c FROM display_events WHERE {de_scope}").fetchone()["c"]
+            searches = conn.execute(
+                f"SELECT COUNT(*) c FROM operator_searches WHERE {se_scope}").fetchone()["c"]
+            bounds = conn.execute(
+                "SELECT MIN(timestamp_ms) mn, MAX(timestamp_ms) mx FROM ("
+                f" SELECT timestamp_ms FROM display_events WHERE {de_scope}"
+                f" UNION ALL SELECT timestamp_ms FROM operator_searches WHERE {se_scope})").fetchone()
+            start = meta["start_time"] or bounds["mn"]
+            groups.append({"session_id": sid, "start_time": start,
+                           "end_time": bounds["mx"], "pushes": pushes, "searches": searches})
+        conn.close()
+        groups.sort(key=lambda g: (g["end_time"] or 0, g["start_time"] or 0), reverse=True)
+        return [g for g in groups if (g["pushes"] or 0) + (g["searches"] or 0) > 0]
+    except Exception:
+        return []
+
+
+def get_session_items(session_id: str, limit: int = 500) -> list:
+    """Chronological live pushes + searches for one session (oldest first)."""
+    try:
+        conn = get_connection()
+        if session_id == "global":
+            de_filter = "session_id='global' OR session_id IS NULL"
+            se_filter = "session_id='global'"
+        else:
+            de_filter = "session_id='" + session_id.replace("'", "''") + "'"
+            se_filter = de_filter
+        rows = conn.execute(
+            "SELECT 'display' AS kind2, timestamp_ms, action, ref, text, translation, theme, kind, deck_id,"
+            " NULL AS lane, NULL AS query, NULL AS result_count, NULL AS top_refs, NULL AS chosen"
+            f" FROM display_events WHERE {de_filter} "
+            "UNION ALL SELECT 'search', timestamp_ms, NULL, NULL, NULL, NULL, NULL, NULL, NULL,"
+            " lane, query, result_count, top_refs_json, chosen_ref"
+            f" FROM operator_searches WHERE {se_filter} "
+            "ORDER BY timestamp_ms ASC LIMIT ?",
+            (limit,)).fetchall()
+        conn.close()
+        items = []
+        for r in rows:
+            if r["kind2"] == "display":
+                items.append({"type": "display", "action": r["action"], "kind": r["kind"] or "verse",
+                              "ref": r["ref"] or "", "text": r["text"] or "",
+                              "translation": r["translation"] or "", "theme": r["theme"] or "",
+                              "deck_id": r["deck_id"], "timestamp_ms": r["timestamp_ms"]})
+            else:
+                try:
+                    top = _json.loads(r["top_refs"] or "[]")
+                except Exception:
+                    top = []
+                items.append({"type": "search", "lane": r["lane"], "query": r["query"] or "",
+                              "result_count": r["result_count"] or 0, "top_refs": top,
+                              "chosen": r["chosen"], "timestamp_ms": r["timestamp_ms"]})
+        return items
+    except Exception:
+        return []

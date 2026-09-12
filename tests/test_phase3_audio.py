@@ -11,7 +11,7 @@ import threading
 import sounddevice as sd
 from unittest.mock import patch, MagicMock
 
-from core.queues import audio_buffer, queue_a
+from core.queues import audio_buffer, queue_a, stt_consuming
 from core.audio_capture import (
     start_capture, stop_capture, capture_paused, 
     silence_detected, _audio_callback, _capture_running, _paused_buffer
@@ -29,6 +29,7 @@ def reset_globals():
         except queue.Empty: break
     audio_buffer.pending_chunks.clear()
     _paused_buffer.clear()
+    stt_consuming.clear()
     
     service_active.clear()
     compute_failure.clear()
@@ -76,28 +77,54 @@ def test_compute_failure_detection_heartbeat():
         audio_buffer.enqueue("fake_id", b"fake_data")
         audio_buffer.enqueue("fake_id_2", b"fake_data_2")
         assert compute_failure.wait(timeout=4.0) is True
-        
+
     stop_stt()
+    # Barrier: spawned STT threads must be dead before return, or the main
+    # thread (waking from its stalled pull) steals chunks from later tests.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        lingering = [t for t in threading.enumerate()
+                     if t.name.startswith("STT-") and t.is_alive()]
+        if not lingering:
+            break
+        time.sleep(0.05)
+    assert not [t for t in threading.enumerate()
+                if t.name.startswith("STT-") and t.is_alive()], \
+        "STT threads outlived the test and would pollute Queue A"
     
 def test_compute_failure_pause_resume():
-    """Trigger Compute Failure; verify Thread 1 pauses capture, then resumes after pending chunks are replayed to Vosk."""
+    """Trigger Compute Failure; verify Thread 1 pauses capture (chunks buffer
+    instead of reaching Queue A), the unacked chunk is replayable, then
+    capture resumes once replay completes (async Vosk half, simulated here
+    at the seam — the thread itself only blocks on compute_failure)."""
     service_active.set()
-    
-    # We will patch the unacked chunks fetching to verify pause state during it
-    pause_was_set = False
-    
-    original_get = audio_buffer.get_unacked_chunks
-    def mock_get_unacked():
-        nonlocal pause_was_set
-        pause_was_set = capture_paused.is_set()
-        return original_get()
-        
-    with patch("core.stt_inference.audio_buffer.get_unacked_chunks", side_effect=mock_get_unacked):
-        stt._trigger_failover_sequence()
-        
-    assert pause_was_set is True
-    assert capture_paused.is_set() is False # Should be cleared at end
-    assert compute_failure.is_set() is True
+
+    # Honest unacked state: 2 enqueued, Thread 2 pulled 1 then "crashed"
+    audio_buffer.enqueue("chunk_0", np.zeros(1600, dtype=np.float32))
+    audio_buffer.enqueue("chunk_1", np.zeros(1600, dtype=np.float32))
+    pulled_id, _ = audio_buffer.pull(block=False)
+    assert pulled_id == "chunk_0"
+
+    # Trigger: pause flag + failover flag go up together, synchronously
+    stt._trigger_failover_sequence()
+    assert capture_paused.is_set()
+    assert compute_failure.is_set()
+
+    # Thread 1 pauses: the live callback buffers instead of enqueueing
+    _capture_running.set()
+    sine = np.sin(np.linspace(0, 440 * 2 * np.pi, 1600)).astype(np.float32).reshape(-1, 1)
+    depth_before = queue_a.qsize()
+    _audio_callback(sine, 1600, {}, sd.CallbackFlags())
+    assert queue_a.qsize() == depth_before
+    assert len(_paused_buffer) == 1
+
+    # Replay source: the pulled-but-unacked chunk is retrievable for Vosk
+    unacked = audio_buffer.get_unacked_chunks()
+    assert len(unacked) == 1
+
+    # Resume: the Vosk thread clears the pause once replay completes
+    capture_paused.clear()
+    assert not capture_paused.is_set()
 
 def test_silence_detection_energy():
     """Feed audio blocks below -50 dB RMS; verify silence_detected event flag is set after 3 seconds."""
@@ -128,12 +155,15 @@ def test_silence_detection_ttl_override():
 def test_integration_mock_stream():
     """Integration Tests: Mock sounddevice InputStream with a sine wave generator; verify Queue A depth increases."""
     service_active.set()
-    
+    # The capture callback only feeds Queue A while STT is consuming
+    # (recording tap is decoupled) — mirror what start_stt() does live.
+    stt_consuming.set()
+
     # We use a mock InputStream that immediately calls the callback
     class MockInputStream:
         def __init__(self, **kwargs):
             self.callback = kwargs.get('callback')
-            
+
         def __enter__(self):
             # simulate 5 blocks
             sine = np.sin(np.linspace(0, 440 * 2 * np.pi, 1600)).astype(np.float32).reshape(-1, 1)
@@ -141,16 +171,19 @@ def test_integration_mock_stream():
             for _ in range(5):
                 self.callback(sine, 1600, {}, sd.CallbackFlags())
             return self
-            
+
         def __exit__(self, *args):
             pass
 
-    with patch("sounddevice.InputStream", MockInputStream):
-        t = start_capture(0)
-        time.sleep(0.5)
-        stop_capture()
-        t.join(timeout=1.0)
-        
+    try:
+        with patch("sounddevice.InputStream", MockInputStream):
+            t = start_capture(0)
+            time.sleep(0.5)
+            stop_capture()
+            t.join(timeout=1.0)
+    finally:
+        stt_consuming.clear()
+
     print("Queue A size is", queue_a.qsize())
     assert queue_a.qsize() == 5
 

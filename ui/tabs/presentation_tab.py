@@ -41,20 +41,77 @@ class PresentationTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Display state
-        self._current_display = None      # Currently displayed verse dict (live)
-        self._current_preview = None      # Currently previewed verse dict
-        self._last_cleared_display = None  # Last verse before clear (for recall)
-        self._is_cleared = True
+
+        # Shared display state (see core/display_state.py): preview/live
+        # payloads are identical across tabs by construction. Tab-local gesture
+        # code accesses it through the properties below — never plain attrs,
+        # so constructing this tab never wipes another tab's screens.
+        from core.display_state import display_state
+        self._display = display_state
         self._prev_verse_data = None      # Previous verse (for Prev button)
         self._next_verse_data = None      # Next verse (for Next button)
+        self._init_workspace()
 
-        # Schedule-origin tracking: when current display came from the schedule,
-        # Prev/Next walks schedule items (stepping through deck slides) instead
-        # of Bible verse neighbors.
-        self._current_sched_data = None   # Identity of the schedule item dict
-        self._current_from_schedule = False
+    # ── Shared-state aliases (read/write core.display_state) ──────────────
+
+    @property
+    def _current_display(self):
+        return self._display.live_data
+
+    @_current_display.setter
+    def _current_display(self, value):
+        self._display.live_data = value
+
+    @property
+    def _current_preview(self):
+        return self._display.preview_data
+
+    @_current_preview.setter
+    def _current_preview(self, value):
+        self._display.preview_data = value
+
+    @property
+    def _last_cleared_display(self):
+        return self._display.last_cleared_data
+
+    @_last_cleared_display.setter
+    def _last_cleared_display(self, value):
+        self._display.last_cleared_data = value
+
+    @property
+    def _is_cleared(self):
+        return self._display.is_cleared
+
+    @_is_cleared.setter
+    def _is_cleared(self, value):
+        self._display.is_cleared = value
+
+    @property
+    def _current_sched_data(self):
+        uid = self._display.live_sched_uid
+        if uid is None:
+            return None
+        return {"_sched_uid": uid}
+
+    @_current_sched_data.setter
+    def _current_sched_data(self, value):
+        if isinstance(value, dict):
+            self._display.live_sched_uid = value.get("_sched_uid")
+            self._display.live_from_schedule = self._display.live_sched_uid is not None
+        elif value is None:
+            self._display.live_sched_uid = None
+            self._display.live_from_schedule = False
+
+    @property
+    def _current_from_schedule(self):
+        return self._display.live_from_schedule
+
+    @_current_from_schedule.setter
+    def _current_from_schedule(self, value):
+        self._display.live_from_schedule = bool(value)
+
+    def _init_workspace(self):
+        """Build panels, wire signals, subscribe screens to shared state."""
 
         # Per-output themes: {"1": "default", "2": "default", ...}
         from core.database import get_setting
@@ -123,13 +180,27 @@ class PresentationTab(QWidget):
 
         main_splitter.addWidget(bottom_splitter)
 
-        # Default heights: 65% top | 35% bottom
-        main_splitter.setSizes([650, 350])
-
         root_layout.addWidget(main_splitter)
+
+        # Persisted layouts (defaults on first run; saved sizes win after).
+        from core.panel_layout import track_splitter
+        self._main_splitter = track_splitter(
+            "presentation.main", main_splitter, [650, 350])
+        self._top_splitter = track_splitter(
+            "presentation.top", top_splitter, [300, 600, 300])
+        self._bottom_splitter = track_splitter(
+            "presentation.bottom", bottom_splitter, [600, 400])
 
         # ── Wire all signals ──
         self._connect_signals()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-apply saved splitter layouts once real sizes exist
+        from core.panel_layout import restore_splitter
+        restore_splitter("presentation.main", self._main_splitter)
+        restore_splitter("presentation.top", self._top_splitter)
+        restore_splitter("presentation.bottom", self._bottom_splitter)
 
     def _connect_signals(self):
         """Connect all panel signals to their backend actions."""
@@ -199,37 +270,52 @@ class PresentationTab(QWidget):
         self.schedule_panel.schedule_modified.connect(self._on_schedule_modified)
         self.schedule_panel.schedule_loaded.connect(self._on_schedule_loaded)
 
+        # Screens render the SHARED display state — this tab's views update
+        # whenever any tab publishes (and vice versa).
+        self._display.live_changed.connect(self.live_preview.set_live_payload)
+        self._display.preview_changed.connect(self.live_preview.set_preview_payload)
+        self._display.cleared.connect(self.live_preview.clear_live)
+        # Render whatever is already showing (e.g. published before this tab loaded)
+        if self._display.live_payload:
+            self.live_preview.set_live_payload(self._display.live_payload)
+        if self._display.preview_payload:
+            self.live_preview.set_preview_payload(self._display.preview_payload)
+
         # Restore last schedule on startup
         self._restore_last_schedule()
 
     def _build_payload(self, text: str, ref: str, version: str, book: str = "",
-                       chapter: str = "", verse: str = "", output_id: str = "1") -> dict:
+                       chapter: str = "", verse: str = "", output_id: str = "1",
+                       slide_format: dict | None = None,
+                       content: str = "verse", deck_id: int | None = None) -> dict:
         """Build a display payload matching the WS broadcast format.
 
-        Slide text may carry inline color markup ([words: (#rrggbb)]) which is
-        converted to HTML spans here — display.js renders text via innerHTML.
-        Plain verse text is escaped unchanged (no markers → identity).
+        Slide text may carry inline color markup ([words: (#rrggbb)]). It is
+        sent RAW here: sanitize_payload() HTML-escapes the payload for the
+        wire, and display.js converts markers to <span> at render time.
+        (Converting here would double-escape the spans into visible text.)
         """
         from core.theme_loader import get_theme
-        from core.slide_parser import inline_markup_to_html, has_inline_markup
         theme_name = self._themes_by_output.get(output_id, "default")
         theme_data = get_theme(theme_name)
-        if has_inline_markup(text):
-            display_text = inline_markup_to_html(text)
-        else:
-            display_text = text
-        return {
+        payload = {
             "action": "display",
-            "text": display_text,
+            "text": text,
             "ref": ref,
             "reference": f"{book} {chapter}:{verse}" if book else ref,
             "translation": get_display_name(version) if version else "",
             "book": book,
             "chapter": str(chapter),
             "verse": str(verse),
+            "content": content,
             "theme": theme_name,
             "theme_data": theme_data,
         }
+        if slide_format is not None:
+            payload["slide_format"] = slide_format
+        if deck_id is not None:
+            payload["deck_id"] = deck_id
+        return payload
 
     def _payload_for_display(self, data: dict, output_id: str = "1") -> dict:
         """Build a display payload from a stored display dict (verse or slide)."""
@@ -237,12 +323,21 @@ class PresentationTab(QWidget):
             return self._build_payload(
                 data.get("text", ""), data.get("ref", ""), "",
                 output_id=output_id,
+                slide_format=data.get("slide_format"),
+                content="slide",
+                deck_id=data.get("deck_id"),
             )
         book = data.get("book", "")
         chapter = data.get("chapter", "")
         verse_num = data.get("verse_num", "")
         version = data.get("version", "")
-        ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+        # Ref-only dicts (e.g. previewed from the SLIDES tab) have no
+        # book/chapter parts — pass their stored ref through instead of
+        # building "[T]  :" from empty parts.
+        if book and chapter and verse_num:
+            ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
+        else:
+            ref = data.get("ref", "")
         return self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num, output_id=output_id)
 
     def _apply_slide_display(self, sched_data: dict | None, deck_title: str,
@@ -263,6 +358,8 @@ class PresentationTab(QWidget):
 
         self._current_sched_data = sched_data
         self._current_from_schedule = sched_data is not None
+        slide_format = (sched_data.get("format")
+                        if isinstance(sched_data, dict) else None)
         self._current_display = {
             "item_type": "slide",
             "text": text,
@@ -270,13 +367,22 @@ class PresentationTab(QWidget):
             "book": "", "chapter": "", "verse_num": "", "version": "",
             "deck_title": title,
             "section": section,
+            "slide_format": slide_format,
+            "deck_id": (sched_data.get("deck_id")
+                        if isinstance(sched_data, dict) else None),
             "slides": slides,
             "slide_index": index,
         }
         self._is_cleared = False
 
-        payload = self._build_payload(text, ref, "")
-        self.live_preview.set_live_payload(payload)
+        deck_id = (sched_data.get("deck_id")
+                     if isinstance(sched_data, dict) else None)
+        payload = self._build_payload(text, ref, "", slide_format=slide_format,
+                                        content="slide", deck_id=deck_id)
+        # Publish to shared state (renders in every tab's live view)
+        self._display.publish_live(payload, self._current_display,
+                                   self._display.live_sched_uid,
+                                   self._display.live_from_schedule)
         self._broadcast_to_ws(payload)
         logger.info(f"Slide display: {ref} ({index + 1}/{len(slides)})")
 
@@ -332,7 +438,7 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, data, None, False)
 
         self._broadcast_to_ws(payload)
 
@@ -363,8 +469,8 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, verse_data["chapter"], verse_data["verse"])
-        self.live_preview.set_live_payload(payload)
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_live(payload, verse_dict, None, False)
+        self._display.publish_preview(payload, verse_dict)
 
         self._broadcast_to_ws(payload)
 
@@ -398,8 +504,8 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse)
-        self.live_preview.set_live_payload(payload)
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_live(payload, verse_dict, None, False)
+        self._display.publish_preview(payload, verse_dict)
         self._broadcast_to_ws(payload)
         self._update_verse_neighbors(version, book, int(chapter), int(verse))
         logger.info(f"Navigator push: {ref}")
@@ -444,7 +550,7 @@ class PresentationTab(QWidget):
             "version": version,
         }
         payload = self._build_payload(text, ref, version, book, chapter, verse)
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_preview(payload, self._current_preview)
         logger.info(f"Search → navigator + preview: {book} {chapter}:{verse} [{version}]")
 
     def _on_search_to_live(self, data: dict):
@@ -473,7 +579,7 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
         if book and chapter and verse_num and version:
             self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
@@ -498,7 +604,7 @@ class PresentationTab(QWidget):
             "version": version,
         }
         payload = self._build_payload(text, ref, version, book, chapter, verse)
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_preview(payload, self._current_preview)
         logger.info(f"Badge → navigator + preview: {book} {chapter}:{verse} [{version}]")
 
     def _on_trans_badge_to_live(self, data: dict):
@@ -521,7 +627,7 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
         if book and chapter and verse_num and version:
             self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
@@ -546,7 +652,7 @@ class PresentationTab(QWidget):
         }
 
         payload = self._build_payload(text, ref, version, book, verse_data["chapter"], verse_data["verse"])
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_preview(payload, self._current_preview)
         logger.info(f"Preview updated: {ref}")
 
     def _on_preview_clicked(self):
@@ -589,7 +695,9 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, data,
+                                   self._display.live_sched_uid,
+                                   self._display.live_from_schedule)
 
         self._broadcast_to_ws(payload)
 
@@ -617,19 +725,45 @@ class PresentationTab(QWidget):
             self._current_display = None
             self._is_cleared = True
 
-            self.live_preview.clear_live()
+            self._display.publish_clear()
 
-            self._broadcast_to_ws({"action": "clear"})
+            self._broadcast_to_ws({"action": "clear"}, self._last_cleared_display)
             logger.info("Display cleared")
-
         elif self._is_cleared and self._last_cleared_display:
             data = self._last_cleared_display
             self._current_display = data
             self._is_cleared = False
             payload = self._payload_for_display(data)
-            self.live_preview.set_live_payload(payload)
+            self._display.publish_live(payload, data,
+                                       self._display.live_sched_uid,
+                                       self._display.live_from_schedule)
             self._broadcast_to_ws(payload)
             logger.info("Display recalled")
+
+    def refresh_display_names(self, old_display: str, new_display: str):
+        """Re-render current screens after a translation rename.
+
+        Stored "[Old] ref" strings are patched, then preview/live rebuild
+        from parts (resolving the new name) and live re-broadcasts.
+        """
+        prefix, new_prefix = f"[{old_display}]", f"[{new_display}]"
+        for attr in ("_current_preview", "_current_display",
+                     "_last_cleared_display"):
+            data = getattr(self, attr, None)
+            if isinstance(data, dict):
+                ref = data.get("ref")
+                if isinstance(ref, str) and ref.startswith(prefix):
+                    data["ref"] = new_prefix + ref[len(prefix):]
+        if self._current_preview:
+            self._display.publish_preview(
+                self._payload_for_display(self._current_preview),
+                self._current_preview)
+        if self._current_display and not self._is_cleared:
+            payload = self._payload_for_display(self._current_display)
+            self._display.publish_live(payload, self._current_display,
+                                        self._display.live_sched_uid,
+                                        self._display.live_from_schedule)
+            self._broadcast_to_ws(payload)
 
     def _on_theme_changed(self, output_id: str, theme_name: str):
         """Single-click theme: update that output's theme + re-render preview."""
@@ -639,15 +773,11 @@ class PresentationTab(QWidget):
             self._current_theme = theme_name
 
         if output_id == "1" and self._current_preview:
-            # Main output preview update
+            # Main output preview update (handles verse + slide dicts,
+            # including ref-only shapes previewed from the SLIDES tab).
             data = self._current_preview
-            book = data.get("book", "")
-            chapter = data.get("chapter", "")
-            verse_num = data.get("verse_num", "")
-            version = data.get("version", "")
-            ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
-            payload = self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num, output_id="1")
-            self.live_preview.set_preview_payload(payload)
+            payload = self._payload_for_display(data, output_id="1")
+            self._display.publish_preview(payload, data)
         logger.info(f"Output {output_id} theme changed to: {theme_name}")
 
     def _on_theme_double_click(self, output_id: str, theme_name: str):
@@ -659,7 +789,9 @@ class PresentationTab(QWidget):
         if self._current_display:
             payload = self._payload_for_display(self._current_display, output_id=output_id)
             if output_id == "1":
-                self.live_preview.set_live_payload(payload)
+                self._display.publish_live(payload, self._current_display,
+                                           self._display.live_sched_uid,
+                                           self._display.live_from_schedule)
             self._broadcast_to_ws(payload)
             logger.info(f"Output {output_id} theme double-clicked: {theme_name}, live re-rendered")
         else:
@@ -736,7 +868,7 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, self._current_display, None, False)
         self._broadcast_to_ws(payload)
 
         if skip_navigator:
@@ -788,7 +920,9 @@ class PresentationTab(QWidget):
         self._is_cleared = False
 
         payload = self._build_payload(text, ref, version, book, chapter, verse)
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, self._current_display,
+                                   self._display.live_sched_uid,
+                                   self._display.live_from_schedule)
 
         self._broadcast_to_ws(payload)
 
@@ -816,15 +950,19 @@ class PresentationTab(QWidget):
                 "book": "", "chapter": "", "verse_num": "", "version": "",
                 "deck_title": title,
                 "section": section,
+                "slide_format": data.get("format"),
                 "slides": slides,
                 "slide_index": 0,
             }
 
             saved_theme = self._current_theme
             self._current_theme = theme
-            payload = self._build_payload(slide.get("text", ""), ref, "")
+            payload = self._build_payload(slide.get("text", ""), ref, "",
+                                          slide_format=data.get("format"),
+                                          content="slide",
+                                          deck_id=data.get("deck_id"))
             self._current_theme = saved_theme
-            self.live_preview.set_preview_payload(payload)
+            self._display.publish_preview(payload, self._current_preview)
             logger.info(f"Schedule preview (slide): {ref}")
             return
 
@@ -852,7 +990,7 @@ class PresentationTab(QWidget):
         self._current_theme = theme
         payload = self._build_payload(text, ref, version, book, chapter, verse)
         self._current_theme = saved_theme
-        self.live_preview.set_preview_payload(payload)
+        self._display.publish_preview(payload, self._current_preview)
         logger.info(f"Schedule preview: {ref}")
 
     def _on_schedule_double_click(self, data: dict):
@@ -898,7 +1036,9 @@ class PresentationTab(QWidget):
         self._current_theme = theme
         payload = self._build_payload(text, ref, version, book, chapter, verse)
         self._current_theme = saved_theme
-        self.live_preview.set_live_payload(payload)
+        self._display.publish_live(payload, self._current_display,
+                                   self._display.live_sched_uid,
+                                   self._display.live_from_schedule)
         self._broadcast_to_ws(payload)
         if book and chapter and verse and version:
             self._update_verse_neighbors(version, book, int(chapter), int(verse))
@@ -984,12 +1124,19 @@ class PresentationTab(QWidget):
         else:
             self.stt_panel.btn_pause_rec.setText("PAUSE")
 
-    def _broadcast_to_ws(self, payload: dict):
+    def _broadcast_to_ws(self, payload: dict, data: dict | None = None):
         """
         Send a display payload to all connected outputs via WebSocket.
         Each output receives the payload with its own theme applied.
         For non-theme-specific payloads (like clear), sends as-is to all.
         """
+        from core.database import log_live_payload
+        # History: anything hitting live gets documented (display + clear),
+        # independent of whether a WS loop is up for OBS.
+        kind = None
+        if data is not None and data.get("item_type") == "slide":
+            kind = "slide"
+        log_live_payload(payload, kind=kind)
         try:
             from core.websocket_server import broadcast_display, _server_loop
 
@@ -1010,6 +1157,7 @@ class PresentationTab(QWidget):
                         payload.get("chapter", ""),
                         payload.get("verse", ""),
                         output_id=oid,
+                        slide_format=payload.get("slide_format"),
                     )
                     asyncio.run_coroutine_threadsafe(
                         broadcast_display(themed, target=oid), _server_loop
@@ -1034,10 +1182,16 @@ class PresentationTab(QWidget):
     def _restore_last_schedule(self):
         """Restore the last used schedule on startup."""
         from core.database import get_setting
+        from core.schedule_model import schedule_model
         last_path = get_setting("display.last_schedule", "")
-        if last_path and os.path.exists(last_path):
-            try:
-                self.schedule_panel.load_schedule(last_path)
-                logger.info(f"Restored last schedule: {last_path}")
-            except Exception as e:
-                logger.warning(f"Could not restore last schedule: {e}")
+        if not (last_path and os.path.exists(last_path)):
+            return
+        # The model is shared: skip if this exact file is already loaded
+        # (re-loading would re-stamp uids and break step anchors).
+        if schedule_model.current_file == last_path and schedule_model.get_items():
+            return
+        try:
+            self.schedule_panel.load_schedule(last_path)
+            logger.info(f"Restored last schedule: {last_path}")
+        except Exception as e:
+            logger.warning(f"Could not restore last schedule: {e}")

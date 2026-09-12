@@ -96,26 +96,38 @@ def test_service_state_transitions():
     sm2._handle_escalation("T5", meta_t5)
     assert sm2.state == ServiceState.DEGRADED
 
-def test_backpressure_queue_a_overflow():
-    """Fill Queue A past 400 items; verify failover trigger fires."""
-    for i in range(401):
-        audio_buffer.enqueue(f"chunk_{i}", b"data")
-        
-    assert queue_a.qsize() == 401
-    assert len(audio_buffer.pending_chunks) == 401
-    
+def test_backpressure_queue_a_overflow(caplog):
+    """Fill Queue A past 400 items; verify nothing is dropped and the failover
+    threshold signal fires. Chunks become pending only when Thread 2 pulls
+    them (ack protocol) — pure enqueues must NOT populate pending_chunks."""
+    with caplog.at_level("WARNING", logger="core.queues"):
+        for i in range(402):
+            audio_buffer.enqueue(f"chunk_{i}", b"data")
+
+    assert queue_a.qsize() == 402
+    assert len(audio_buffer.pending_chunks) == 0
+    assert any("Failover threshold reached" in r.message for r in caplog.records)
+
+    # The ack-protocol half: pulled-but-unacked chunks ARE pending (replayable)
+    chunk_id, _ = audio_buffer.pull(block=False)
+    assert chunk_id == "chunk_0"
+    assert len(audio_buffer.pending_chunks) == 1
+    assert audio_buffer.get_unacked_chunks() == [b"data"]
+
 def test_backpressure_operator_queue_drop():
     """Fill operator queue past 100; verify oldest low-confidence items dropped."""
     for i in range(100):
-        push_to_operator(f"item_{i}", 50.0)
-        
+        push_to_operator({"text": f"item_{i}", "confidence": 50.0}, 50.0)
+
     assert operator_queue.full()
-    
+
     # Push 101st item
-    push_to_operator("item_101", 90.0)
-    
+    push_to_operator({"text": "item_101", "confidence": 90.0}, 90.0)
+
     assert operator_queue.qsize() == 100
-    assert operator_queue.get() == "item_1" # item_0 was evicted
+    first = operator_queue.get()
+    assert first["text"] == "item_1"  # item_0 was evicted
+    assert first["priority"] == "normal"
     
 def test_backpressure_db_spool():
     """Fill DB queue past 1000; verify emergency flat-file spool fallback engages."""

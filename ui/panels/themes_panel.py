@@ -181,10 +181,12 @@ class OutputColumn(QWidget):
         self._layout.addStretch()
 
     def _load_themes(self):
-        from core.theme_loader import get_all_themes
+        from core.theme_loader import get_themes_by_kind, SCRIPTURE
         from core.database import get_setting
 
-        themes = get_all_themes()
+        # Scripture picker: freeform (song/slide) themes live in their own
+        # folder and are never offered here.
+        themes = get_themes_by_kind(SCRIPTURE)
         for name, theme in themes.items():
             card = ThemeCard(theme)
             card.theme_selected.connect(self._on_theme_selected)

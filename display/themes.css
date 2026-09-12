@@ -52,9 +52,14 @@ body, html {
     font-family: var(--rc-text-font-family, 'Nunito'), sans-serif;
     font-size: var(--rc-text-size, 2.5rem);
     font-weight: var(--rc-text-weight, 700);
+    font-style: var(--rc-text-font-style, normal);
     line-height: var(--rc-text-line-height, 1.2);
     color: var(--rc-text-color, #f8fafc);
-    text-align: center;
+    text-align: var(--rc-text-align, center);
+    text-transform: var(--rc-text-transform, none);
+    text-decoration: var(--rc-text-decoration, none);
+    direction: var(--rc-text-direction, ltr);
+    -webkit-text-stroke: var(--rc-text-outline, 0 transparent);
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
     letter-spacing: var(--rc-text-letter-spacing, -0.01em);

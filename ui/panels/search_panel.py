@@ -375,6 +375,13 @@ class SearchPanel(QWidget):
         self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
         layout.addWidget(self.status_label)
 
+        # History: record which result the operator picks (self-connection).
+        self._last_search_row: int | None = None
+        self.verse_to_navigator.connect(self._on_result_chosen)
+        self.verse_to_live.connect(self._on_result_chosen)
+        self.trans_badge_to_navigator.connect(self._on_result_chosen)
+        self.trans_badge_to_live.connect(self._on_result_chosen)
+
     def _switch_tab(self, tab: str):
         """Switch between All / Verses / Topics views."""
         self._active_tab = tab
@@ -454,6 +461,8 @@ class SearchPanel(QWidget):
     def _on_search(self):
         query = self.query_input.text().strip()
         if not query or self._searching:
+            if not query:
+                self._last_search_row = None
             return
 
         self._searching = True
@@ -514,6 +523,14 @@ class SearchPanel(QWidget):
             total = n_v + n_t
             self.status_label.setText(f"{total} results ({latency_ms:.0f}ms)")
 
+            # History: document the search (query + top verse hits).
+            from core.database import (current_operator_session, log_search_event)
+            top = [f"{r.get('book', '')} {r.get('chapter', '')}:"
+                   f"{r.get('verse_num', r.get('verse', ''))}".strip()
+                   for r in self._verse_results[:5]]
+            self._last_search_row = log_search_event(
+                current_operator_session(), "fuzzy", query, total, top)
+
             self._repopulate_results()
 
         except Exception as e:
@@ -530,6 +547,18 @@ class SearchPanel(QWidget):
     def _on_navigate_requested(self, data: dict):
         """Single-click on result row → navigate to reference in current browser translation."""
         self.verse_to_navigator.emit(data)
+
+    @staticmethod
+    def _verse_ref(data: dict) -> str:
+        return (f"{data.get('book', '')} {data.get('chapter', '')}:"
+                f"{data.get('verse_num', data.get('verse', ''))}".strip())
+
+    def _on_result_chosen(self, data: dict):
+        """Record which search result the operator picked."""
+        if not isinstance(data, dict):
+            return
+        from core.database import mark_search_chosen
+        mark_search_chosen(self._last_search_row, self._verse_ref(data))
 
     def _on_live_requested(self, data: dict):
         """Double-click on result row → send to live in current browser translation."""

@@ -61,7 +61,9 @@ function resetTheme() {
         "--rc-text-color", "--rc-text-size", "--rc-text-weight",
         "--rc-text-line-height", "--rc-text-shadow", "--rc-text-letter-spacing",
         "--rc-text-margin-bottom", "--rc-text-min-size", "--rc-text-max-size",
-        "--rc-text-font-family",
+        "--rc-text-font-family", "--rc-text-transform", "--rc-text-align",
+        "--rc-text-font-style", "--rc-text-decoration", "--rc-text-direction",
+        "--rc-text-outline",
         "--rc-ref-color", "--rc-ref-size", "--rc-ref-weight",
         "--rc-ref-text-transform", "--rc-ref-letter-spacing",
         "--rc-ref-font-family",
@@ -71,7 +73,7 @@ function resetTheme() {
     props.forEach(p => root.style.removeProperty(p));
 }
 
-function applyTheme(theme) {
+function applyTheme(theme, slideFormat) {
     if (!theme) return;
     resetTheme();
     const root = document.documentElement;
@@ -112,6 +114,33 @@ function applyTheme(theme) {
     if (t.min_size)     root.style.setProperty("--rc-text-min-size", t.min_size);
     if (t.max_size)     root.style.setProperty("--rc-text-max-size", t.max_size);
     if (t.font_family)  root.style.setProperty("--rc-text-font-family", t.font_family);
+    if (t.text_transform) root.style.setProperty("--rc-text-transform", t.text_transform);
+    if (t.text_align)   root.style.setProperty("--rc-text-align", t.text_align);
+
+    // Deck-level slide format overrides theme text (cascade: theme < deck).
+    const f = slideFormat || {};
+    if (f.color) root.style.setProperty("--rc-text-color", f.color);
+    if (f.size_nominal != null) root.style.setProperty("--rc-text-size", f.size_nominal + "px");
+    if (f.size_min != null) root.style.setProperty("--rc-text-min-size", f.size_min + "px");
+    if (f.size_max != null) root.style.setProperty("--rc-text-max-size", f.size_max + "px");
+    if (f.bold === true) root.style.setProperty("--rc-text-weight", "800");
+    else if (f.bold === false) root.style.setProperty("--rc-text-weight", "400");
+    if (f.italics === true) root.style.setProperty("--rc-text-font-style", "italic");
+    else if (f.italics === false) root.style.setProperty("--rc-text-font-style", "normal");
+    if (f.case === "upper") root.style.setProperty("--rc-text-transform", "uppercase");
+    else if (f.case === "lower") root.style.setProperty("--rc-text-transform", "lowercase");
+    else if (f.case === "origin") root.style.setProperty("--rc-text-transform", "none");
+    const fdeco = [];
+    if (f.underline === true) fdeco.push("underline");
+    if (f.strike === true) fdeco.push("line-through");
+    if (fdeco.length) root.style.setProperty("--rc-text-decoration", fdeco.join(" "));
+    else if (f.underline === false || f.strike === false) root.style.setProperty("--rc-text-decoration", "none");
+    if (f.align) root.style.setProperty("--rc-text-align", f.align);
+    if (f.spacing != null) root.style.setProperty("--rc-text-line-height", String(f.spacing));
+    if (f.dir) root.style.setProperty("--rc-text-direction", f.dir);
+    if (f.outline) root.style.setProperty("--rc-text-outline", "1px " + f.outline);
+    else root.style.removeProperty("--rc-text-outline");
+    if (f.font) root.style.setProperty("--rc-text-font-family", "'" + String(f.font).replace(/'/g, "") + "'");
 
     // Reference
     if (r.color)        root.style.setProperty("--rc-ref-color", r.color);
@@ -135,7 +164,8 @@ function applyTheme(theme) {
 }
 
 function extractVerseNumber(reference) {
-    // Extract verse number from formats like "ESTHER 5:9" or "ESTHER 5:9 GSV"
+    // Empty/blank references (e.g. slides with show_title off) carry no number
+    if (!reference) return null;
     const match = reference.match(/(\d+:\d+)$/);
     if (match) {
         return match[1].split(':').pop(); // Get just the verse number
@@ -271,7 +301,7 @@ function _populateContainers(data) {
     // Text
     const ctTextInner = document.querySelector("#ct-text > *");
     if (ctTextInner) {
-        let html = data.text || "";
+        let html = renderInlineColors(data.text);
         if (verseNum) html = '<span class="verse-num">' + verseNum + '</span> ' + html;
         ctTextInner.innerHTML = html;
     }
@@ -358,6 +388,148 @@ function _runExitAnimation(callback) {
     }, { once: true });
 }
 
+// ─── Inline run markup ───────────────────────────────────────────────
+// Slide text may carry [words (k=v; k=v)] runs (legacy [words: (#hex)]
+// still parses as color-only). The payload arrives HTML-escaped by
+// sanitize_payload(); this converts runs to <span> elements and single
+// newlines to <br/> at render time — the single conversion point; never
+// pre-convert server-side or spans double-escape into text.
+// A bracket whose final (...) group holds no valid params stays literal.
+const _INLINE_TRUE = new Set(["true", "1", "yes"]);
+const _INLINE_FALSE = new Set(["false", "0", "no"]);
+const _INLINE_KEYS = new Set(["size", "bold", "color", "italics", "case",
+    "underline", "strike", "align", "spacing", "super", "sub",
+    "outline", "dir", "hr", "font"]);
+
+function _parseInlineColor(value) {
+    const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec((value || "").trim());
+    if (!m) return null;
+    let c = m[1];
+    if (c.length === 3) c = c.split("").map(ch => ch + ch).join("");
+    return "#" + c.toLowerCase();
+}
+
+function parseInlineParams(raw) {
+    const params = {};
+    let found = false;
+    for (const seg of (raw || "").split(";")) {
+        const s = seg.trim();
+        if (!s) continue;
+        const eq = s.indexOf("=");
+        if (eq < 0) continue;
+        const key = s.slice(0, eq).trim().toLowerCase();
+        const value = s.slice(eq + 1);
+        if (!_INLINE_KEYS.has(key)) continue;
+        if (key === "size") {
+            const n = parseInt(value, 10);
+            if (!isNaN(n)) { params.size_nominal = n; found = true; }
+        } else if (key === "bold" || key === "italics") {
+            const v = value.trim().toLowerCase();
+            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
+            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
+        } else if (key === "color") {
+            const c = _parseInlineColor(value);
+            if (c) { params.color = c; found = true; }
+        } else if (key === "case") {
+            const v = value.trim().toLowerCase();
+            if (v === "upper" || v === "lower" || v === "origin") {
+                params.case = v; found = true;
+            }
+        } else if (key === "underline" || key === "strike" || key === "super" || key === "sub" || key === "hr") {
+            const v = value.trim().toLowerCase();
+            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
+            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
+        } else if (key === "align") {
+            const v = value.trim().toLowerCase();
+            if (v === "left" || v === "center" || v === "right" || v === "justify") { params.align = v; found = true; }
+        } else if (key === "dir") {
+            const v = value.trim().toLowerCase();
+            if (v === "rtl" || v === "ltr") { params.dir = v; found = true; }
+        } else if (key === "spacing") {
+            const n = parseFloat(value);
+            if (!isNaN(n) && n >= 0.5 && n <= 3.0) { params.spacing = n; found = true; }
+        } else if (key === "outline") {
+            const c = _parseInlineColor(value);
+            if (c) { params.outline = c; found = true; }
+        } else if (key === "font") {
+            const v = (value || "").replace(/[;()\[\]"']/g, "").trim();
+            if (v && v.length <= 60) { params.font = v; found = true; }
+        }
+    }
+    return found ? params : null;
+}
+
+function spanStyle(p) {
+    // Shared contract with core/slide_parser._span_style — keep in sync.
+    const styles = [];
+    if (p.color) styles.push("color:" + p.color);
+    if (p.size_nominal != null) styles.push("font-size:" + p.size_nominal + "px");
+    if (p.bold === true) styles.push("font-weight:700");
+    else if (p.bold === false) styles.push("font-weight:400");
+    if (p.italics === true) styles.push("font-style:italic");
+    else if (p.italics === false) styles.push("font-style:normal");
+    if (p.case === "upper") styles.push("text-transform:uppercase");
+    else if (p.case === "lower") styles.push("text-transform:lowercase");
+    else if (p.case === "origin") styles.push("text-transform:none");
+    const deco = [];
+    if (p.underline === true) deco.push("underline");
+    if (p.strike === true) deco.push("line-through");
+    if (deco.length) styles.push("text-decoration:" + deco.join(" "));
+    else if (p.underline === false || p.strike === false) styles.push("text-decoration:none");
+    if (p.align) styles.push("display:inline-block;width:100%;text-align:" + p.align);
+    if (p.spacing != null) styles.push("line-height:" + p.spacing);
+    if (p.outline) styles.push("-webkit-text-stroke:1px " + p.outline);
+    if (p.dir) styles.push("direction:" + p.dir + ";unicode-bidi:embed");
+    if (p.font) styles.push("font-family:'" + String(p.font).replace(/'/g, "") + "'");
+    return styles.join(";");
+}
+
+function renderInlineColors(text) {
+    const raw = text || "";
+    const runRe = /\[([^\[\]]+?)(?:\s*\(([^()]*)\))?\]/g;
+    let out = "", last = 0, m;
+    while ((m = runRe.exec(raw)) !== null) {
+        // Bare \n markers outside brackets convert straight to breaks.
+        out += raw.slice(last, m.index).replace(/\\n/g, "<br/>");
+        const runText = m[1], runParams = m[2];
+        if (runParams === undefined) {
+            if (runText.trim() === "\\n") {
+                out += '<span style=""><br/></span>';  // bare [\n] gap
+            } else {
+                out += m[0];  // literal — keep brackets as typed
+            }
+        } else {
+            const parsed = parseInlineParams(runParams);
+            if (parsed) {
+                if (parsed.hr === true) {
+                    out += '<div style="border-top:2px solid currentColor;margin:8px 0"></div>';
+                } else {
+                    const disp = runText.trim();
+                    let inner = disp;
+                    if (parsed.super === true) inner = "<sup>" + disp + "</sup>";
+                    else if (parsed.sub === true) inner = "<sub>" + disp + "</sub>";
+                    if (disp === "" || disp === "\\n") {
+                        out += '<span style="' + spanStyle(parsed) + '"><br/></span>';
+                    } else {
+                        out += '<span style="' + spanStyle(parsed) + '">' + inner + '</span>';
+                    }
+                }
+            } else {
+                const legacyText = /^(.*):\s*$/.exec(runText);
+                const legacyHex = _parseInlineColor(runParams);
+                if (legacyText && legacyHex) {
+                    out += '<span style="color:' + legacyHex + '">' + legacyText[1] + '</span>';
+                } else {
+                    out += m[0];
+                }
+            }
+        }
+        last = m.index + m[0].length;
+    }
+    out += raw.slice(last).replace(/\\n/g, "<br/>");
+    return out.replace(/\r?\n/g, "<br/>");
+}
+
 function handlePayload(data) {
     if (data.action === "clear") {
         _runExitAnimation(() => {
@@ -370,9 +542,9 @@ function handlePayload(data) {
     
     if (data.action === "display") {
         const isTransition = _prevPayload && _prevPayload.action === "display";
-        // Update scripture text
+        // Update scripture text (inline [words: (#hex)] colors rendered here)
         if (data.text) {
-            let verseTextContent = data.text;
+            let verseTextContent = renderInlineColors(data.text);
             // Prepend verse number if reference is available
             const refText = data.reference || (data.book && data.chapter && data.verse 
                 ? data.book + " " + data.chapter + ":" + data.verse 
@@ -384,19 +556,15 @@ function handlePayload(data) {
             verseText.innerHTML = verseTextContent;
         }
         
-        // Update reference and translation as separate elements
+        // Update reference and translation as separate elements.
+        // Blank fields CLEAR the line: a slide with show_title off must not
+        // leave the previous verse's reference stale on screen.
         if (data.reference) {
             verseRefText.innerHTML = data.reference;
         } else if (data.book && data.chapter && data.verse) {
             verseRefText.innerHTML = data.book + " " + data.chapter + ":" + data.verse;
-        }
-        
-        if (data.translation) {
-            verseRefTranslation.innerHTML = data.translation;
-        }
-        
-        // Legacy: if only ref is provided (no reference/translation), parse it
-        if (!data.reference && !data.translation && data.ref) {
+        } else if (data.ref) {
+            // Legacy: if only ref is provided (no reference/translation), parse it
             const m = data.ref.match(/^\[([^\]]+)\]\s*(.+)$/);
             if (m) {
                 verseRefTranslation.innerHTML = m[1];
@@ -404,11 +572,20 @@ function handlePayload(data) {
             } else {
                 verseRefText.innerHTML = data.ref;
             }
+        } else {
+            verseRefText.innerHTML = "";
+        }
+
+        if (data.translation) {
+            verseRefTranslation.innerHTML = data.translation;
+        } else if (!data.ref) {
+            verseRefTranslation.innerHTML = "";
         }
         
-        // Apply theme (full theme dict or just name for CSS class fallback)
+        // Apply theme (full theme dict or just name for CSS class fallback).
+        // Deck slide_format merges over theme text (cascade: theme < deck).
         if (data.theme_data) {
-            applyTheme(data.theme_data);
+            applyTheme(data.theme_data, data.slide_format);
             document.body.className = "";
         } else if (data.theme) {
             document.body.className = "theme-" + data.theme;

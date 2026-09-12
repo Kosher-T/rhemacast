@@ -20,7 +20,14 @@ RTF lyrics format (machine-generated, consistent):
     EMPTY line = slide boundary (single blank splits slides here, unlike our
     txt format's double-blank rule)
   - Blocks with neither are RTF header noise (fonttbl/colortbl/pnseclvl...)
-  - Section headers are standalone lines like "Verse 1", "Chorus", "Bridge"
+  - Section headers are standalone lines like "Verse 1", "Chorus", "Bridge",
+    "Vamp" (named set deliberately small — visible lyric lines never match it)
+  - EW2 hidden template-style blocks carry makeshift labels most libraries
+    actually use: bare slide numbers ("1", "2"), "Vamp", mid-song "Song N"
+    medley joints. Numbers/Song-N become sections; a leading "Song 1" title
+    echo, x8 repeats, and service headers stay dropped. A bare "1999" in
+    visible lyrics is untouched (hidden-gated, verified zero occurrences
+    across 225 old-dialect songs).
   - A section can span multiple slides: continuation slides after a blank
     inherit the current section (no repeated header)
 """
@@ -52,11 +59,18 @@ def _open_ro(path: str) -> sqlite3.Connection:
 # ── RTF parsing ──────────────────────────────────────────────────────────────
 
 _SECTION_RE = re.compile(
-    r"^(verse|chorus|bridge|tag|pre-?chorus|prechorus|ending|intro|outro|"
+    r"^(verse|chorus|bridge|tag|vamp|pre-?chorus|prechorus|ending|intro|outro|"
     r"v\s*\d*|c\s*\d*|b\s*\d*|t\s*\d*)"
     r"(\s+\d+)?$",
     re.IGNORECASE,
 )
+
+# Makeshift labels live ONLY in hidden (template-style) blocks — EW hides
+# them on screen and most libraries number slides ("1", "2") or mark vamps
+# and medley joints ("Song 2") there instead of named headers. Visible lyric
+# lines never match this (a visible "1999" stays a lyric).
+_HIDDEN_NUMBER_RE = re.compile(r"^\d{1,3}$")
+_HIDDEN_SONGN_RE = re.compile(r"^song \d+$", re.IGNORECASE)
 
 
 def is_section_header(line: str) -> bool:
@@ -65,28 +79,45 @@ def is_section_header(line: str) -> bool:
 
 
 def _rtf_unescape(text: str) -> str:
-    """Decode \\'hh (cp1252) and \\uN? unicode escapes; unescape braces/backslash."""
-    def hex_repl(m):
-        try:
-            return bytes.fromhex(m.group(1)).decode("cp1252")
-        except ValueError:
-            return m.group(0)
+    """Full RTF-tail cleanup pipeline. ORDER MATTERS:
 
-    def uni_repl(m):
-        try:
-            code = int(m.group(1))
-            if code < 0:
-                code += 0x10000
-            return chr(code)
-        except (ValueError, OverflowError):
-            return m.group(0)
+    1. Protect literal backslashes (\\\\) so later steps can't eat them.
+    2. Decode \\'hh (cp1252) escapes.
+    3. Decode \\uN? unicode escapes (consuming the single-char fallback).
+    4. Strip remaining control words (\\f1, \\shad0, ...).
+    5. Unescape \\{ / \\}, drop leftover braces, restore backslashes.
+    6. Normalize exotic spacing (nbsp, thin/medium/em space) to ASCII space.
 
-    text = re.sub(r"\\'([0-9a-fA-F]{2})", hex_repl, text)
+    Steps 2–3 MUST precede step 4: the control-word pattern would otherwise
+    eat the \\uNNN token and orphan its '?' fallback in the lyrics.
+    """
+    text = text.replace("\\\\", "\x00")
+    text = re.sub(r"\\'([0-9a-fA-F]{2})", _hex_repl, text)
     # \uN followed by optional fallback char represented as '?'
-    text = re.sub(r"\\u(-?\d+)\s*\??", uni_repl, text)
-    text = text.replace(r"\{", "{").replace(r"\}", "}").replace(r"\\", "\\")
+    text = re.sub(r"\\u(-?\d+)\s*\??", _uni_repl, text)
+    text = _CTRL_WORD_RE.sub("", text)
+    text = text.replace(r"\{", "{").replace(r"\}", "}")
+    text = text.replace("{", "").replace("}", "")
+    text = _SPACE_CHARS_RE.sub(" ", text)
     # NOTE: no strip() here — color-run segmentation preserves boundary whitespace
-    return text.replace("{", "").replace("}", "")
+    return text.replace("\x00", "\\")
+
+
+def _hex_repl(m):
+    try:
+        return bytes.fromhex(m.group(1)).decode("cp1252")
+    except ValueError:
+        return m.group(0)
+
+
+def _uni_repl(m):
+    try:
+        code = int(m.group(1))
+        if code < 0:
+            code += 0x10000
+        return chr(code)
+    except (ValueError, OverflowError):
+        return m.group(0)
 
 
 # \colortbl: {\colortbl ;\red51\green51\blue153;} (also matches {\*\colortbl})
@@ -95,7 +126,12 @@ _COLORTBL_RE = re.compile(r"\\(?:\*\\?)?colortbl([^{}]+)")
 _COLOR_DEF_RE = re.compile(r"\\red(\d+)\\green(\d+)\\blue(\d+)")
 _CF_SPLIT_RE = re.compile(r"\\cf(-?\d+)")
 # Remaining RTF control words inside a color segment (\sdnotstroke, \shad0...)
+# NOTE: must NOT run before \'hh / \uN decoding (it would eat the \uNNN part
+# and leave the fallback '?' behind). _rtf_unescape() applies this last.
 _CTRL_WORD_RE = re.compile(r"\\(?:\*)?[a-zA-Z]+(?:-?\d+)?[ ]?")
+# Exotic spacing variants (nbsp, thin/medium/em spaces) → plain ASCII space
+# so lyrics render and tokenize identically everywhere.
+_SPACE_CHARS_RE = re.compile("[\u00a0\u2000-\u200b\u202f\u205f\u3000]")
 
 
 def parse_color_palette(rtf: str) -> dict[int, str]:
@@ -120,9 +156,7 @@ def _color_runs_to_markup(tail: str, palette: dict[int, str]) -> str:
     Segments with default color (0/unknown index) are emitted unwrapped.
     """
     if "\\cf" not in tail:
-        # No explicit runs — still strip stray control words + braces
-        cleaned = _CTRL_WORD_RE.sub("", tail)
-        return _rtf_unescape(cleaned)
+        return _rtf_unescape(tail)
 
     parts = _CF_SPLIT_RE.split(tail)
     # parts alternates: [pre, id1, seg1, id2, seg2, ...]
@@ -135,7 +169,7 @@ def _color_runs_to_markup(tail: str, palette: dict[int, str]) -> str:
             except ValueError:
                 color_idx = 0
             continue
-        cleaned = _rtf_unescape(_CTRL_WORD_RE.sub("", part))
+        cleaned = _rtf_unescape(part)
         if not cleaned:
             continue
         hexcolor = palette.get(color_idx) if color_idx != 0 else None
@@ -231,9 +265,18 @@ def rtf_to_slides(rtf: str) -> list[dict]:
             continue
 
         if hidden:
-            # EW hides these lines on screen: section labels become sections,
-            # anything else (e.g. pasted titles) is dropped like EW does.
+            # EW hides these lines on screen: named headers (Verse/Chorus/…,
+            # now incl. Vamp) become sections, as do makeshift labels — bare
+            # slide numbers ("1", "2") and mid-song "Song N" medley joints.
+            # Anything else (titles, x8 repeats, service headers, and a
+            # leading "Song 1" title echo) is dropped like EW does.
             if is_section_header(stripped):
+                flush()
+                current_section = stripped.title()
+            elif _HIDDEN_NUMBER_RE.match(stripped):
+                flush()
+                current_section = stripped
+            elif _HIDDEN_SONGN_RE.match(stripped) and (slides or buf):
                 flush()
                 current_section = stripped.title()
             continue

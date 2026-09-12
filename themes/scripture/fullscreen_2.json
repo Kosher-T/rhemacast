@@ -32,6 +32,8 @@
         "weight": 700,
         "line_height": "1.08",
         "text_shadow": "-2px -2px 0 #555, 2px -2px 0 #555, -2px 2px 0 #555, 2px 2px 0 #555, -2px 0 0 #555, 2px 0 0 #555, 0 -2px 0 #555, 0 2px 0 #555, 0 2px 16px rgba(0, 0, 0, 0.6)",
+        "text_transform": "none",
+        "text_align": "center",
         "letter_spacing": "-0.02em",
         "margin_bottom": "20px"
     },

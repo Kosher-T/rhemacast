@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.database import DB_PATH, get_connection, init_db
-from core.slide_parser import parse_slide_txt, strip_inline_markup
+from core.slide_parser import parse_slide_txt, parse_deck_format, strip_inline_markup, split_multisong, deck_to_txt
 
 _SLIDES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "slides")
 
@@ -27,6 +27,22 @@ def _now_iso() -> str:
 def _slides_to_fts_text(slides: list[dict]) -> str:
     """Concatenate slide texts for FTS indexing (markup stripped)."""
     return " \n ".join(strip_inline_markup(s.get("text", "")) for s in slides)
+
+
+def section_run_starts(slides: list[dict]) -> list[int]:
+    """Start indices of consecutive same-section runs (None groups with None).
+
+    Matches the strip's visual grouping; used for section-hop navigation.
+    """
+    runs: list[int] = []
+    sentinel = object()
+    last = sentinel
+    for i, slide in enumerate(slides or []):
+        sec = (slide or {}).get("section")
+        if i == 0 or sec != last:
+            runs.append(i)
+        last = sec
+    return runs
 
 
 def _fts_sync_deck(conn: sqlite3.Connection, deck_id: int, title: str, slides: list[dict], tags: str | None):
@@ -169,6 +185,32 @@ def list_decks(order_by: str = "updated_at DESC") -> list[dict]:
     return [_row_to_deck(r) for r in rows]
 
 
+def list_deck_summaries(order_by: str = "updated_at DESC") -> list[dict]:
+    """Library-list rows WITHOUT slides_json (100k-deck scale safe).
+
+    Returns id/title/slide_count/updated_at (+ lowercase title for fast
+    filtering). Full slides load on demand via get_deck().
+    """
+    allowed = {"updated_at DESC", "updated_at ASC", "created_at DESC", "created_at ASC", "title ASC", "title DESC"}
+    if order_by not in allowed:
+        order_by = "updated_at DESC"
+    conn = get_connection()
+    rows = conn.execute(
+        f"""SELECT id, title, updated_at,
+                   COALESCE(json_array_length(slides_json), 0) AS slide_count
+            FROM slide_decks ORDER BY {order_by}"""
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        title = r["title"] or "(untitled)"
+        out.append({"id": r["id"], "title": title,
+                    "slide_count": r["slide_count"] or 0,
+                    "updated_at": (r["updated_at"] or "")[:10],
+                    "_title_lower": title.lower()})
+    return out
+
+
 def update_deck(
     deck_id: int,
     raw_text: str | None = None,
@@ -237,6 +279,28 @@ def update_deck(
     return get_deck(deck_id)
 
 
+def update_slide(deck_id: int, index: int, text: str) -> Optional[dict]:
+    """Update one slide's text in place (section unchanged, indices stable).
+
+    Reuses update_deck so FTS/timestamps stay consistent. Raises IndexError
+    for a bad index and ValueError for empty text (an emptied slide would
+    vanish on reparse and shift every following index — use the full text
+    edit to restructure instead).
+    """
+    deck = get_deck(deck_id)
+    if deck is None:
+        return None
+    slides = deck.get("slides", [])
+    if not (0 <= index < len(slides)):
+        raise IndexError(f"slide index {index} out of range (0..{len(slides) - 1})")
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("slide text must not be empty")
+    slides[index] = {"section": slides[index].get("section"), "text": text}
+    raw = deck_to_txt(deck.get("title") or "", slides, deck.get("format"))
+    return update_deck(deck_id, raw_text=raw)
+
+
 def delete_deck(deck_id: int) -> bool:
     conn = get_connection()
     row = conn.execute("SELECT title, tags FROM slide_decks WHERE id = ?", (deck_id,)).fetchone()
@@ -264,6 +328,7 @@ def _row_to_deck(row: sqlite3.Row) -> dict:
         "tags": row["tags"],
         "source_path": row["source_path"],
         "raw_text": row["raw_text"],
+        "format": parse_deck_format(row["raw_text"] or ""),
         "slides": slides,
         "slides_json": row["slides_json"],
         "slide_count": len(slides),
@@ -274,11 +339,17 @@ def _row_to_deck(row: sqlite3.Row) -> dict:
 
 # ── Import / Reparse ────────────────────────────────────────────────────────
 
-def import_txt(path: str, tags: str | None = None) -> dict:
+def import_txt(path: str, tags: str | None = None) -> list[dict]:
     """
-    Read txt file at path, parse, and create deck with source_path=path.
-    If a deck already exists with same source_path, it is updated (re-import).
-    Returns deck dict.
+    Read txt file at path and create deck(s).
+
+    Multi-song files are supported: a run of \\n × 5+ followed by a title line
+    (#/%) splits songs. Single-song files keep classic behavior (deck keyed by
+    source_path=abspath, re-import updates in place). Multi-song decks are
+    keyed by abspath#<index>; re-import updates existing indexes and removes
+    stale extras.
+
+    Returns the list of imported/updated deck dicts.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
@@ -286,15 +357,63 @@ def import_txt(path: str, tags: str | None = None) -> dict:
         raw = f.read()
 
     init_db()
-    conn = get_connection()
-    row = conn.execute("SELECT id FROM slide_decks WHERE source_path = ?", (os.path.abspath(path),)).fetchone()
-    conn.close()
-
     abs_path = os.path.abspath(path)
-    if row:
-        return update_deck(row["id"], raw_text=raw, tags=tags, source_path=abs_path)
-    else:
-        return create_deck(raw, source_path=abs_path, tags=tags)
+    chunks = split_multisong(raw)
+    parsed_songs = [parse_slide_txt(c) for c in chunks]
+    # Drop fully-empty chunks (no title and no slides) unless it's the only one
+    if len(parsed_songs) > 1:
+        parsed_songs = [p for p in parsed_songs if p["title"] or p["slides"]]
+    if not parsed_songs or not raw.strip():
+        return []
+
+    # All txt imports are keyed by abspath#<index> so files can grow/shrink
+    # between 1 and N songs without orphaning decks.
+    conn = get_connection()
+    existing_rows = conn.execute(
+        "SELECT id, source_path FROM slide_decks WHERE source_path = ? OR source_path LIKE ? ORDER BY id",
+        (abs_path, abs_path + "#%"),
+    ).fetchall()
+    conn.close()
+    existing_ids = [r["id"] for r in existing_rows]
+
+    def _lookup(source: str) -> int | None:
+        row = next((r for r in existing_rows if r["source_path"] == source), None)
+        return row["id"] if row else None
+
+    def _cleanup(keep: set[int]):
+        for deck_id in existing_ids:
+            if deck_id not in keep:
+                delete_deck(deck_id)
+
+    if len(parsed_songs) == 1:
+        song = parsed_songs[0]
+        target = f"{abs_path}#0"
+        deck_id = _lookup(target) or _lookup(abs_path)  # legacy plain-abspath decks
+        if deck_id:
+            d = update_deck(deck_id, raw_text=raw, tags=tags, source_path=target)
+            _cleanup({d["id"]} if d else set())
+            return [d] if d else []
+        d = create_deck_from_slides(
+            title=song["title"], slides=song["slides"],
+            source_path=target, raw_text=raw, tags=tags,
+        )
+        _cleanup({d["id"]})
+        return [d]
+
+    # ── Multi-song ──
+    decks: list[dict] = []
+    for i, song in enumerate(parsed_songs):
+        deck = create_deck_from_slides(
+            title=song["title"],
+            slides=song["slides"],
+            source_path=f"{abs_path}#{i}",
+            raw_text=chunks[i],
+            tags=tags,
+        )
+        decks.append(deck)
+
+    _cleanup({d["id"] for d in decks})
+    return decks
 
 
 def import_all_txts(directory: str | None = None) -> list[dict]:
@@ -307,7 +426,7 @@ def import_all_txts(directory: str | None = None) -> list[dict]:
         if fname.lower().endswith(".txt"):
             path = os.path.join(directory, fname)
             try:
-                decks.append(import_txt(path))
+                decks.extend(import_txt(path))
             except Exception:
                 continue
     return decks

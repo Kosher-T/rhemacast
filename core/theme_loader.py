@@ -1,14 +1,15 @@
 """
 core/theme_loader.py
 
-Modular theme system. Themes are JSON files in the themes/ directory.
-Each theme defines colors, typography, and layout for the OBS display.
+Modular theme system. Themes are JSON files grouped by kind:
+  themes/scripture/*.json  — verse/schedule display themes
+  themes/freeform/*.json   — song/slide display themes
 
 To create a new theme:
-1. Copy themes/default.json
+1. Copy themes/scripture/default.json (or the freeform slides theme)
 2. Modify the values
-3. Save as themes/your_theme_name.json
-4. The theme appears automatically in the Themes panel.
+3. Save under themes/scripture/ or themes/freeform/ as your_theme_name.json
+4. The theme appears automatically in the matching picker.
 """
 
 import json
@@ -22,8 +23,15 @@ logger = logging.getLogger(__name__)
 # themes/ directory is at project root
 _THEMES_DIR = Path(__file__).resolve().parent.parent / "themes"
 
+# Known theme kinds (= subfolder names). Loose themes/*.json files left over
+# from before the split are treated as "scripture" for backward compat.
+SCRIPTURE = "scripture"
+FREEFORM = "freeform"
+
 # Cache: name -> theme dict
 _cache: dict[str, dict] = {}
+# name -> source file path (so saves write back to the right subfolder)
+_paths: dict[str, Path] = {}
 _loaded = False
 _current_theme: str = "default"
 # Track file modification times to detect edits
@@ -47,8 +55,19 @@ def get_current_theme_name() -> str:
     return _current_theme
 
 
+def _kind_for_path(path: Path) -> str:
+    """Theme kind from file location (subfolder name, else scripture)."""
+    try:
+        rel = path.relative_to(_THEMES_DIR)
+        if len(rel.parts) > 1:
+            return rel.parts[0]
+    except ValueError:
+        pass
+    return SCRIPTURE
+
+
 def _load_all():
-    """Scan themes/ directory and load all .json files."""
+    """Scan themes/ subdirectories and load all .json files."""
     global _cache, _loaded
     if _loaded:
         return
@@ -58,12 +77,13 @@ def _load_all():
         _loaded = True
         return
 
-    for path in sorted(_THEMES_DIR.glob("*.json")):
+    for path in sorted(_THEMES_DIR.rglob("*.json")):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 theme = json.load(f)
             name = theme.get("name", path.stem)
             _cache[name] = theme
+            _paths[name] = path
             _file_mtimes[str(path)] = os.path.getmtime(path)
         except Exception as e:
             logger.error(f"Failed to load theme {path.name}: {e}")
@@ -88,7 +108,7 @@ def _check_for_changes():
     if not _loaded or not _THEMES_DIR.exists():
         return
 
-    for path in _THEMES_DIR.glob("*.json"):
+    for path in _THEMES_DIR.rglob("*.json"):
         try:
             mtime = os.path.getmtime(path)
             key = str(path)
@@ -98,6 +118,7 @@ def _check_for_changes():
                     theme = json.load(f)
                 name = theme.get("name", path.stem)
                 _cache[name] = theme
+                _paths[name] = path
                 _file_mtimes[key] = mtime
                 logger.info(f"Theme '{name}' reloaded from disk (file changed)")
         except Exception as e:
@@ -124,22 +145,60 @@ def get_theme_names() -> list[str]:
     return list(_cache.keys())
 
 
+def get_theme_kind(name: str) -> str:
+    """Return the kind ("scripture" / "freeform") of a theme by name."""
+    _load_all()
+    path = _paths.get(name)
+    if path is None:
+        return SCRIPTURE
+    return _kind_for_path(path)
+
+
+def get_themes_by_kind(kind: str) -> dict[str, dict]:
+    """Return loaded themes of one kind as {name: theme_dict}."""
+    _load_all()
+    _check_for_changes()
+    return {n: t for n, t in _cache.items()
+            if _kind_for_path(_paths.get(n, _THEMES_DIR)) == kind}
+
+
+def slide_title_visible(theme_data: Optional[dict]) -> bool:
+    """Whether a slide payload rendered with this theme shows the deck title.
+
+    Themes opt out with {"slide": {"show_title": false}}. Defaults to True
+    so scripture themes (which have no "slide" section) are unaffected.
+    """
+    if not isinstance(theme_data, dict):
+        return True
+    return theme_data.get("slide", {}).get("show_title", True) is not False
+
+
 def reload_themes():
     """Force reload all themes from disk."""
     global _loaded
     _loaded = False
     _cache.clear()
+    _paths.clear()
     _load_all()
 
 
-def save_theme(name: str, theme_dict: dict):
-    """Write a theme dict to themes/{name}.json and update the cache."""
+def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None):
+    """Write a theme dict to its subfolder file and update the cache.
+
+    Existing themes save back to their own file; new themes go under
+    themes/{subdir}/ (default "scripture").
+    """
     _load_all()
-    path = _THEMES_DIR / f"{name}.json"
+    if name in _paths:
+        path = _paths[name]
+    else:
+        path = _THEMES_DIR / (subdir or SCRIPTURE) / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(theme_dict, f, indent=4, ensure_ascii=False)
         _cache[name] = theme_dict
+        _paths[name] = path
         _file_mtimes[str(path)] = os.path.getmtime(path)
         logger.info(f"Theme '{name}' saved to {path}")
     except Exception as e:
@@ -147,8 +206,12 @@ def save_theme(name: str, theme_dict: dict):
         raise
 
 
-def create_theme(name: str, label: str, source_name: str = "default") -> dict:
-    """Create a new theme by cloning an existing one. Returns the new theme dict."""
+def create_theme(name: str, label: str, source_name: str = "default",
+                 subdir: Optional[str] = None) -> dict:
+    """Create a new theme by cloning an existing one. Returns the new theme dict.
+
+    Without subdir, the clone lands in the source theme's own subfolder.
+    """
     _load_all()
     source = _cache.get(source_name, _cache.get("default", {}))
     import copy
@@ -157,5 +220,7 @@ def create_theme(name: str, label: str, source_name: str = "default") -> dict:
     new_theme["label"] = label
     new_theme.pop("description", None)
     new_theme.pop("author", None)
-    save_theme(name, new_theme)
+    if subdir is None and source_name in _paths:
+        subdir = _kind_for_path(_paths[source_name])
+    save_theme(name, new_theme, subdir=subdir)
     return new_theme

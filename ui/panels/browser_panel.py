@@ -35,7 +35,7 @@ from ui.dialogs.add_translation_dialog import AddTranslationDialog
 from core.bible_service import (
     AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses,
     import_translation_file, refresh_available_translations,
-    get_display_name, set_display_name, get_translation_order, set_translation_order
+    get_display_name, get_translation_order, set_translation_order
 )
 from core.database import get_setting, set_setting
 
@@ -337,10 +337,15 @@ class TranslationButton(QPushButton):
             return
         # Check for duplicates (allow keeping the same name)
         if new_name != self.display_name:
+            from core.bible_service import rename_translation
+            try:
+                rename_translation(self.canonical, new_name)
+            except ValueError as e:
+                QMessageBox.warning(self, "Invalid Name", str(e))
+                return
             self.display_name = new_name
             self.setText(new_name)
             self._update_tooltip()
-            set_display_name(self.canonical, new_name)
             self.rename_requested.emit(self.canonical)
 
     # ── Drag & Drop ────────────────────────────────────────────────────────
@@ -450,6 +455,8 @@ class BrowserPanel(QWidget):
     navigator_push = pyqtSignal(str, str, str)
     # Emitted when translation changes (for FTS search panel)
     translation_changed = pyqtSignal(str)
+    # Emitted when a translation is renamed (canonical code)
+    translation_renamed = pyqtSignal(str)
 
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
@@ -518,6 +525,7 @@ class BrowserPanel(QWidget):
             btn.double_clicked_signal.connect(self._on_translation_double_click)
             btn.sort_requested.connect(self._on_sort_translations)
             btn.rename_requested.connect(lambda _: self._apply_sort())
+            btn.rename_requested.connect(self.translation_renamed.emit)
             trans_layout.addWidget(btn)
             self._translation_buttons[abbrev] = btn
             if abbrev == self._current_translation:
@@ -893,6 +901,7 @@ class BrowserPanel(QWidget):
         btn.double_clicked_signal.connect(self._on_translation_double_click)
         btn.sort_requested.connect(self._on_sort_translations)
         btn.rename_requested.connect(lambda _: self._apply_sort())
+        btn.rename_requested.connect(self.translation_renamed.emit)
         self._translation_buttons[abbrev] = btn
 
         # Find the trans_layout inside the scroll area

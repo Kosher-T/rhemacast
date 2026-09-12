@@ -649,8 +649,8 @@ class SettingsTab(QWidget):
         
         self._theme_combo = QComboBox()
         self._theme_combo.setStyleSheet(COMBO_STYLE)
-        from core.theme_loader import get_all_themes
-        for name, data in get_all_themes().items():
+        from core.theme_loader import get_themes_by_kind, SCRIPTURE
+        for name, data in get_themes_by_kind(SCRIPTURE).items():
             self._theme_combo.addItem(data.get("label", name), name)
         theme_layout.addWidget(self._theme_combo)
         
@@ -748,6 +748,128 @@ class SettingsTab(QWidget):
         row2.addStretch()
         font_layout.addLayout(row2)
 
+        # Slide Strip Text Size
+        row3 = QHBoxLayout()
+        row3.setSpacing(12)
+
+        ss_label = QLabel("Slide Strip Text Size")
+        ss_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        row3.addWidget(ss_label)
+
+        self._strip_text_spin = QSpinBox()
+        self._strip_text_spin.setRange(9, 20)
+        self._strip_text_spin.setValue(int(get_setting("slides.strip_font_size", "13")))
+        self._strip_text_spin.setSuffix("px")
+        self._strip_text_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background: rgba(0, 0, 0, 0.4);
+                color: {SLATE_300};
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 80px;
+            }}
+            QSpinBox:focus {{ border-color: {BLUE_500}; }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                width: 20px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background: rgba(255, 255, 255, 0.2);
+            }}
+            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
+            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
+        """)
+        self._strip_text_spin.valueChanged.connect(self._on_strip_font_size_changed)
+        row3.addWidget(self._strip_text_spin)
+
+        row3.addStretch()
+        font_layout.addLayout(row3)
+
+        # Deck List Text Size
+        row4 = QHBoxLayout()
+        row4.setSpacing(12)
+
+        dl_label = QLabel("Deck List Text Size")
+        dl_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        row4.addWidget(dl_label)
+
+        self._deck_text_spin = QSpinBox()
+        self._deck_text_spin.setRange(9, 18)
+        self._deck_text_spin.setValue(int(get_setting("slides.deck_font_size", "12")))
+        self._deck_text_spin.setSuffix("px")
+        self._deck_text_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._deck_text_spin.valueChanged.connect(self._on_deck_font_size_changed)
+        row4.addWidget(self._deck_text_spin)
+
+        row4.addStretch()
+        font_layout.addLayout(row4)
+
+        # Slide Navigation Behavior (Ctrl+Left/Right section-hop)
+        row5 = QHBoxLayout()
+        row5.setSpacing(12)
+
+        sn_label = QLabel("Slide Keys Display")
+        sn_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        sn_label.setToolTip("What the display does while section-hopping with Ctrl+Left/Right")
+        row5.addWidget(sn_label)
+
+        self._song_nav_combo = QComboBox()
+        self._song_nav_combo.setStyleSheet(COMBO_STYLE)
+        self._song_nav_combo.addItem("Send on Ctrl release", "deferred")
+        self._song_nav_combo.addItem("Update instantly", "instant")
+        self._song_nav_combo.addItem("Blank while navigating", "blank")
+        saved_nav = get_setting("slides.nav_mode", "deferred")
+        self._song_nav_combo.setCurrentIndex(max(0, self._song_nav_combo.findData(saved_nav)))
+        self._song_nav_combo.currentIndexChanged.connect(self._on_song_nav_mode_changed)
+        row5.addWidget(self._song_nav_combo)
+
+        row5.addStretch()
+        font_layout.addLayout(row5)
+
+        # Future: media background while blank (greyed out until image/video streaming lands)
+        row6 = QHBoxLayout()
+        row6.setSpacing(12)
+
+        mb_label = QLabel("Media Background While Blank")
+        mb_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 600;")
+        row6.addWidget(mb_label)
+
+        self._song_nav_media_combo = QComboBox()
+        self._song_nav_media_combo.setStyleSheet(COMBO_STYLE)
+        self._song_nav_media_combo.addItem("Remain visible", "remain")
+        self._song_nav_media_combo.addItem("Disappear with text", "disappear")
+        saved_media = get_setting("slides.nav_media_bg", "remain")
+        self._song_nav_media_combo.setCurrentIndex(max(0, self._song_nav_media_combo.findData(saved_media)))
+        self._song_nav_media_combo.setEnabled(False)
+        self._song_nav_media_combo.setToolTip("Coming with image/video streaming over WebSocket")
+        row6.addWidget(self._song_nav_media_combo)
+
+        row6.addStretch()
+        font_layout.addLayout(row6)
+
+        # History verse-context size (verses before/after in preview strip)
+        row7 = QHBoxLayout()
+        row7.setSpacing(12)
+
+        hc_label = QLabel("History Context Verses")
+        hc_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        hc_label.setToolTip("Verses shown before/after a verse in the History preview strip")
+        row7.addWidget(hc_label)
+
+        self._history_context_spin = QSpinBox()
+        self._history_context_spin.setRange(0, 10)
+        self._history_context_spin.setValue(int(get_setting("history.context_verses", "3")))
+        self._history_context_spin.setSuffix(" verses")
+        self._history_context_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._history_context_spin.valueChanged.connect(self._on_history_context_changed)
+        row7.addWidget(self._history_context_spin)
+
+        row7.addStretch()
+        font_layout.addLayout(row7)
+
         layout.addWidget(font_card)
         layout.addStretch()
 
@@ -762,6 +884,26 @@ class SettingsTab(QWidget):
         set_setting("bible.verse_text_size", str(text_size))
         set_setting("bible.verse_ref_size", str(ref_size))
         self.font_size_changed.emit(text_size, ref_size)
+
+    def _on_strip_font_size_changed(self):
+        """Persist strip size. Strips pick it up when their tab is next shown."""
+        from core.database import set_setting
+        set_setting("slides.strip_font_size", str(self._strip_text_spin.value()))
+
+    def _on_deck_font_size_changed(self):
+        """Persist deck-list size. Cards pick it up when SLIDES is next shown."""
+        from core.database import set_setting
+        set_setting("slides.deck_font_size", str(self._deck_text_spin.value()))
+
+    def _on_song_nav_mode_changed(self):
+        """Persist song section-hop display behavior (read live on each use)."""
+        from core.database import set_setting
+        set_setting("slides.nav_mode", self._song_nav_combo.currentData())
+
+    def _on_history_context_changed(self):
+        """Persist History preview context size (read live on each use)."""
+        from core.database import set_setting
+        set_setting("history.context_verses", str(self._history_context_spin.value()))
     
     def _create_database_section(self):
         """Create the Database section with index status and rebuild controls."""
