@@ -296,7 +296,8 @@ def update_slide(deck_id: int, index: int, text: str) -> Optional[dict]:
     text = (text or "").strip()
     if not text:
         raise ValueError("slide text must not be empty")
-    slides[index] = {"section": slides[index].get("section"), "text": text}
+    slides[index] = {"section": slides[index].get("section"), "text": text,
+                     "marker": slides[index].get("marker")}
     raw = deck_to_txt(deck.get("title") or "", slides, deck.get("format"))
     return update_deck(deck_id, raw_text=raw)
 

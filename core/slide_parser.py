@@ -45,6 +45,12 @@ Output: {"title": str, "slides": [{"section": str|None, "text": str}],
   Slide text keeps inline markers RAW; renderers convert at display time.
   Unset format values are None (= inherit). Full agent-editable spec lives in
   docs/slide-format.md.
+
+  Sections: each slide also carries "marker": True when its own `*` marker
+  line (or bare `*` clear) introduced it, False when it merely inherits the
+  sticky section from above. slide_owns_marker() reads the flag with a
+  value-change fallback for marker-less dicts (EasyWorship imports, old DB
+  rows, hand-built tests) — so old data groups exactly as before.
 """
 
 import html
@@ -431,6 +437,23 @@ def has_inline_markup(text: str) -> bool:
 _MULTISONG_SPLIT_RE = re.compile(r"\n{5,}[ \t]*(?=[#%])")
 
 
+def slide_owns_marker(slides: list[dict], i: int) -> bool:
+    """Does slide i start its own section (chip shows text)?
+
+    Explicit "marker" flag wins; marker-less dicts (imports, old DB rows,
+    hand-built data) fall back to the value-change rule, which groups them
+    exactly as the pre-flag parser did. Rule of the UI: text in the chip =
+    new section (even when identical to the section above); empty chip =
+    member of the run above.
+    """
+    s = slides[i]
+    if s.get("marker") is not None:
+        return bool(s["marker"])
+    if i == 0:
+        return (s.get("section") or None) is not None
+    return (s.get("section") or None) != (slides[i - 1].get("section") or None)
+
+
 def format_to_line(fmt: dict | None) -> str | None:
     """Serialize a deck-format dict to a top-level format line (or None if empty).
 
@@ -486,16 +509,20 @@ def deck_to_txt(title: str, slides: list[dict], format: dict | None = None) -> s
     if header:
         blocks.append(header)
     blocks.append(f"# {(title or '').strip() or '(untitled)'}")
-    emitted: str | None = None  # section marker currently in force
-    for slide in slides or []:
+    for idx, slide in enumerate(slides or []):
         lines: list[str] = []
         section = (slide.get("section") or "").strip() or None
-        if section != emitted:
-            # Marker only on change: repeat markers bloat the file, and a
-            # bare `*` clears the inherited section so the slide stays
-            # section-less on re-parse (exact round-trip).
-            lines.append(f"*{section}" if section else "*")
-            emitted = section
+        prev = ((slides[idx - 1].get("section") or "").strip() or None
+                if idx > 0 else None)
+        if section is None and idx > 0 and prev is not None:
+            # Preserve section-lessness: without the bare `*` this slide
+            # would inherit the value above on re-parse.
+            lines.append("*")
+        elif slide_owns_marker(slides, idx) and section:
+            # Markers follow ownership, not value changes: a slide that owns
+            # its section always emits, so same-name splits persist as
+            # repeated `*Name` lines (read back losslessly by the parser).
+            lines.append(f"*{section}")
         text = slide.get("text", "") or ""
         lines.append(text.strip())
         blocks.append("\n".join(lines))
@@ -552,9 +579,12 @@ def parse_slide_txt(raw: str) -> dict:
     slides: list[dict] = []
     # Buffer for lines in current slide
     current_lines: list[str] = []
+    # A `*` marker (or bare `*` clear) since the last flush means the next
+    # emitted slide owns its section; otherwise it inherits (sticky).
+    marker_pending = False
 
     def flush_slide():
-        nonlocal current_lines
+        nonlocal current_lines, marker_pending
         if not current_lines:
             return
         # Join with newline to preserve intra-slide line breaks, then strip
@@ -562,7 +592,9 @@ def parse_slide_txt(raw: str) -> dict:
         # Collapse trailing/leading blank artifacts but keep internal single newlines
         # Also collapse multiple internal blank artefacts that slipped through (shouldn't)
         if text:
-            slides.append({"section": current_section, "text": text})
+            slides.append({"section": current_section, "text": text,
+                           "marker": marker_pending})
+            marker_pending = False
         current_lines = []
 
     lines = raw.split("\n")
@@ -606,6 +638,7 @@ def parse_slide_txt(raw: str) -> dict:
             in_header = False
             flush_slide()
             current_section = None
+            marker_pending = True
             continue
 
         if _SECTION_RE.match(line):
@@ -614,6 +647,7 @@ def parse_slide_txt(raw: str) -> dict:
             flush_slide()
             m = _SECTION_RE.match(line)
             current_section = m.group(1).strip() if m else None
+            marker_pending = True
             continue
 
         # Plain content line — part of current slide

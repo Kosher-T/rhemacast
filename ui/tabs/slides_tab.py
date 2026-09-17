@@ -468,10 +468,19 @@ class SlidesTab(QWidget):
         editor.edit_full_requested.connect(self._open_theme_designer_tab)
         editor.show()
 
-    def _on_lite_designer_saved(self, deck_id: int):
+    def _on_lite_designer_saved(self, deck_id: int, index: int = 0):
         # Titles may have changed → refresh the library, then preview side.
         self.deck_panel.refresh(keep_selection=True)
-        self._on_deck_text_updated(deck_id)
+        # Preview ALWAYS follows the designer's highlighted card — not the
+        # tab's stale preview position.
+        from core.slide_service import get_deck
+        deck = get_deck(deck_id)
+        if not deck or not deck.get("slides"):
+            return
+        index = max(0, min(index, len(deck["slides"]) - 1))
+        self.preview_grid.set_deck(deck, select_index=index)
+        self.preview_grid.set_title(f"PREVIEW · {deck.get('title') or '(untitled)'}")
+        self._show_slide(deck, index, live=False)
 
     def _open_theme_designer_tab(self, theme_name: str):
         window = self.window()
