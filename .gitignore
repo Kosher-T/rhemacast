@@ -47,6 +47,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
 
 # --- Virtual Environments ---
 venv/
@@ -75,3 +76,5 @@ PRODUCT.md
 /docs/
 /ui_draft/
 /windows/
+data/schedules/
+data/slides/
