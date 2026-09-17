@@ -1,1 +1,0 @@
-# RhemaCast test suite
