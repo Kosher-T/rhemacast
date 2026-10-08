@@ -7,6 +7,7 @@ to guarantee a single source of truth for tokenizer symmetry.
 """
 
 import re
+import unicodedata
 import Stemmer
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -49,3 +50,33 @@ def tokenize(text: str) -> list[str]:
     """
     normalized = normalize_text(text)
     return [STEMMER.stemWord(w) for w in normalized.split() if w not in STOP_WORDS]
+
+
+def fold_diacritics(text: str) -> str:
+    """Transcribe accented/vernacular characters to closest ASCII.
+
+    NFKD decomposition + drop combining marks: Yorùbá → Yoruba,
+    ẹ → e, ṣ → s. Base letters of other scripts (CJK, Arabic,
+    Cyrillic) pass through untouched. Mirrors FTS5
+    unicode61 remove_diacritics so Python-side and index-side folding
+    agree.
+    """
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+# FTS syntax characters that must never reach a MATCH query unquoted.
+_FTS_PUNCT_TO_SPACE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def split_search_words(query: str) -> list[str]:
+    """Split a raw search box query into safe FTS term words.
+
+    Folds diacritics, lowercases, turns every FTS syntax character
+    (quotes, *, parens, colons, …) into a space, and drops empties.
+    The deck search treats all words but the last as exact (stemmed)
+    terms and the last as a prefix — so each keystroke narrows.
+    """
+    folded = fold_diacritics(query or "").lower()
+    cleaned = _FTS_PUNCT_TO_SPACE.sub(" ", folded)
+    return [w for w in cleaned.split() if w]

@@ -144,6 +144,17 @@ async def health_handler(request: web.Request) -> web.Response:
     return web.json_response(status)
 
 
+@web.middleware
+async def _no_cache_middleware(request: web.Request, handler) -> web.StreamResponse:
+    """Display assets must never be cached: a stale display.js/themes.css
+    in OBS would silently run pre-fix renderer logic. Contract §
+    Per-machine state — caches are inputs, never preconditions."""
+    resp = await handler(request)
+    if request.path.endswith((".js", ".css", ".html")):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 async def start_servers():
     """Starts both the WebSocket and HTTP Health servers."""
     global _server_loop
@@ -159,7 +170,7 @@ async def start_servers():
     ws_server = await websockets.serve(ws_handler, ws_host, ws_port, max_size=1024)
 
     logger.info(f"Starting Health HTTP server on http://{http_host}:{http_port}/health")
-    app = web.Application()
+    app = web.Application(middlewares=[_no_cache_middleware])
     app.router.add_get('/health', health_handler)
     app.router.add_static('/', DISPLAY_DIR, show_index=True)
 

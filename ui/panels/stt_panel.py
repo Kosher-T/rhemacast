@@ -15,7 +15,8 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from ui.styles import (
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
     EMERALD_400, EMERALD_500, SLATE_100, SLATE_300, SLATE_400, SLATE_500,
-    WHITE, BORDER_SUBTLE, BLUE_500, CYAN_400, AMBER_500
+    WHITE, BORDER_SUBTLE, BLUE_500, CYAN_400, AMBER_500,
+    TEXT_MUTED, TEXT_PRIMARY, CHROME_SOFT, CHROME_STRONG
 )
 
 # Colors for model indicator
@@ -91,8 +92,8 @@ class STTPanel(QWidget):
         # ── Control buttons (centered at bottom) ──
         STT_BTN_STYLE = f"""
             QPushButton {{
-                background: rgba(30, 41, 59, 0.6);
-                color: #94a3b8;
+                background: {CHROME_SOFT};
+                color: {TEXT_MUTED};
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 4px;
                 font-size: 10px;
@@ -100,8 +101,8 @@ class STTPanel(QWidget):
                 padding: 0 10px;
             }}
             QPushButton:hover {{
-                background: rgba(30, 41, 59, 0.9);
-                color: #f8fafc;
+                background: {CHROME_STRONG};
+                color: {TEXT_PRIMARY};
             }}
         """
         STT_BTN_ACTIVE_STYLE = f"""
@@ -120,8 +121,8 @@ class STTPanel(QWidget):
         """
         REC_BTN_STYLE = f"""
             QPushButton {{
-                background: rgba(30, 41, 59, 0.6);
-                color: #94a3b8;
+                background: {CHROME_SOFT};
+                color: {TEXT_MUTED};
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 4px;
                 font-size: 10px;
@@ -129,8 +130,8 @@ class STTPanel(QWidget):
                 padding: 0 10px;
             }}
             QPushButton:hover {{
-                background: rgba(30, 41, 59, 0.9);
-                color: #f8fafc;
+                background: {CHROME_STRONG};
+                color: {TEXT_PRIMARY};
             }}
         """
         REC_BTN_ACTIVE_STYLE = f"""

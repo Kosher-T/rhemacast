@@ -1,3 +1,15 @@
+/* Local Nunito (offline-first): variable weight 200-1000, bundled in
+   display/fonts/. The Google Fonts <link> in display.html stays as a
+   fallback for subsets not bundled here. */
+@font-face {
+    font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 200 1000;
+    font-display: swap;
+    src: url('./fonts/nunito-latin.woff2') format('woff2'),
+         url('./fonts/nunito-latin-ext.woff2') format('woff2');
+}
+
 /* Base Reset & Transparency for OBS */
 * {
     box-sizing: border-box;
@@ -48,6 +60,34 @@ body, html {
 }
 
 /* Typography — defaults, overridden by theme via JS */
+/* True outward outline.
+   -webkit-text-stroke straddles the glyph outline, so half of it grows
+   INWARD and eats the letterform (at 25px the word is unreadable). Painting
+   a stroke-only copy BEHIND an opaque fill leaves only the outward half
+   visible, and because fills always paint over the copies, a letter's
+   outline ends up behind its neighbours' fills instead of over them.
+   isolation:isolate keeps the copy from falling behind the page background
+   (a bare z-index:-1 would paint it under the ancestor's background). */
+.rc-oc {
+    position: relative;
+    isolation: isolate;
+}
+.rc-oc::before {
+    content: attr(data-rc-oc);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    /* --rc-oc-stroke carries its own units ("0.65em #000"). A single
+       self-describing value means a JS/CSS version mix can only ever show
+       NO stroke, never a mis-scaled blob. */
+    -webkit-text-stroke: var(--rc-oc-stroke, 0 transparent);
+    z-index: -1;
+    white-space: pre-wrap;
+}
+
 #verse-text {
     font-family: var(--rc-text-font-family, 'Nunito'), sans-serif;
     font-size: var(--rc-text-size, 2.5rem);
@@ -59,7 +99,6 @@ body, html {
     text-transform: var(--rc-text-transform, none);
     text-decoration: var(--rc-text-decoration, none);
     direction: var(--rc-text-direction, ltr);
-    -webkit-text-stroke: var(--rc-text-outline, 0 transparent);
     text-shadow: var(--rc-text-shadow, 0 4px 12px rgba(0, 0, 0, 0.4));
     margin-bottom: var(--rc-text-margin-bottom, 24px);
     letter-spacing: var(--rc-text-letter-spacing, -0.01em);

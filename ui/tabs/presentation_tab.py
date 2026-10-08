@@ -17,7 +17,8 @@ import asyncio
 import threading
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton, QFrame
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
+    QPushButton, QFrame
 )
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
@@ -50,6 +51,13 @@ class PresentationTab(QWidget):
         self._display = display_state
         self._prev_verse_data = None      # Previous verse (for Prev button)
         self._next_verse_data = None      # Next verse (for Next button)
+        # Prev/next bracket whatever is DISPLAYED, and live_data is the one
+        # record of that. Deriving them from a hook rather than from each
+        # display path is deliberate: the queue used to be refreshed at
+        # ten call sites, and the path that missed (a search-result click)
+        # left the neighbours of the previously displayed verse in place,
+        # so Next walked off from the wrong scripture.
+        self._display.add_live_data_hook(self._on_live_data_changed)
         self._init_workspace()
 
     # ── Shared-state aliases (read/write core.display_state) ──────────────
@@ -85,6 +93,26 @@ class PresentationTab(QWidget):
     @_is_cleared.setter
     def _is_cleared(self, value):
         self._display.is_cleared = value
+
+    @property
+    def _cloak(self):
+        """Shared cloak state (DisplayState.cloaked) — persists across
+        tabs by construction. Replaces the old per-tab clear/recall."""
+        return self._display.cloaked
+
+    @_cloak.setter
+    def _cloak(self, value):
+        self._display.set_cloaked(value)
+
+    def _set_cloak(self, on: bool):
+        """Single funnel for cloak transitions. Button syncs via the
+        cloak_changed subscription below."""
+        self._display.set_cloaked(on)
+
+    def _obs_gated(self, payload: dict) -> bool:
+        """True when this payload must not reach OBS: cloaked covers
+        everything except the blank itself (mirror of the slides tab)."""
+        return bool(self._cloak) and payload.get("action") != "clear"
 
     @property
     def _current_sched_data(self):
@@ -150,7 +178,8 @@ class PresentationTab(QWidget):
         self.live_preview = LivePreviewPanel()
         self.stt_panel = STTPanel()
 
-        top_splitter.addWidget(wrap_panel(self.schedule_panel))
+        self._schedule_wrap = wrap_panel(self.schedule_panel)
+        top_splitter.addWidget(self._schedule_wrap)
         top_splitter.addWidget(self.live_preview) # Center panel has its own padding/wrapper logic
         top_splitter.addWidget(wrap_panel(self.stt_panel))
 
@@ -172,15 +201,48 @@ class PresentationTab(QWidget):
         self.browser_panel = BrowserPanel()
         self.queue_panel = QueuePanel()
 
+        # The bottom splitter is the whole scripture work area: browser plus
+        # the themes/FTS/fuzzy queue. The focus ring wraps a plain container
+        # around it (not the splitter itself): a QSplitter's layout engine
+        # repositions its children, so an overlay parented directly to it
+        # gets its geometry clobbered and the ring stops tracking the edge.
         bottom_splitter.addWidget(wrap_panel(self.browser_panel))
         bottom_splitter.addWidget(wrap_panel(self.queue_panel))
+
+        def wrap_bottom(inner: QWidget) -> QWidget:
+            box = QWidget()
+            box_l = QVBoxLayout(box)
+            box_l.setContentsMargins(0, 0, 0, 0)
+            box_l.setSpacing(0)
+            box_l.addWidget(inner)
+            return box
 
         # Default widths: 60% | 40%
         bottom_splitter.setSizes([600, 400])
 
-        main_splitter.addWidget(bottom_splitter)
+        self._work_wrap = wrap_bottom(bottom_splitter)
+        main_splitter.addWidget(self._work_wrap)
 
         root_layout.addWidget(main_splitter)
+
+        # ── Focus rings ──
+        # One state machine owns both regions: the work area (browser +
+        # themes/FTS/fuzzy queue) and the schedule. Schedule focus lights
+        # both so they read as one composite navigation context; the
+        # work-area ring hides when a deck is live or the caret is in a
+        # search box. See ui.focus_ring.FocusRingStateMachine.
+        from ui.focus_ring import FocusRingStateMachine
+        self._ring_state = FocusRingStateMachine(
+            work_area=self._work_wrap,
+            schedule=self._schedule_wrap,
+            work_area_of_schedule=self._scripture_displayed,
+        )
+        # Re-evaluate whenever what is on live changes (deck vs scripture).
+        self._display.nav_changed.connect(self._ring_state.update)
+        self._display.nav_changed.connect(self._enforce_verse_typing_focus)
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._enforce_verse_typing_focus)
 
         # Persisted layouts (defaults on first run; saved sizes win after).
         from core.panel_layout import track_splitter
@@ -194,8 +256,65 @@ class PresentationTab(QWidget):
         # ── Wire all signals ──
         self._connect_signals()
 
+    def _enforce_verse_typing_focus(self, *_args) -> None:
+        """Keep the caret where verse typing actually works.
+
+        The quick-verse shortcut fires from anywhere except a box that
+        wants the digits, but "works" is not the same as "obvious": if the
+        work-area ring is lit (scripture is what the operator is working
+        with) and the caret has drifted to some widget in the work area
+        that is neither a text box nor the verse list, the operator gets a
+        verse push with nothing visibly selected and no caret to steer
+        with. Put the caret on the verse list so the take has an anchor.
+
+        Scoped to the work area on purpose. The ring is lit whenever
+        scripture is displayed, which includes while the operator is in
+        the schedule — yanking the caret back from there would make the
+        schedule unusable, so the schedule is left alone.
+        """
+        app = QApplication.instance()
+        if app is None:
+            return
+        try:
+            focused = app.focusWidget()
+            if focused is None:
+                return
+            if not self._scripture_displayed():
+                return
+            # A text box owns its keystrokes — never take the caret.
+            from ui.widgets.quick_verse import _is_digit_consuming
+            if _is_digit_consuming(focused):
+                return
+            from ui.focus_ring import _within
+            if not _within(focused, self._work_wrap):
+                return
+            if _within(focused, self.browser_panel):
+                return  # already somewhere useful in the Bible panel
+            self.browser_panel.focus_verse_list()
+        except RuntimeError:
+            pass
+
+    def _scripture_displayed(self) -> bool:
+        """True while SCRIPTURE (not a slide deck) is what's on live.
+
+        Drives the work-area focus ring: a deck on live means the operator
+        is working slides, so the scripture work-area ring steps aside. A
+        cleared / never-set live screen counts as scripture — the ring is
+        the resting state, not an exception.
+        """
+        data = self._current_display
+        if not data:
+            return True
+        return data.get("item_type") != "slide"
+
     def showEvent(self, event):
         super().showEvent(event)
+        # Screens first: re-push shared state so the tab never presents
+        # a hidden view's last committed (stale) frame on arrival.
+        self.resync_screens()
+        # Focus rings are sized lazily; re-sync and re-evaluate now that
+        # this tab actually has real geometry.
+        self._ring_state.update()
         # Re-apply saved splitter layouts once real sizes exist
         from core.panel_layout import restore_splitter
         restore_splitter("presentation.main", self._main_splitter)
@@ -275,6 +394,10 @@ class PresentationTab(QWidget):
         self._display.live_changed.connect(self.live_preview.set_live_payload)
         self._display.preview_changed.connect(self.live_preview.set_preview_payload)
         self._display.cleared.connect(self.live_preview.clear_live)
+        # Cloak button mirrors the SHARED cloak state — whichever tab
+        # toggles, both tabs' buttons follow.
+        self._display.cloak_changed.connect(self.live_preview.set_clear_active)
+        self.live_preview.set_clear_active(self._display.cloaked)
         # Render whatever is already showing (e.g. published before this tab loaded)
         if self._display.live_payload:
             self.live_preview.set_live_payload(self._display.live_payload)
@@ -295,9 +418,12 @@ class PresentationTab(QWidget):
         wire, and display.js converts markers to <span> at render time.
         (Converting here would double-escape the spans into visible text.)
         """
-        from core.theme_loader import get_theme
+        from core.theme_loader import resolve_theme
         theme_name = self._themes_by_output.get(output_id, "default")
-        theme_data = get_theme(theme_name)
+        # Per-kind fallback: slide content never falls back app-wide to the
+        # scripture theme.
+        fallback = "slides" if content == "slide" else "default"
+        theme_name, theme_data = resolve_theme(theme_name, fallback=fallback)
         payload = {
             "action": "display",
             "text": text,
@@ -341,11 +467,12 @@ class PresentationTab(QWidget):
         return self._build_payload(data.get("text", ""), ref, version, book, chapter, verse_num, output_id=output_id)
 
     def _apply_slide_display(self, sched_data: dict | None, deck_title: str,
-                             slides: list, index: int):
+                             slides: list, index: int, uncloak: bool = False):
         """Display a single slide of a deck on live + broadcast.
 
         Stores enough state (slides list + index + schedule identity) for
-        Prev/Next to step through slides and on into adjacent schedule items.
+        Left/Right to step through this deck's slides. Schedule items are
+        stepped with Alt+Left / Alt+Right instead.
         """
         if not slides:
             return
@@ -377,6 +504,9 @@ class PresentationTab(QWidget):
 
         deck_id = (sched_data.get("deck_id")
                      if isinstance(sched_data, dict) else None)
+        if uncloak:
+            # Double-click push removes the cloak (one of its two exits).
+            self._set_cloak(False)
         payload = self._build_payload(text, ref, "", slide_format=slide_format,
                                         content="slide", deck_id=deck_id)
         # Publish to shared state (renders in every tab's live view)
@@ -442,8 +572,6 @@ class PresentationTab(QWidget):
 
         self._broadcast_to_ws(payload)
 
-        if book and chapter and verse_num and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
 
         logger.info(f"Displaying: {ref}")
 
@@ -467,18 +595,14 @@ class PresentationTab(QWidget):
         self._current_display = verse_dict
         self._current_preview = verse_dict
         self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
 
         payload = self._build_payload(text, ref, version, book, verse_data["chapter"], verse_data["verse"])
         self._display.publish_live(payload, verse_dict, None, False)
         self._display.publish_preview(payload, verse_dict)
 
         self._broadcast_to_ws(payload)
-
-        if book and version:
-            ch = verse_data.get("chapter", "")
-            vs = verse_data.get("verse", "")
-            if ch and vs:
-                self._update_verse_neighbors(version, book, int(ch), int(vs))
 
         logger.info(f"Browser broadcast: {ref}")
 
@@ -507,7 +631,6 @@ class PresentationTab(QWidget):
         self._display.publish_live(payload, verse_dict, None, False)
         self._display.publish_preview(payload, verse_dict)
         self._broadcast_to_ws(payload)
-        self._update_verse_neighbors(version, book, int(chapter), int(verse))
         logger.info(f"Navigator push: {ref}")
 
     def _on_translation_changed(self, version: str):
@@ -551,6 +674,12 @@ class PresentationTab(QWidget):
         }
         payload = self._build_payload(text, ref, version, book, chapter, verse)
         self._display.publish_preview(payload, self._current_preview)
+
+        # Preview-only by design (single click is a navigator-style action),
+        # so live_data never changes and the display hook does not fire.
+        # But the operator has moved: Next/Prev must step from the verse
+        # they just clicked, not from whatever is still on live.
+        self._set_verse_position(version, book, chapter, verse)
         logger.info(f"Search → navigator + preview: {book} {chapter}:{verse} [{version}]")
 
     def _on_search_to_live(self, data: dict):
@@ -577,12 +706,12 @@ class PresentationTab(QWidget):
         }
         self._current_display = verse_dict
         self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
 
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
-        if book and chapter and verse_num and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
         logger.info(f"Search → live: {ref} [{version}]")
 
     def _on_trans_badge_to_navigator(self, data: dict):
@@ -625,12 +754,12 @@ class PresentationTab(QWidget):
         }
         self._current_display = verse_dict
         self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
 
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
-        if book and chapter and verse_num and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
         logger.info(f"Badge → live: {ref}")
 
     def _on_verse_single_click(self, version: str):
@@ -679,6 +808,7 @@ class PresentationTab(QWidget):
             self._apply_slide_display(
                 self._current_sched_data, data.get("deck_title", ""),
                 data.get("slides", []), data.get("slide_index", 0),
+                uncloak=True,
             )
             logger.info(f"Preview pushed to live (slide): {data.get('ref', '')}")
             return
@@ -693,6 +823,8 @@ class PresentationTab(QWidget):
 
         self._current_display = data
         self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
 
         payload = self._build_payload(verse_text, ref, version, book, chapter, verse_num)
         self._display.publish_live(payload, data,
@@ -701,10 +833,22 @@ class PresentationTab(QWidget):
 
         self._broadcast_to_ws(payload)
 
-        if book and chapter and verse_num and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
 
         logger.info(f"Preview pushed to live: {ref}")
+
+    def resync_screens(self):
+        """Cover-gated silent re-push of shared payloads into this tab's
+        views (idempotent). See SlidesTab.resync_screens for the full
+        rationale; cloak re-blanks instead of re-pushing."""
+        if self._display.cloaked:
+            live = "clear"
+        elif self._display.live_payload:
+            live = self._display.live_payload
+        else:
+            live = None
+        self.live_preview.refresh_views(live, self._display.preview_payload)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, self.live_preview.reveal_screens)
 
     def _on_live_clicked(self):
         """Called when operator clicks the live screen. Navigates browser to the displayed verse."""
@@ -719,26 +863,35 @@ class PresentationTab(QWidget):
             logger.info(f"Live click → navigate to {book} {chapter}:{verse}")
 
     def _on_clear_recall(self):
-        """Toggle between clear and recall of the last displayed verse/slide."""
-        if not self._is_cleared and self._current_display:
-            self._last_cleared_display = self._current_display
-            self._current_display = None
-            self._is_cleared = True
-
-            self._display.publish_clear()
-
-            self._broadcast_to_ws({"action": "clear"}, self._last_cleared_display)
-            logger.info("Display cleared")
-        elif self._is_cleared and self._last_cleared_display:
-            data = self._last_cleared_display
-            self._current_display = data
-            self._is_cleared = False
-            payload = self._payload_for_display(data)
-            self._display.publish_live(payload, data,
-                                       self._display.live_sched_uid,
-                                       self._display.live_from_schedule)
-            self._broadcast_to_ws(payload)
-            logger.info("Display recalled")
+        """Cloak toggle — replaces the old clear/recall. Shared state:
+        toggling here cloaks/uncloaks both tabs' live screens and OBS."""
+        if not self._cloak:
+            # Cloak on: blank OBS + operator live views only. Uncloak
+            # shows whatever is current THEN (never a stale recall).
+            self._set_cloak(True)
+            self._broadcast_to_ws({"action": "clear"}, self._current_display)
+            logger.info("Display cloaked")
+        else:
+            self._set_cloak(False)
+            stored = self._display.matching_live_output_payload("1")
+            if stored is not None and self._current_display:
+                # Replaying beats rebuilding: the stored payload carries the
+                # originating output theme, so a deck cloaked in SLIDES does
+                # not come back wearing this tab's SCRIPTURE theme.
+                payload = stored
+                self._display.publish_live(payload, self._current_display,
+                                           self._display.live_sched_uid,
+                                           self._display.live_from_schedule)
+                self._broadcast_to_ws(payload, self._current_display,
+                                      preserve_theme=True)
+            elif self._current_display:
+                payload = self._payload_for_display(self._current_display)
+                self._display.publish_live(payload, self._current_display,
+                                           self._display.live_sched_uid,
+                                           self._display.live_from_schedule)
+                self._broadcast_to_ws(payload, self._current_display)
+            if self._current_display:
+                logger.info("Display uncloaked")
 
     def refresh_display_names(self, old_display: str, new_display: str):
         """Re-render current screens after a translation rename.
@@ -797,9 +950,43 @@ class PresentationTab(QWidget):
         else:
             logger.info(f"Output {output_id} theme double-clicked: {theme_name} (no live verse)")
 
+    def _neighbour(self, which: str):
+        """The queued prev/next verse, recomputed if the queue is stale.
+
+        The queue is normally kept fresh by the live_data hook, but prev/next
+        must not depend on that having happened: a schedule verse pushed by
+        any path that skipped it would otherwise leave the operator pressing
+        a button that silently does nothing. Recomputing is two indexed
+        lookups and only happens on the fallback, so it costs nothing in the
+        normal case.
+        """
+        attr = f"_{which}_verse_data"
+        cached = getattr(self, attr, None)
+        if cached is not None:
+            return cached
+        data = self._current_display
+        if not isinstance(data, dict) or data.get("item_type") == "slide":
+            return None
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", "") or "")
+        verse = str(data.get("verse_num", data.get("verse", "")) or "")
+        version = data.get("version", "") or ""
+        if not (book and chapter and verse and version):
+            return None
+        try:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse))
+        except (TypeError, ValueError):
+            return None
+        return getattr(self, attr, None)
+
     def _on_prev_verse(self):
-        """Show the previous verse/slide (schedule-aware)."""
-        logger.info("_on_prev_verse called")
+        """Previous VERSE (scripture) or previous SLIDE (deck).
+
+        Deliberately never steps schedule items: a schedule item that was
+        sent to live is a *starting point*, so prev/next walk within what
+        is displayed (the neighbouring verses, or the deck's own slides).
+        Schedule-item stepping is its own hotkey (Alt+Left / Alt+Right).
+        """
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
             idx = cur.get("slide_index", 0) - 1
@@ -807,19 +994,17 @@ class PresentationTab(QWidget):
                 return self._apply_slide_display(
                     self._current_sched_data, cur["deck_title"], cur["slides"], idx
                 )
-            return self._step_schedule(-1)
-        if self._current_from_schedule and self._current_sched_data is not None:
-            return self._step_schedule(-1)
-        if not self._prev_verse_data:
+            logger.info("prev: deck start — staying put")
+            return  # slides exhausted: do nothing
+        prev = self._neighbour("prev")
+        if not prev:
             logger.info("prev_verse: no previous verse")
             return
-        prev = self._prev_verse_data
         version = prev.get("version", "") or (self._current_display.get("version", "") if self._current_display else "")
         self._navigate_to_bible_verse(prev, version, skip_navigator=True)
 
     def _on_next_verse(self):
-        """Show the next verse/slide (schedule-aware)."""
-        logger.info("_on_next_verse called")
+        """Next VERSE (scripture) or next SLIDE (deck). See _on_prev_verse."""
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
             idx = cur.get("slide_index", 0) + 1
@@ -827,15 +1012,64 @@ class PresentationTab(QWidget):
                 return self._apply_slide_display(
                     self._current_sched_data, cur["deck_title"], cur["slides"], idx
                 )
-            return self._step_schedule(1)
-        if self._current_from_schedule and self._current_sched_data is not None:
-            return self._step_schedule(1)
-        if not self._next_verse_data:
+            logger.info("next: deck end — staying put")
+            return  # slides exhausted: do nothing
+        nxt = self._neighbour("next")
+        if not nxt:
             logger.info("next_verse: no next verse")
             return
-        nxt = self._next_verse_data
         version = nxt.get("version", "") or (self._current_display.get("version", "") if self._current_display else "")
         self._navigate_to_bible_verse(nxt, version, skip_navigator=True)
+
+    # ─── schedule-item stepping (Alt+Left / Alt+Right) ───────────────────
+
+    def _on_prev_schedule_item(self):
+        """Previous schedule item (its own hotkey — prev/next no longer
+        bleeds into the schedule)."""
+        self._step_schedule(-1)
+
+    def _on_next_schedule_item(self):
+        """Next schedule item (Alt+Right)."""
+        self._step_schedule(1)
+
+    def _on_live_data_changed(self, data) -> None:
+        """Keep the prev/next queue bracketing the displayed scripture.
+
+        Any source: navigator, browser, schedule, search, prev/next itself.
+        A slide deck has no verse neighbours, so the queue is emptied and
+        the deck's own arrows take over.
+        """
+        if not isinstance(data, dict) or data.get("item_type") == "slide":
+            self._prev_verse_data = None
+            self._next_verse_data = None
+            return
+        book = data.get("book", "")
+        chapter = str(data.get("chapter", "") or "")
+        verse = str(data.get("verse_num", data.get("verse", "")) or "")
+        version = data.get("version", "") or ""
+        if not (book and chapter and verse and version):
+            self._prev_verse_data = None
+            self._next_verse_data = None
+            return
+        try:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse))
+        except (TypeError, ValueError):
+            self._prev_verse_data = None
+            self._next_verse_data = None
+
+    def _set_verse_position(self, version: str, book: str, chapter, verse) -> None:
+        """Point the prev/next queue at a verse the operator moved to.
+
+        For navigation that deliberately does not touch live (a
+        preview-only search click). Anything that DOES display goes
+        through the live_data hook instead, so this is only for the
+        paths the hook cannot see.
+        """
+        try:
+            self._update_verse_neighbors(version, book, int(chapter), int(verse))
+        except (TypeError, ValueError):
+            self._prev_verse_data = None
+            self._next_verse_data = None
 
     def _update_verse_neighbors(self, version: str, book: str, chapter: int, verse: int):
         """Compute and store the previous and next verse relative to the given verse."""
@@ -879,9 +1113,6 @@ class PresentationTab(QWidget):
         else:
             self.browser_panel.navigate_to_reference(book, chapter, verse_num, translation=version)
 
-        # Update neighbors for next prev/next press
-        if book and chapter and verse_num and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse_num))
 
         logger.info(f"Prev/Next → {ref}")
 
@@ -925,9 +1156,6 @@ class PresentationTab(QWidget):
                                    self._display.live_from_schedule)
 
         self._broadcast_to_ws(payload)
-
-        if book and chapter and verse and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse))
 
     def _on_schedule_click(self, data: dict):
         """Single-click schedule item: navigate to verse in browser + update preview."""
@@ -1003,7 +1231,8 @@ class PresentationTab(QWidget):
             if not slides:
                 return
             self._apply_slide_display(
-                data, data.get("name") or data.get("ref", ""), slides, 0
+                data, data.get("name") or data.get("ref", ""), slides, 0,
+                uncloak=True,
             )
             logger.info(f"Schedule live (slide deck): {data.get('ref', '')} (theme: {theme})")
             return
@@ -1030,6 +1259,8 @@ class PresentationTab(QWidget):
             "version": version,
         }
         self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
 
         from core.theme_loader import get_theme
         saved_theme = self._current_theme
@@ -1040,8 +1271,6 @@ class PresentationTab(QWidget):
                                    self._display.live_sched_uid,
                                    self._display.live_from_schedule)
         self._broadcast_to_ws(payload)
-        if book and chapter and verse and version:
-            self._update_verse_neighbors(version, book, int(chapter), int(verse))
         logger.info(f"Schedule live: {ref} (theme: {theme})")
 
     def _on_start_transcription(self):
@@ -1124,11 +1353,16 @@ class PresentationTab(QWidget):
         else:
             self.stt_panel.btn_pause_rec.setText("PAUSE")
 
-    def _broadcast_to_ws(self, payload: dict, data: dict | None = None):
+    def _broadcast_to_ws(self, payload: dict, data: dict | None = None,
+                           preserve_theme: bool = False):
         """
         Send a display payload to all connected outputs via WebSocket.
         Each output receives the payload with its own theme applied.
         For non-theme-specific payloads (like clear), sends as-is to all.
+
+        Restore paths pass preserve_theme=True: the stored per-output theme
+        snapshots win over this tab's theme map, so a push originating in
+        the other tab is replayed exactly.
         """
         from core.database import log_live_payload
         # History: anything hitting live gets documented (display + clear),
@@ -1140,27 +1374,58 @@ class PresentationTab(QWidget):
         try:
             from core.websocket_server import broadcast_display, _server_loop
 
+            if payload.get("action") != "clear":
+                if preserve_theme:
+                    themed_outputs = self._display.matching_live_output_payloads()
+                    for output_id in self._themes_by_output:
+                        if output_id not in themed_outputs:
+                            themed_outputs[output_id] = self._build_payload(
+                                payload.get("text", ""),
+                                payload.get("ref", ""),
+                                payload.get("translation", ""),
+                                payload.get("book", ""),
+                                payload.get("chapter", ""),
+                                payload.get("verse", ""),
+                                output_id=output_id,
+                                slide_format=payload.get("slide_format"),
+                                content=payload.get("content", "verse"),
+                                deck_id=payload.get("deck_id"),
+                            )
+                else:
+                    themed_outputs = {
+                        output_id: self._build_payload(
+                            payload.get("text", ""),
+                            payload.get("ref", ""),
+                            payload.get("translation", ""),
+                            payload.get("book", ""),
+                            payload.get("chapter", ""),
+                            payload.get("verse", ""),
+                            output_id=output_id,
+                            slide_format=payload.get("slide_format"),
+                            # Contract: re-theming must preserve content
+                            # identity — a slide rebroadcast stays a slide.
+                            content=payload.get("content", "verse"),
+                            deck_id=payload.get("deck_id"),
+                        )
+                        for output_id in self._themes_by_output
+                    }
+                    # Even a muted/behind-cloak push advances the model, so its
+                    # per-output themes become the next restore's authority.
+                    self._display.remember_live_output_payloads(themed_outputs)
+
             if _server_loop is None or _server_loop.is_closed():
                 return
 
+            if self._obs_gated(payload):
+                return  # cloaked: OBS holds its blank, model advances.
             if payload.get("action") == "clear":
                 asyncio.run_coroutine_threadsafe(
                     broadcast_display(payload), _server_loop
                 )
             else:
-                for oid in self._themes_by_output:
-                    themed = self._build_payload(
-                        payload.get("text", ""),
-                        payload.get("ref", ""),
-                        payload.get("translation", ""),
-                        payload.get("book", ""),
-                        payload.get("chapter", ""),
-                        payload.get("verse", ""),
-                        output_id=oid,
-                        slide_format=payload.get("slide_format"),
-                    )
+                for output_id, themed in themed_outputs.items():
                     asyncio.run_coroutine_threadsafe(
-                        broadcast_display(themed, target=oid), _server_loop
+                        broadcast_display(themed, target=output_id), _server_loop
                     )
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")

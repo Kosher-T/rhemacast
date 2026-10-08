@@ -16,7 +16,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.styles import (
     PANEL_BODY_STYLE,
-    CYAN_400, SLATE_300, SLATE_400, SLATE_500, WHITE
+    CYAN_400, SLATE_300, SLATE_400, SLATE_500, WHITE, SELECTION_BG,
+    TEXT_MUTED, ACCENT_BORDER,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class ThemeCard(QFrame):
     def set_active(self, active: bool):
         self._active = active
         if active:
-            self.setStyleSheet(f"QFrame {{ background: rgba(34, 211, 238, 10); border: none; }}")
+            self.setStyleSheet(f"QFrame {{ background: {SELECTION_BG}; border: none; }}")
         else:
             self.setStyleSheet(f"""
                 QFrame {{ background: transparent; border: none; }}
@@ -147,8 +148,8 @@ class OutputColumn(QWidget):
         local_url = f"http://127.0.0.1:{HTTP_PORT}/display.html?output={output_id}"
         network_url = f"http://{lan_ip}:{HTTP_PORT}/display.html?output={output_id}"
         label.setToolTip(
-            f"<span style='color:#94a3b8'>Local:</span> {local_url}<br><br>"
-            f"<span style='color:#94a3b8'>Network:</span> {network_url}"
+            f"<span style='color:{TEXT_MUTED}'>Local:</span> {local_url}<br><br>"
+            f"<span style='color:{TEXT_MUTED}'>Network:</span> {network_url}"
         )
         label.setCursor(Qt.CursorShape.WhatsThisCursor)
         header_layout.addWidget(label)
@@ -284,7 +285,7 @@ class ThemesPanel(QWidget):
             }}
             QPushButton:hover {{
                 color: {CYAN_400};
-                border-color: rgba(34, 211, 238, 0.3);
+                border-color: {ACCENT_BORDER};
             }}
         """)
         self._add_btn.clicked.connect(self._add_output)

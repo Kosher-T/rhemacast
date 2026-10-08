@@ -1,7 +1,7 @@
 """
 ui/widgets/lite_designer/format_ribbon.py
 
-Word-processor ribbon for the Lite Designer Freeform tab.
+Word-processor ribbon for the Lite Designer freeform page.
 
 Row 1 (always visible): font · size −/+ · B I S U · outline + color ·
     text color · clear · undo redo
@@ -15,33 +15,100 @@ consistent — see rich_txt module docstring for the contract.
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QToolButton,
                              QComboBox, QFontComboBox, QColorDialog, QMenu,
-                             QTextEdit, QSizePolicy)
-from PyQt6.QtGui import (QTextCharFormat, QTextCursor, QFont, QColor, QBrush,
-                         QTextFormat, QAction)
+                             QTextEdit, QSizePolicy, QSpinBox)
+from PyQt6.QtGui import (QTextCharFormat, QTextCursor, QTextBlockFormat,
+                          QFont, QColor, QBrush, QTextFormat, QAction)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.widgets.lite_designer.rich_txt import (
-    OUTLINE_PROP, UL_PROP, SO_PROP, insert_hr_at)
+    OUTLINE_PROP, OUTLINE_OFF, SHADOW_PROP, SHADOW_OFF,
+    UL_PROP, SO_PROP, SIZE_PROP, COLOR_PROP,
+    CASE_PROP,
+    FONT_PROP, ALIGN_PROP, DIR_PROP, insert_hr_at)
+from ui.styles import (
+    TEXT_PRIMARY, TEXT_MUTED, SLATE_300, SLATE_600,
+    BG_RAISED, ACCENT, SELECTION_BG, SELECTION_BORDER, CHROME_SOFT,
+    TEXT_SELECTION,
+)
 
 _PT_PER_PX = 0.75
 _SIZES_PX = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 54, 62, 72]
 _SPACINGS = [("Single", 1.0), ("1.15", 1.15), ("1.5", 1.5), ("Double", 2.0)]
 
 _RIBBON_STYLE = (
-    "QWidget { background: rgba(15, 23, 42, 0.6); color: #f8fafc; }"
+    "QWidget { background: " + CHROME_SOFT + "; color: " + TEXT_PRIMARY + "; }"
     "QToolButton { background: transparent; border: 1px solid transparent;"
     "  border-radius: 4px; padding: 3px 7px; font-size: 12px; font-weight: 700;"
-    "  color: #cbd5e1; }"
-    "QToolButton:hover { background: rgba(255,255,255,0.08); color: #f8fafc; }"
-    "QToolButton:checked { background: rgba(59,130,246,0.25);"
-    "  border-color: rgba(59,130,246,0.5); color: #93c5fd; }"
-    "QToolButton:disabled { color: #475569; }"
-    "QComboBox { background: rgba(0,0,0,0.3); color: #f8fafc;"
+    "  color: " + SLATE_300 + "; }"
+    "QToolButton:hover { background: rgba(255,255,255,0.08); color: " + TEXT_PRIMARY + "; }"
+    "QToolButton:checked { background: " + SELECTION_BG + ";"
+    "  border-color: " + SELECTION_BORDER + "; color: " + ACCENT + "; }"
+    "QToolButton:disabled { color: " + SLATE_600 + "; }"
+    "QComboBox { background: rgba(0,0,0,0.3); color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;"
     "  padding: 2px 6px; font-size: 11px; }"
-    "QComboBox QAbstractItemView { background: #1e293b; color: #f8fafc;"
-    "  selection-background-color: rgba(59,130,246,0.3); }"
+    "QComboBox QAbstractItemView { background: " + BG_RAISED + "; color: " + TEXT_PRIMARY + ";"
+    "  selection-background-color: " + TEXT_SELECTION + "; }"
 )
+
+
+def _parse_outline_value(value) -> tuple[str, int]:
+    """Parse OUTLINE_PROP's stored value into (hex color, width px).
+
+    Newer runs store "Npx #rrggbb"; legacy runs are bare "#rrggbb"
+    (width assumed 1).
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return "#000000", 1
+    if "px" in raw.lower():
+        first, _, rest = raw.partition("px")
+        try:
+            width = max(1, min(25, int(float(first.strip()))))
+        except ValueError:
+            width = 1
+        color = rest.strip()
+        if color.startswith("#"):
+            return color, width
+        return "#000000", width
+    return raw, 1
+
+
+def _parse_shadow_value(value) -> tuple[int, int, int, str, int] | None:
+    """A stored shadow value -> (size, opacity, distance, color, angle).
+
+    Mirrors core.slide_parser._parse_shadow (which already normalized what the
+    document holds); kept local so the ribbon can read a char format without
+    re-importing the parser on every keystroke.
+    """
+    from core.slide_parser import _parse_shadow
+    parsed = _parse_shadow(str(value or ""))
+    if not parsed or parsed == "none":
+        return None
+    size, rest = parsed.split(" ", 1)
+    opacity, rest = rest.split(" ", 1)
+    distance, rest = rest.split(" ", 1)
+    color, _, angle = rest.rpartition(" ")
+    return (int(size[:-2]), int(opacity[:-1]), int(distance[:-2]), color,
+            int(angle))
+
+
+def set_outline_off(doc, start: int = 0, end: int | None = None):
+    """Write the explicit outline-off marker over [start, end).
+
+    mergeCharFormat (not setCharFormat) is deliberate: it *sets* the sentinel
+    value instead of unsetting the property, so the run overrides a theme
+    baseline instead of falling back to it.
+    """
+    fmt = QTextCharFormat()
+    fmt.setProperty(OUTLINE_PROP, OUTLINE_OFF)
+    cursor = QTextCursor(doc)
+    if start == 0 and (end is None or end >= max(0, doc.characterCount() - 1)):
+        cursor.select(QTextCursor.SelectionType.Document)
+    else:
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+    cursor.mergeCharFormat(fmt)
 
 
 class FormatRibbon(QWidget):
@@ -53,8 +120,23 @@ class FormatRibbon(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._edit: QTextEdit | None = None
+        # Deck-wide fan-out (set by the designer while the whole deck is
+        # selected): _merge routes char formats here instead of the editor.
+        self.fan_out = None
+        self.fan_out_remove_outline = None
         self._outline_color = "#000000"
+        self._outline_width = 1
+        self._shadow_color = "#000000"
+        self._shadow_size_px = 8
+        self._shadow_opacity_pct = 100
+        self._shadow_distance_px = 0
+        self._shadow_angle_deg = 45
         self._deck_spacing: float | None = None
+        # Theme baseline (core.theme_loader.display_format_defaults):
+        # what the DISPLAY already applies. A run's own props win; these
+        # only fill the gaps, so the ribbon shows effective formatting
+        # instead of reading empty until the operator clicks something.
+        self._theme_defaults: dict = {}
         self.setStyleSheet(_RIBBON_STYLE)
 
         root = QVBoxLayout(self)
@@ -92,6 +174,15 @@ class FormatRibbon(QWidget):
         b.setCheckable(checkable)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         return b
+
+    def _spin(self, lo: int, hi: int, value: int, suffix: str, tip: str) -> QSpinBox:
+        s = QSpinBox()
+        s.setRange(lo, hi)
+        s.setValue(value)
+        s.setSuffix(suffix)
+        s.setToolTip(tip)
+        s.setMaximumWidth(72)
+        return s
 
     def _build_row1(self, row: QHBoxLayout):
         self._font_combo = QFontComboBox()
@@ -137,6 +228,41 @@ class FormatRibbon(QWidget):
         self._btn_outline_color.clicked.connect(self._on_outline_color)
         self._btn_outline_color.setVisible(False)
         row.addWidget(self._btn_outline_color)
+        self._outline_size = QSpinBox()
+        self._outline_size.setRange(1, 25)
+        self._outline_size.setValue(self._outline_width)
+        self._outline_size.setSuffix(" px")
+        self._outline_size.setToolTip("Outline thickness (1–25 px)")
+        self._outline_size.setMaximumWidth(76)
+        self._outline_size.valueChanged.connect(self._on_outline_size_changed)
+        self._outline_size.setVisible(False)
+        row.addWidget(self._outline_size)
+
+        # Shadow: a hard ring drawn in shadow rather than stroke, so it can be
+        # pulled away from the letters (distance) and faded (opacity).
+        self._btn_shadow = self._btn("Sh", "Shadow (size / opacity / distance / angle)", True)
+        self._btn_shadow.clicked.connect(self._on_shadow_toggled)
+        row.addWidget(self._btn_shadow)
+        self._btn_shadow_color = self._btn("\u25a0", "Shadow color")
+        self._btn_shadow_color.clicked.connect(self._on_shadow_color)
+        self._btn_shadow_color.setVisible(False)
+        row.addWidget(self._btn_shadow_color)
+        self._shadow_size = self._spin(1, 25, self._shadow_size_px, " px",
+                                      "Shadow size (1\u201325 px)")
+        self._shadow_opacity = self._spin(0, 100, self._shadow_opacity_pct, " %",
+                                          "Shadow opacity (0\u2013100 %)")
+        self._shadow_distance = self._spin(0, 60, self._shadow_distance_px, " px",
+                                           "Shadow distance from the letters")
+        self._shadow_angle = self._spin(0, 359, self._shadow_angle_deg, "\u00b0",
+                                        "Shadow direction (degrees, 0 = east, 90 = down)")
+        for s in (self._shadow_size, self._shadow_opacity, self._shadow_distance,
+                  self._shadow_angle):
+            s.setVisible(False)
+            row.addWidget(s)
+        self._shadow_size.valueChanged.connect(self._on_shadow_size_changed)
+        self._shadow_opacity.valueChanged.connect(self._on_shadow_opacity_changed)
+        self._shadow_distance.valueChanged.connect(self._on_shadow_distance_changed)
+        self._shadow_angle.valueChanged.connect(self._on_shadow_angle_changed)
 
         self._btn_color = self._btn("A", "Text color")
         self._btn_color.clicked.connect(self._on_text_color)
@@ -237,6 +363,10 @@ class FormatRibbon(QWidget):
         """Apply char format to selection (or typing format when none)."""
         if self._edit is None:
             return
+        if self.fan_out is not None:
+            self.fan_out(fmt)  # designer fans out; keeps deck selection
+            self.refresh_state()
+            return
         cursor = self._edit.textCursor()
         if cursor.hasSelection():
             cursor.mergeCharFormat(fmt)
@@ -252,10 +382,25 @@ class FormatRibbon(QWidget):
             return False
         return self._edit.textCursor().charFormat().fontWeight() >= 600
 
+    def _effective_bold(self) -> bool:
+        """Bold as DISPLAYED right now: the run's own weight when it has
+        one, else the theme baseline. This is the pre-click state, so the
+        toggle flips away from what the operator saw lit."""
+        if self._edit is None:
+            return bool(self._theme_defaults.get("bold"))
+        cf = self._edit.textCursor().charFormat()
+        if cf.hasProperty(QTextFormat.Property.FontWeight):
+            return cf.fontWeight() >= 600
+        return bool(self._theme_defaults.get("bold"))
+
     def _toggle_bold(self):
+        # NB: `clicked` fires AFTER Qt flips the button, so the button
+        # state is the POST-click value — reading it would apply the
+        # format the operator just turned off. Use the pre-click
+        # effective state instead.
         fmt = QTextCharFormat()
         fmt.setFontWeight(QFont.Weight.Normal
-                          if self._selection_weight_is_bold()
+                          if self._effective_bold()
                           else QFont.Weight.Bold)
         self._merge(fmt)
 
@@ -270,38 +415,50 @@ class FormatRibbon(QWidget):
     def _toggle_strike(self):
         if self._edit is None:
             return
-        cur = self._edit.textCursor().charFormat().fontStrikeOut()
+        new = not self._edit.textCursor().charFormat().fontStrikeOut()
         fmt = QTextCharFormat()
-        fmt.setFontStrikeOut(not cur)
-        fmt.clearProperty(SO_PROP)  # direct edit wins over loaded txt value
+        fmt.setFontStrikeOut(new)
+        # Record, don't clear: a loaded strike=false must flip to true in
+        # the txt (a cleared prop would keep serializing false).
+        fmt.setProperty(SO_PROP, new)
         self._merge(fmt)
 
     def _toggle_underline(self):
         if self._edit is None:
             return
-        cur = (self._edit.textCursor().charFormat().underlineStyle()
-               != QTextCharFormat.UnderlineStyle.NoUnderline)
+        new = (self._edit.textCursor().charFormat().underlineStyle()
+               == QTextCharFormat.UnderlineStyle.NoUnderline)
         fmt = QTextCharFormat()
-        fmt.setFontUnderline(not cur)
-        fmt.clearProperty(UL_PROP)  # direct edit wins over loaded txt value
+        fmt.setFontUnderline(new)
+        # Same as strike: Qt6 never marks the bool, so the prop IS the txt.
+        fmt.setProperty(UL_PROP, new)
         self._merge(fmt)
 
     def _on_font_family(self, font: QFont):
         fmt = QTextCharFormat()
-        fmt.setFontFamily(font.family())
+        # Metadata only: families render on preview, never in the pane.
+        fmt.setProperty(FONT_PROP, font.family())
         self._merge(fmt)
 
     def _current_size_px(self) -> int:
         if self._edit is None:
             return 20
-        pt = self._edit.textCursor().charFormat().fontPointSize()
+        cf = self._edit.textCursor().charFormat()
+        if cf.hasProperty(SIZE_PROP):
+            try:
+                return max(1, int(cf.property(SIZE_PROP)))
+            except (TypeError, ValueError):
+                pass
+        pt = cf.fontPointSize()
         if not pt:
             return 20
         return max(1, round(pt / _PT_PER_PX))
 
     def _apply_size_px(self, px: int):
         fmt = QTextCharFormat()
-        fmt.setFontPointSize(max(1, px) * _PT_PER_PX)
+        # Metadata only: the edit pane renders one fixed size; the
+        # nominal px rides along for serialization + preview.
+        fmt.setProperty(SIZE_PROP, max(1, px))
         self._merge(fmt)
 
     def _step_size(self, delta: int):
@@ -324,11 +481,9 @@ class FormatRibbon(QWidget):
     def _outline_fmt(self, on: bool) -> QTextCharFormat:
         fmt = QTextCharFormat()
         if on:
-            color = QColor(self._outline_color)
-            fmt.setProperty(OUTLINE_PROP, self._outline_color)
-            cue = QColor(color)
-            cue.setAlpha(38)
-            fmt.setBackground(QBrush(cue))
+            # Prop only (no tint cue): outlines render on preview, never
+            # in the pane.
+            fmt.setProperty(OUTLINE_PROP, f"{self._outline_width}px {self._outline_color}")
         else:
             fmt.clearProperty(OUTLINE_PROP)
             fmt.clearBackground()
@@ -337,13 +492,144 @@ class FormatRibbon(QWidget):
     def _on_outline_toggled(self):
         on = self._btn_outline.isChecked()
         self._btn_outline_color.setVisible(on)
-        self._merge(self._outline_fmt(on))
+        self._outline_size.setVisible(on)
+        if on:
+            self._merge(self._outline_fmt(True))
+        else:
+            self._remove_outline_property()
 
     def set_outline_color(self, hex_color: str):
         self._outline_color = hex_color
         self._btn_outline_color.setStyleSheet(f"color: {hex_color};")
         if self._btn_outline.isChecked():
             self._merge(self._outline_fmt(True))
+
+    # ── shadow ──────────────────────────────────────────────────────────
+    def _shadow_value(self, on: bool = True) -> str:
+        if not on:
+            return SHADOW_OFF
+        return (f"{self._shadow_size_px}px {self._shadow_opacity_pct}% "
+                f"{self._shadow_distance_px}px {self._shadow_color} "
+                f"{self._shadow_angle_deg}")
+
+    def _shadow_fmt(self, on: bool = True) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        fmt.setProperty(SHADOW_PROP, self._shadow_value(on))
+        return fmt
+
+    def _current_shadow(self) -> str | None:
+        """The shadow actually in effect at the caret, else None."""
+        if self._edit is None:
+            return None
+        cf = self._edit.textCursor().charFormat()
+        if cf.hasProperty(SHADOW_PROP):
+            raw = cf.property(SHADOW_PROP)
+            if raw and raw != SHADOW_OFF:
+                return raw
+        return None
+
+    def _apply_shadow_keeper(self, moving: str = ""):
+        """Size/opacity/distance/angle changes must not drop the run's own
+        color or angle. `moving` names the knob just turned, which keeps its
+        new value instead of being read back from the run."""
+        current = self._current_shadow()
+        if current:
+            parsed = _parse_shadow_value(current)
+            if parsed:
+                self._shadow_color = parsed[3]
+                if moving != "angle":
+                    self._shadow_angle_deg = parsed[4]
+
+    def _on_shadow_toggled(self):
+        on = self._btn_shadow.isChecked()
+        for w in (self._btn_shadow_color, self._shadow_size,
+                  self._shadow_opacity, self._shadow_distance,
+                  self._shadow_angle):
+            w.setVisible(on)
+        self._merge(self._shadow_fmt(on))
+
+    def set_shadow_color(self, hex_color: str):
+        self._shadow_color = hex_color
+        self._btn_shadow_color.setStyleSheet(f"color: {hex_color};")
+        if self._btn_shadow.isChecked():
+            self._merge(self._shadow_fmt(True))
+
+    def _on_shadow_color(self):
+        color = QColorDialog.getColor(QColor(self._shadow_color), self,
+                                      "Shadow color")
+        if color.isValid():
+            self.set_shadow_color(color.name())
+
+    def _on_shadow_size_changed(self, px: int):
+        self._shadow_size_px = max(1, min(25, int(px)))
+        if self._btn_shadow.isChecked():
+            self._apply_shadow_keeper("angle")
+            self._merge(self._shadow_fmt(True))
+
+    def _on_shadow_opacity_changed(self, pct: int):
+        self._shadow_opacity_pct = max(0, min(100, int(pct)))
+        if self._btn_shadow.isChecked():
+            self._apply_shadow_keeper("angle")
+            self._merge(self._shadow_fmt(True))
+
+    def _on_shadow_distance_changed(self, px: int):
+        self._shadow_distance_px = max(0, min(60, int(px)))
+        if self._btn_shadow.isChecked():
+            self._apply_shadow_keeper("angle")
+            self._merge(self._shadow_fmt(True))
+
+    def _on_shadow_angle_changed(self, deg: int):
+        self._shadow_angle_deg = int(deg) % 360
+        if self._btn_shadow.isChecked():
+            self._apply_shadow_keeper("angle")
+            self._merge(self._shadow_fmt(True))
+
+    def _current_outline_color(self) -> str:
+        if self._edit is None:
+            return self._outline_color
+        cf = self._edit.textCursor().charFormat()
+        try:
+            if cf.hasProperty(OUTLINE_PROP):
+                raw = cf.property(OUTLINE_PROP)
+                if raw and raw != OUTLINE_OFF:
+                    return _parse_outline_value(raw)[0]
+        except Exception:
+            pass
+        return self._outline_color
+
+    def _on_outline_size_changed(self, px: int):
+        self._outline_width = max(1, min(25, int(px)))
+        if self._btn_outline.isChecked():
+            # Keep the run's existing color; only the width changed.
+            self._outline_color = self._current_outline_color()
+            self._merge(self._outline_fmt(True))
+
+    def _remove_outline_property(self):
+        """Turn outline off for the selection (or the caret's run).
+
+        Writes the OUTLINE_OFF sentinel rather than clearing the property:
+        a theme whose `text_shadow` outlines text would otherwise re-assert
+        the outline on the very next refresh, and the toggle would look
+        broken. mergeCharFormat *sets* the sentinel, so the operator's
+        selection survives.
+        """
+        if self.fan_out_remove_outline is not None:
+            self.fan_out_remove_outline()
+            self.format_applied.emit()
+            self.refresh_state()
+            return
+        if self._edit is None:
+            return
+        cursor = self._edit.textCursor()
+        if cursor.hasSelection():
+            set_outline_off(cursor.document(),
+                            cursor.selectionStart(), cursor.selectionEnd())
+        else:
+            fmt = QTextCharFormat(cursor.charFormat())
+            fmt.setProperty(OUTLINE_PROP, OUTLINE_OFF)
+            self._edit.setCurrentCharFormat(fmt)
+        self.format_applied.emit()
+        self.refresh_state()
 
     def _on_outline_color(self):
         color = QColorDialog.getColor(QColor(self._outline_color), self,
@@ -359,7 +645,8 @@ class FormatRibbon(QWidget):
         color = QColorDialog.getColor(start, self, "Text color")
         if color.isValid():
             fmt = QTextCharFormat()
-            fmt.setForeground(QBrush(color))
+            # Metadata only: colors render on preview, never in the pane.
+            fmt.setProperty(COLOR_PROP, color.name())
             self._merge(fmt)
 
     def _on_clear(self):
@@ -369,6 +656,7 @@ class FormatRibbon(QWidget):
         fmt.clearProperty(UL_PROP)
         fmt.clearProperty(SO_PROP)
         fmt.clearProperty(OUTLINE_PROP)
+        fmt.clearProperty(SHADOW_PROP)
         cursor = self._edit.textCursor()
         if cursor.hasSelection():
             # mergeCharFormat with defaults won't unset; select+reset instead.
@@ -395,17 +683,19 @@ class FormatRibbon(QWidget):
     def _on_align(self, key: str):
         if self._edit is None:
             return
-        flag = {"left": Qt.AlignmentFlag.AlignLeft,
-                "center": Qt.AlignmentFlag.AlignCenter,
-                "right": Qt.AlignmentFlag.AlignRight,
-                "justify": Qt.AlignmentFlag.AlignJustify}[key]
-        self._edit.setAlignment(flag)
+        # Metadata only: alignment renders on preview, never in the pane.
+        self._merge_block_prop(ALIGN_PROP, key)
         self.format_applied.emit()
         self.refresh_state()
 
     def _on_spacing(self, value: float):
         self.set_deck_spacing(value)
         self.deck_format_changed.emit({"spacing": value})
+
+    def set_theme_defaults(self, defaults: dict | None):
+        """Adopt the active theme's baseline formatting (see _theme_defaults)."""
+        self._theme_defaults = dict(defaults or {})
+        self.refresh_state()
 
     def set_deck_spacing(self, value: float | None):
         """Reflect the deck's spacing in the menu (no signal)."""
@@ -485,22 +775,44 @@ class FormatRibbon(QWidget):
 
     def _on_case(self, upper: bool):
         fmt = QTextCharFormat()
-        fmt.setFontCapitalization(
-            QFont.Capitalization.AllUppercase if upper
-            else QFont.Capitalization.AllLowercase)
+        # Metadata only: case renders on preview, never in the pane.
+        fmt.setProperty(CASE_PROP, "upper" if upper else "lower")
         self._merge(fmt)
 
     def _on_direction(self, rtl: bool):
         if self._edit is None:
             return
-        cursor = self._edit.textCursor()
-        fmt = cursor.blockFormat()
-        fmt.setLayoutDirection(Qt.LayoutDirection.RightToLeft if rtl
-                               else Qt.LayoutDirection.LeftToRight)
-        cursor.mergeBlockFormat(fmt)
-        self._edit.setTextCursor(cursor)
+        self._merge_block_prop(
+            DIR_PROP, "rtl" if rtl else "ltr")
         self.format_applied.emit()
         self.refresh_state()
+
+    def _merge_block_prop(self, prop_id, value):
+        """Merge one block metadata prop across the selection (or the
+        cursor block when there is none). Native block metrics stay
+        untouched, so the edit pane stays inviolable."""
+        if self._edit is None:
+            return
+        cursor = self._edit.textCursor()
+        doc = self._edit.document()
+        if cursor.hasSelection():
+            start = doc.findBlock(cursor.selectionStart())
+            end = doc.findBlock(cursor.selectionEnd())
+        else:
+            start = end = cursor.block()
+        cursor.beginEditBlock()
+        try:
+            block = start
+            while True:
+                fmt = QTextBlockFormat()
+                fmt.setProperty(prop_id, value)
+                bcursor = QTextCursor(block)
+                bcursor.mergeBlockFormat(fmt)
+                if block == end or not block.next().isValid():
+                    break
+                block = block.next()
+        finally:
+            cursor.endEditBlock()
 
     def _on_hr(self):
         if self._edit is None:
@@ -512,45 +824,154 @@ class FormatRibbon(QWidget):
     # ─── cursor probing ─────────────────────────────────────────────────
 
     def refresh_state(self):
-        """Mirror the cursor's formats onto the toggle buttons (cheap)."""
+        """Mirror the effective formats onto the toggle buttons (cheap).
+
+        Precedence: the run's own props (what the deck stores) first,
+        then the theme baseline (what display already applies), so the
+        ribbon shows what the operator will actually see on output.
+        """
+        theme = self._theme_defaults
         if self._edit is None:
             for b in (self._btn_bold, self._btn_italic, self._btn_strike,
-                      self._btn_underline, self._btn_outline, self._btn_super,
-                      self._btn_sub, self._btn_upper, self._btn_lower,
-                      self._btn_bullets, self._btn_numbers, self._btn_rtl,
-                      self._btn_ltr, *self._align_btns.values()):
+                      self._btn_underline, self._btn_outline, self._btn_shadow,
+                      self._btn_super,
+                      self._btn_sub, self._btn_bullets, self._btn_numbers,
+                      self._btn_rtl, self._btn_ltr,
+                      *self._align_btns.values()):
                 b.setChecked(False)
+            self._btn_upper.setChecked(theme.get("case") == "upper")
+            self._btn_lower.setChecked(theme.get("case") == "lower")
+            self._btn_bold.setChecked(bool(theme.get("bold")))
+            theme_outline = theme.get("outline")
+            self._btn_outline.setChecked(bool(theme_outline))
+            self._btn_outline_color.setVisible(False)
+            self._outline_size.setVisible(False)
+            self._btn_shadow.setChecked(False)
+            self._btn_shadow_color.setVisible(False)
+            for s in (self._shadow_size, self._shadow_opacity,
+                      self._shadow_distance, self._shadow_angle):
+                s.setVisible(False)
+            if theme_outline:
+                color, width = _parse_outline_value(theme_outline)
+                self._outline_color = color
+                self._outline_width = width
+                self._btn_outline_color.setStyleSheet(
+                    f"color: {self._outline_color};")
+                self._outline_size.blockSignals(True)
+                self._outline_size.setValue(width)
+                self._outline_size.blockSignals(False)
+            for key, btn in self._align_btns.items():
+                btn.setChecked(key == theme.get("align"))
             return
         cursor = self._edit.textCursor()
         cf = cursor.charFormat()
-        self._btn_bold.setChecked(cf.fontWeight() >= 600)
+        # Bold: an explicit run weight wins; otherwise the theme's.
+        if cf.hasProperty(QTextFormat.Property.FontWeight):
+            self._btn_bold.setChecked(cf.fontWeight() >= 600)
+        else:
+            self._btn_bold.setChecked(bool(theme.get("bold")))
         self._btn_italic.setChecked(bool(cf.fontItalic()))
         self._btn_strike.setChecked(bool(cf.fontStrikeOut()))
         self._btn_underline.setChecked(
             cf.underlineStyle() != QTextCharFormat.UnderlineStyle.NoUnderline)
-        self._btn_outline.setChecked(cf.hasProperty(OUTLINE_PROP))
-        self._btn_outline_color.setVisible(cf.hasProperty(OUTLINE_PROP))
+        # Outline: an explicit run prop wins; OUTLINE_OFF is the operator
+        # switching an inherited (theme) outline off; otherwise the theme's
+        # text-shadow is the display's equivalent, so it shows as active.
+        outline_raw = cf.property(OUTLINE_PROP) if cf.hasProperty(OUTLINE_PROP) else None
+        outline_on = bool(outline_raw) and outline_raw != OUTLINE_OFF
+        if not outline_on and outline_raw is None:
+            outline_on = bool(theme.get("outline"))
+        self._btn_outline.setChecked(outline_on)
+        self._btn_outline_color.setVisible(outline_on)
+        self._outline_size.setVisible(outline_on)
+        # The swatch/size follow whatever actually renders: the run's own prop
+        # when set, else the theme's outline value ("2px #000000"), so the
+        # size box shows the thickness `outline=Npx` will broaden.
+        effective = outline_raw if (outline_raw and outline_raw != OUTLINE_OFF) \
+            else (theme.get("outline") if outline_on else None)
+        if effective:
+            color, width = _parse_outline_value(effective)
+            self._outline_color = color
+            self._outline_width = width
+            self._btn_outline_color.setStyleSheet(f"color: {self._outline_color};")
+            self._outline_size.blockSignals(True)
+            self._outline_size.setValue(width)
+            self._outline_size.blockSignals(False)
+        # Shadow: an explicit SHADOW_PROP wins; SHADOW_OFF is the operator
+        # switching it off; no prop and no theme value means inactive.
+        shadow_raw = (cf.property(SHADOW_PROP)
+                      if cf.hasProperty(SHADOW_PROP) else None)
+        shadow_on = bool(shadow_raw) and shadow_raw != SHADOW_OFF
+        self._btn_shadow.setChecked(shadow_on)
+        self._btn_shadow_color.setVisible(shadow_on)
+        for s in (self._shadow_size, self._shadow_opacity,
+                  self._shadow_distance, self._shadow_angle):
+            s.setVisible(shadow_on)
+        if shadow_on:
+            parsed = _parse_shadow_value(shadow_raw)
+            if parsed:
+                (self._shadow_size_px, self._shadow_opacity_pct,
+                 self._shadow_distance_px, self._shadow_color,
+                 self._shadow_angle_deg) = parsed
+                self._btn_shadow_color.setStyleSheet(
+                    f"color: {self._shadow_color};")
+                for s, v in ((self._shadow_size, self._shadow_size_px),
+                             (self._shadow_opacity, self._shadow_opacity_pct),
+                             (self._shadow_distance,
+                              self._shadow_distance_px),
+                             (self._shadow_angle, self._shadow_angle_deg)):
+                    s.blockSignals(True)
+                    s.setValue(v)
+                    s.blockSignals(False)
         va = cf.verticalAlignment()
         self._btn_super.setChecked(
             va == QTextCharFormat.VerticalAlignment.AlignSuperScript)
         self._btn_sub.setChecked(
             va == QTextCharFormat.VerticalAlignment.AlignSubScript)
         cap = cf.fontCapitalization()
-        self._btn_upper.setChecked(cap == QFont.Capitalization.AllUppercase)
-        self._btn_lower.setChecked(cap == QFont.Capitalization.AllLowercase)
-        align = self._edit.alignment()
-        self._align_btns["left"].setChecked(bool(align & Qt.AlignmentFlag.AlignLeft))
-        self._align_btns["center"].setChecked(bool(align & Qt.AlignmentFlag.AlignCenter))
-        self._align_btns["right"].setChecked(bool(align & Qt.AlignmentFlag.AlignRight))
-        self._align_btns["justify"].setChecked(bool(align & Qt.AlignmentFlag.AlignJustify))
-        rtl = (cursor.blockFormat().layoutDirection()
-               == Qt.LayoutDirection.RightToLeft)
+        if cf.hasProperty(CASE_PROP):
+            case_prop = cf.property(CASE_PROP)
+            self._btn_upper.setChecked(case_prop == "upper")
+            self._btn_lower.setChecked(case_prop == "lower")
+        elif cap in (QFont.Capitalization.AllUppercase,
+                     QFont.Capitalization.SmallCaps):
+            self._btn_upper.setChecked(True)
+            self._btn_lower.setChecked(False)
+        elif cap == QFont.Capitalization.AllLowercase:
+            self._btn_upper.setChecked(False)
+            self._btn_lower.setChecked(True)
+        else:
+            self._btn_upper.setChecked(theme.get("case") == "upper")
+            self._btn_lower.setChecked(theme.get("case") == "lower")
+        bfmt = cursor.blockFormat()
+        if bfmt.hasProperty(ALIGN_PROP):
+            align_key = bfmt.property(ALIGN_PROP)
+            for key, btn in self._align_btns.items():
+                btn.setChecked(key == align_key)
+        else:
+            align = bfmt.alignment()
+            if align and align != Qt.AlignmentFlag.AlignLeft:
+                self._align_btns["left"].setChecked(
+                    bool(align & Qt.AlignmentFlag.AlignLeft))
+                self._align_btns["center"].setChecked(
+                    bool(align & Qt.AlignmentFlag.AlignCenter))
+                self._align_btns["right"].setChecked(
+                    bool(align & Qt.AlignmentFlag.AlignRight))
+                self._align_btns["justify"].setChecked(
+                    bool(align & Qt.AlignmentFlag.AlignJustify))
+            else:
+                # No block alignment stored: the theme's alignment is what
+                # display renders (center for the freeform slides theme).
+                for key, btn in self._align_btns.items():
+                    btn.setChecked(key == theme.get("align"))
+        if bfmt.hasProperty(DIR_PROP):
+            rtl = bfmt.property(DIR_PROP) == "rtl"
+        else:
+            rtl = (bfmt.layoutDirection() == Qt.LayoutDirection.RightToLeft)
         self._btn_rtl.setChecked(rtl)
         self._btn_ltr.setChecked(not rtl)
         text = cursor.block().text()
         self._btn_bullets.setChecked(text.startswith("• "))
         import re as _re
         self._btn_numbers.setChecked(bool(_re.match(r"^\d+\.\s+", text)))
-        if cf.fontPointSize():
-            self._size_combo.setCurrentText(
-                str(max(1, round(cf.fontPointSize() / _PT_PER_PX))))
+        self._size_combo.setCurrentText(str(self._current_size_px()))

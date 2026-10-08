@@ -14,11 +14,12 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal
-from PyQt6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
 from ui.styles import (
     SLATE_950, SLATE_600, CHROME_BG, CHROME_TAB_ACTIVE,
-    WHITE, SLATE_400, EMERALD_500, RED_500, BORDER_SUBTLE
+    WHITE, SLATE_400, EMERALD_500, RED_500, BORDER_SUBTLE,
+    ACCENT, ACCENT_LIGHT, TEXT_FAINT, TEXT_PRIMARY,
 )
 from ui.tabs.presentation_tab import PresentationTab
 from ui.tabs.library_tab import LibraryTab
@@ -88,25 +89,23 @@ class FramelessTitleBar(QWidget):
         layout.setContentsMargins(8, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Favicon icon
-        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
-        icon_path = os.path.join(assets_dir, "favicon.svg")
-        if os.path.exists(icon_path):
-            icon_label = QLabel()
-            icon_pixmap = QPixmap(icon_path).scaled(
-                20, 20, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            icon_label.setPixmap(icon_pixmap)
-            icon_label.setFixedSize(24, 24)
-            icon_label.setStyleSheet("background: transparent; padding: 0px 6px 0px 0px;")
-            layout.addWidget(icon_label)
+        # Brand mark icon (painted from the app theme)
+        from ui.widgets.loading_screen import mark_pixmap
+        icon_label = QLabel()
+        icon_label.setPixmap(mark_pixmap(20))
+        icon_label.setFixedSize(24, 24)
+        icon_label.setStyleSheet("background: transparent; padding: 0px 6px 0px 0px;")
+        layout.addWidget(icon_label)
         
-        # Logo
-        logo = QLabel("RhemaCast")
+        # Logo — two-tone wordmark matching the brand (Rhema bright, Cast light purple)
+        logo = QLabel()
         logo.setAccessibleName("Application name")
+        logo.setText(
+            '<span style="color: ' + TEXT_PRIMARY + ';">Rhema</span>'
+            '<span style="color: ' + ACCENT_LIGHT + ';">Cast</span>'
+        )
+        logo.setTextFormat(Qt.TextFormat.RichText)
         logo.setStyleSheet("""
-            color: #60a5fa;
             font-size: 12px;
             font-weight: 800;
             text-transform: uppercase;
@@ -220,7 +219,7 @@ class PlaceholderTab(QWidget):
         # Show a loading indicator initially
         self.loading_label = QLabel("Loading...")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.loading_label.setStyleSheet("color: #64748b; font-size: 14px;")
+        self.loading_label.setStyleSheet(f"color: {TEXT_FAINT}; font-size: 14px;")
         self.layout.addWidget(self.loading_label)
 
     def showEvent(self, event):
@@ -259,12 +258,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1024, 768)
         self.resize(1280, 800)
 
-        # Set window icon
-        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
-        icon_path = os.path.join(assets_dir, "icon.svg")
-        if os.path.exists(icon_path):
-            from PyQt6.QtGui import QIcon
-            self.setWindowIcon(QIcon(icon_path))
+        # Set window icon (brand mark, painted from the app theme)
+        from ui.widgets.loading_screen import mark_pixmap
+        from PyQt6.QtGui import QIcon
+        self.setWindowIcon(QIcon(mark_pixmap(64)))
         
         # Focus policy for keyboard navigation
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -494,6 +491,16 @@ class MainWindow(QMainWindow):
         self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS", "HISTORY"))
             
         # Switch stack
+        # Fresh frame first: give the incoming tab a head start on
+        # committing a current frame (idempotent re-push; showEvent
+        # repeats it as belt-and-suspenders).
+        target = self.stack.widget(index)
+        resync = getattr(target, "resync_screens", None)
+        if callable(resync):
+            try:
+                resync()
+            except Exception as e:
+                logger.warning(f"Screen resync before tab switch failed: {e}")
         self.stack.setCurrentIndex(index)
 
     def _on_history_tab_loaded(self, widget):
@@ -610,6 +617,29 @@ class MainWindow(QMainWindow):
         if pres_tab and hasattr(pres_tab, 'queue_panel'):
             pres_tab.queue_panel._themes_panel.reload()
 
+    @staticmethod
+    def _press_in_schedule(obj) -> bool:
+        """True when a press target sits inside a schedule list (matched
+        by class name to avoid importing panels here)."""
+        w = obj
+        while w is not None:
+            if type(w).__name__ == "SchedulePanel":
+                return True
+            w = w.parentWidget() if hasattr(w, "parentWidget") else None
+        return False
+
+    @staticmethod
+    def _cursor_in_schedule() -> bool:
+        """True when the mouse cursor itself sits over a schedule list
+        (hit-test, independent of which object got the press event)."""
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from PyQt6.QtGui import QCursor
+            return MainWindow._press_in_schedule(
+                QApplication.widgetAt(QCursor.pos()))
+        except Exception:
+            return False
+
     def eventFilter(self, obj, event):
         """App-wide event filter: intercept Alt+Click and defocus search panels."""
         from PyQt6.QtCore import QEvent as _QE
@@ -626,6 +656,54 @@ class MainWindow(QMainWindow):
                     event.spontaneous(),
                     type(_fw).__name__ if _fw is not None else None,
                     type(obj).__name__, self.isActiveWindow())
+            except Exception:
+                pass
+
+        if _KEYTAP_ENABLED and event.type() in (
+                _QE.Type.MouseButtonPress, _QE.Type.MouseButtonDblClick,
+                _QE.Type.FocusIn, _QE.Type.FocusOut):
+            try:
+                from PyQt6.QtWidgets import QApplication as _QA2
+                from PyQt6.QtCore import QTimer as _QT2
+                _fw2 = _QA2.focusWidget()
+                _kind = { _QE.Type.MouseButtonPress: "MousePress",
+                    _QE.Type.MouseButtonDblClick: "MouseDblClick",
+                    _QE.Type.FocusIn: "FocusIn",
+                    _QE.Type.FocusOut: "FocusOut" }.get(event.type(), "?")
+                _chain = type(obj).__name__
+                try:
+                    _p = obj.parent()
+                    if _p is not None:
+                        _chain += "<" + type(_p).__name__
+                        _gp = _p.parent()
+                        if _gp is not None:
+                            _chain += "<" + type(_gp).__name__
+                except Exception:
+                    pass
+                try:
+                    _aw = _QA2.activeWindow()
+                    _awname = type(_aw).__name__ if _aw is not None else None
+                except Exception:
+                    _awname = "?"
+                try:
+                    _modal = _QA2.activeModalWidget()
+                    _modalname = type(_modal).__name__ \
+                        if _modal is not None else None
+                except Exception:
+                    _modalname = "?"
+                logger.info(
+                    "KEYTAP %s button=%s spont=%s focus=%s obj=%s "
+                    "active=%s activeWin=%s modal=%s",
+                    _kind,
+                    getattr(event, "button", lambda: None)(),
+                    event.spontaneous(),
+                    type(_fw2).__name__ if _fw2 is not None else None,
+                    _chain, self.isActiveWindow(), _awname, _modalname)
+                if event.type() == _QE.Type.MouseButtonPress:
+                    _QT2.singleShot(0, lambda: logger.info(
+                        "KEYTAP post-press focus=%s active=%s",
+                        (lambda w: type(w).__name__ if w is not None else None)(
+                            _QA2.focusWidget()), self.isActiveWindow()))
             except Exception:
                 pass
 
@@ -658,13 +736,43 @@ class MainWindow(QMainWindow):
         # can't swallow these as browser back/forward first.
         if event.type() == _QE.Type.KeyPress:
             if self.isActiveWindow() and self._maybe_song_nav_key(event):
+                if _KEYTAP_ENABLED:
+                    logger.info("KEYTAP song-nav consumed key=%s",
+                                event.key())
                 return True
 
         if event.type() == _QE.Type.MouseButtonPress:
+            # Client-side activation recovery: if the compositor never
+            # activates this window (presses arrive, active stays False,
+            # focus can never transfer), claim active state ourselves so
+            # in-app focus routing works. Only when this press targets
+            # the main window itself — popups/menus manage their own.
+            # No-op whenever the window is already active.
+            try:
+                from PyQt6.QtWidgets import QApplication as _QA5
+                _tl = obj.window() if hasattr(obj, "window") else None
+                if _tl is not None and _tl is self \
+                        and not self.isActiveWindow():
+                    _QA5.setActiveWindow(self)
+            except Exception:
+                pass
             if (event.button() == Qt.MouseButton.LeftButton
                     and event.modifiers() & Qt.KeyboardModifier.AltModifier):
-                self._hotkey_add_to_schedule()
-                return True  # consume — don't let Qt do alt-click text selection
+                # ...unless the press is inside a schedule list itself:
+                # Alt+clicking a schedule item would re-add the current
+                # selection as a duplicate. Let it through instead.
+                # Both the event target and the cursor hit-test count:
+                # either one inside a schedule panel vetoes the hotkey.
+                _in_sched = MainWindow._press_in_schedule(obj) \
+                    or MainWindow._cursor_in_schedule()
+                if _KEYTAP_ENABLED:
+                    logger.info("KEYTAP alt-add %s",
+                                "skipped-in-schedule" if _in_sched
+                                else "fired")
+                if not _in_sched:
+                    self._hotkey_add_to_schedule()
+                    # consume — don't let Qt do alt-click text selection
+                    return True
             # Defocus search panels on click outside them
             if event.button() == Qt.MouseButton.LeftButton:
                 self._defocus_search_if_outside(obj)
@@ -827,6 +935,8 @@ class MainWindow(QMainWindow):
             "fuzzy_search": self._hotkey_fuzzy_search,
             "next_verse": self._hotkey_next_verse,
             "prev_verse": self._hotkey_prev_verse,
+            "next_schedule_item": self._hotkey_next_schedule_item,
+            "prev_schedule_item": self._hotkey_prev_schedule_item,
             "toggle_transcription": self._hotkey_toggle_transcription,
             "add_to_schedule": self._hotkey_add_to_schedule,
             "double_click": self._hotkey_double_click,
@@ -868,6 +978,8 @@ class MainWindow(QMainWindow):
         "fuzzy_search": "Ctrl+Shift+S",
         "next_verse": "Right",
         "prev_verse": "Left",
+        "next_schedule_item": "Alt+Right",
+        "prev_schedule_item": "Alt+Left",
         "toggle_transcription": "F7",
         "add_to_schedule": "Alt+Return",
             "double_click": "F1",
@@ -955,6 +1067,19 @@ class MainWindow(QMainWindow):
         if tab and hasattr(tab, "live_preview"):
             tab.live_preview.prev_verse.emit()
 
+    def _hotkey_prev_schedule_item(self):
+        """Alt+Left: step to the previous SCHEDULE item (not the previous
+        verse/slide — those belong to the plain Left/Right hotkeys)."""
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "_step_schedule"):
+            tab._step_schedule(-1)
+
+    def _hotkey_next_schedule_item(self):
+        """Alt+Right: step to the next schedule item."""
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "_step_schedule"):
+            tab._step_schedule(1)
+
     def _hotkey_toggle_transcription(self):
         pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "stt_panel"):
@@ -990,7 +1115,7 @@ class MainWindow(QMainWindow):
         """Synthesize a left press+release at the cursor position."""
         from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
         from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import Qt as QtCore, QPointF
+        from PyQt6.QtCore import QPointF
 
         global_point = QCursor.pos()
         target = QApplication.widgetAt(global_point)
@@ -1065,37 +1190,51 @@ class MainWindow(QMainWindow):
                 }
                 pres_tab.schedule_panel.add_item(item_data)
 
+    @staticmethod
+    def _focusable_ancestor(widget):
+        """Nearest widget from `widget` up that can take keyboard focus.
+
+        A real double-click gives focus to whatever is under the cursor, so
+        the hotkey does the same: that is what moves the panel focus ring
+        to the panel the operator deployed into. Returns None when nothing
+        in the chain accepts focus.
+        """
+        from PyQt6.QtWidgets import QWidget
+        w = widget
+        while isinstance(w, QWidget):
+            try:
+                if (w.focusPolicy() != Qt.FocusPolicy.NoFocus
+                        and w.isEnabled() and w.isVisible()):
+                    return w
+            except RuntimeError:
+                return None
+            w = w.parentWidget()
+        return None
+
     def _hotkey_double_click(self):
         """Simulate a mouse double-click at the current cursor position.
-        
-        Defocuses the navigator inputs if the cursor is outside them,
-        so the double-click goes to the intended target and next/prev
-        hotkeys work afterward.
+
+        Focus follows the cursor like a real click: the nearest focusable
+        ancestor of the widget under the pointer takes focus, so the panel
+        focus ring moves to wherever the operator deployed (and next/prev
+        hotkeys act on that panel's context).
         """
         from PyQt6.QtGui import QCursor, QMouseEvent, QPointingDevice
         from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import Qt as QtCore, QPointF
+        from PyQt6.QtCore import QPointF
 
         global_point = QCursor.pos()
         target = QApplication.widgetAt(global_point)
         if not target:
             return
 
-        # Defocus navigator if cursor is outside it
-        pres_tab = self._tabs.get("SCRIPTURE")
-        if pres_tab and hasattr(pres_tab, "browser_panel"):
-            browser = pres_tab.browser_panel
-            if hasattr(browser, "predictive_input"):
-                pi = browser.predictive_input
-                is_over_navigator = False
-                w = target
-                while w is not None:
-                    if w in (pi.book_input, pi.chapter_input, pi.verse_input):
-                        is_over_navigator = True
-                        break
-                    w = w.parentWidget() if hasattr(w, 'parentWidget') else None
-                if not is_over_navigator and QApplication.focusWidget() in (pi.book_input, pi.chapter_input, pi.verse_input):
-                    self.setFocus()
+        # Real clicks move focus on press; do it before dispatching so the
+        # handler sees the same focus state a mouse double-click gives.
+        focused = self._focusable_ancestor(target)
+        if focused is not None and focused is not QApplication.focusWidget():
+            # MouseFocusReason, like a real click: some widgets treat a
+            # programmatic focus reason as a different kind of arrival.
+            focused.setFocus(Qt.FocusReason.MouseFocusReason)
 
         local_pos = QPointF(target.mapFromGlobal(global_point))
         global_pos = QPointF(global_point)
@@ -1196,8 +1335,11 @@ class MainWindow(QMainWindow):
             if combo is None:
                 continue
             if event.key() == combo[0] and event.modifiers() == combo[1]:
-                self._fire_song_nav(delta)
-                return True
+                # Honor the decline: text inputs keep the keys (word-jump)
+                # — only consume when navigation actually acted.
+                if self._fire_song_nav(delta):
+                    return True
+                return False
         return False
 
     def _fire_song_nav(self, delta: int) -> bool:

@@ -22,6 +22,7 @@ from ui.styles import (
     SLATE_950, SLATE_800, SLATE_600,
     SLATE_500, SLATE_400, SLATE_300, WHITE, BORDER_SUBTLE,
     BLUE_400, CYAN_400, EMERALD_400, AMBER_500,
+    SELECTION_BG, SELECTION_BORDER, TEXT_SELECTION,
 )
 from ui.panels.history_preview_panel import HistoryPreviewPanel
 
@@ -36,16 +37,16 @@ _BADGE_COLORS = {
 
 _SEARCH_INPUT_STYLE = f"""
     QLineEdit {{
-        background: rgba(30, 41, 59, 0.5);
+        background: rgba(29, 29, 34, 0.5);
         color: {SLATE_300};
         border: 1px solid {BORDER_SUBTLE};
         border-radius: 8px;
         padding: 12px 16px;
         font-size: 14px;
-        selection-background-color: rgba(59, 130, 246, 0.3);
+        selection-background-color: {TEXT_SELECTION};
     }}
     QLineEdit:focus {{
-        border-color: rgba(59, 130, 246, 0.4);
+        border-color: {SELECTION_BORDER};
     }}
     QLineEdit::placeholder {{
         color: {SLATE_600};
@@ -69,7 +70,7 @@ _SESSION_SUB_STYLE = f"""
 
 _CARD_STYLE = f"""
     QFrame {{
-        background: rgba(30, 41, 59, 0.35);
+        background: rgba(29, 29, 34, 0.35);
         border: 1px solid {BORDER_SUBTLE};
         border-radius: 8px;
     }}
@@ -100,7 +101,7 @@ class HistoryCard(QFrame):
         badge_label = QLabel(badge.upper())
         badge_label.setStyleSheet(f"""
             color: {_BADGE_COLORS.get(badge.upper(), SLATE_500)};
-            background: rgba(30, 41, 59, 0.8);
+            background: rgba(29, 29, 34, 0.8);
             border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 4px;
             padding: 3px 10px;

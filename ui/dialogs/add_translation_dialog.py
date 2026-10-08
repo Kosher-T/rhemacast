@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from ui.styles import SLATE_950, SLATE_800, SLATE_500, SLATE_300, BLUE_500, WHITE
+from ui.styles import SLATE_950, SLATE_800, SLATE_500, SLATE_300, WHITE, SELECTION_BG
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +118,8 @@ class AddTranslationDialog(QDialog):
                 border-radius: 6px;
             }}
             QFrame:hover {{
-                border-color: {BLUE_500};
-                background: rgba(59, 130, 246, 0.08);
+                border-color: {SELECTION_BG};
+                background: {SELECTION_BG};
             }}
         """)
         layout = QVBoxLayout(frame)

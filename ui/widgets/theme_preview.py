@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.widgets.display_view import DisplayView
 from ui.widgets.aspect_ratio import AspectRatioWidget
+from ui.styles import TEXT_MUTED
 
 SAMPLE_VERSES = {
     "shortest": {
@@ -76,7 +77,7 @@ class ThemePreview(QWidget):
         if label:
             lbl = QLabel(label)
             lbl.setStyleSheet(
-                "color: #94a3b8; font-size: 9px; font-weight: 700; "
+                "color: " + TEXT_MUTED + "; font-size: 9px; font-weight: 700; "
                 "letter-spacing: 1px; text-transform: uppercase; background: transparent;"
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)

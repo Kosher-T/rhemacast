@@ -24,12 +24,16 @@ from ui.widgets.theme_properties_panel import ThemePropertiesPanel
 from ui.widgets.theme_preview import ThemePreview
 from ui.widgets.theme_animations_panel import ThemeAnimationsPanel
 from ui.widgets.container_editor import ContainerEditor
+from ui.styles import (
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, SLATE_300, BG_RAISED,
+    ACCENT, ACCENT_HOVER, SELECTION_BG, CHROME_SOFT, TEXT_SELECTION,
+)
 import core.theme_loader
 
 
 # ─── Styles ──────────────────────────────────────────────────────────────────
 
-_PANEL_BG = "rgba(15, 23, 42, 0.6)"
+_PANEL_BG = CHROME_SOFT
 _BORDER_SUBTLE = "rgba(255, 255, 255, 0.06)"
 
 _JSON_EDITOR_STYLE = (
@@ -37,18 +41,18 @@ _JSON_EDITOR_STYLE = (
     "  background: rgba(0, 0, 0, 0.4);"
     "  border: 1px solid rgba(255, 255, 255, 0.06);"
     "  border-radius: 8px;"
-    "  color: #e2e8f0;"
+    "  color: " + SLATE_300 + ";"
     "  font-family: 'Consolas', 'Courier New', monospace;"
     "  font-size: 11px;"
     "  padding: 8px;"
-    "  selection-background-color: rgba(59, 130, 246, 0.3);"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "}"
 )
 
 _TOOLBAR_BTN_STYLE = (
     "QPushButton {"
     "  background: transparent;"
-    "  color: #94a3b8;"
+    "  color: " + TEXT_MUTED + ";"
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 6px;"
     "  padding: 5px 12px;"
@@ -57,14 +61,14 @@ _TOOLBAR_BTN_STYLE = (
     "}"
     "QPushButton:hover {"
     "  background: rgba(255, 255, 255, 0.06);"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "}"
 )
 
 _TOOLBAR_BTN_PRIMARY = (
     "QPushButton {"
-    "  background: #3b82f6;"
-    "  color: #ffffff;"
+    "  background: " + ACCENT + ";"
+    "  color: " + TEXT_PRIMARY + ";"
     "  border: none;"
     "  border-radius: 6px;"
     "  padding: 5px 14px;"
@@ -72,17 +76,17 @@ _TOOLBAR_BTN_PRIMARY = (
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"
-    "  background: #2563eb;"
+    "  background: " + ACCENT_HOVER + ";"
     "}"
     "QPushButton:pressed {"
-    "  background: #1d4ed8;"
+    "  background: " + ACCENT + ";"
     "}"
 )
 
 _TOOLBAR_BTN_SECONDARY = (
     "QPushButton {"
     "  background: rgba(255, 255, 255, 0.06);"
-    "  color: #cbd5e1;"
+    "  color: " + SLATE_300 + ";"
     "  border: 1px solid rgba(255, 255, 255, 0.1);"
     "  border-radius: 6px;"
     "  padding: 5px 12px;"
@@ -91,14 +95,14 @@ _TOOLBAR_BTN_SECONDARY = (
     "}"
     "QPushButton:hover {"
     "  background: rgba(255, 255, 255, 0.1);"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "}"
 )
 
 _TOOLBAR_BTN_GHOST = (
     "QPushButton {"
     "  background: transparent;"
-    "  color: #64748b;"
+    "  color: " + TEXT_FAINT + ";"
     "  border: none;"
     "  border-radius: 6px;"
     "  padding: 5px 10px;"
@@ -107,14 +111,14 @@ _TOOLBAR_BTN_GHOST = (
     "}"
     "QPushButton:hover {"
     "  background: rgba(255, 255, 255, 0.05);"
-    "  color: #94a3b8;"
+    "  color: " + TEXT_MUTED + ";"
     "}"
 )
 
 _TAB_BTN_ACTIVE = (
     "QPushButton {"
-    "  background: rgba(59, 130, 246, 0.2);"
-    "  color: #60a5fa;"
+    "  background: " + SELECTION_BG + ";"
+    "  color: " + ACCENT + ";"
     "  border: none;"
     "  border-radius: 4px;"
     "  font-size: 10px;"
@@ -126,14 +130,14 @@ _TAB_BTN_ACTIVE = (
 _TAB_BTN_INACTIVE = (
     "QPushButton {"
     "  background: transparent;"
-    "  color: #64748b;"
+    "  color: " + TEXT_FAINT + ";"
     "  border: none;"
     "  border-radius: 4px;"
     "  font-size: 10px;"
     "  font-weight: 700;"
     "  padding: 0 12px;"
     "}"
-    "QPushButton:hover { color: #94a3b8; }"
+    "QPushButton:hover { color: " + TEXT_MUTED + "; }"
 )
 
 _THEME_COMBO_STYLE = (
@@ -142,7 +146,7 @@ _THEME_COMBO_STYLE = (
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 6px;"
     "  padding: 4px 10px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 12px;"
     "  font-weight: 600;"
     "  min-width: 120px;"
@@ -152,10 +156,10 @@ _THEME_COMBO_STYLE = (
     "  width: 20px;"
     "}"
     "QComboBox QAbstractItemView {"
-    "  background: #1e293b;"
-    "  color: #f8fafc;"
+    "  background: " + BG_RAISED + ";"
+    "  color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255, 255, 255, 0.1);"
-    "  selection-background-color: rgba(59, 130, 246, 0.3);"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "  padding: 4px;"
     "}"
 )
@@ -350,7 +354,7 @@ class ThemeDesignerTab(QWidget):
         # Name badge
         self._name_badge = QLabel("")
         self._name_badge.setStyleSheet(
-            "color: #f8fafc; font-size: 13px; font-weight: 700; "
+            "color: " + TEXT_PRIMARY + "; font-size: 13px; font-weight: 700; "
             "background: transparent; padding: 0 4px;"
         )
         layout.addWidget(self._name_badge)
@@ -358,7 +362,7 @@ class ThemeDesignerTab(QWidget):
         # Description
         self._desc_label = QLabel("")
         self._desc_label.setStyleSheet(
-            "color: #64748b; font-size: 10px; background: transparent; "
+            "color: " + TEXT_FAINT + "; font-size: 10px; background: transparent; "
             "padding: 0 4px;"
         )
         self._desc_label.setSizePolicy(
@@ -476,7 +480,7 @@ class ThemeDesignerTab(QWidget):
         json_header.setSpacing(4)
         lbl = QLabel("Theme JSON")
         lbl.setStyleSheet(
-            "color: #94a3b8; font-size: 10px; font-weight: 700; "
+            "color: " + TEXT_MUTED + "; font-size: 10px; font-weight: 700; "
             "text-transform: uppercase; letter-spacing: 1px; background: transparent;"
         )
         json_header.addWidget(lbl)

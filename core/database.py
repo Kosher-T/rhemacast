@@ -73,6 +73,17 @@ def init_db():
                 chosen_ref TEXT,
                 timestamp_ms INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS verse_popularity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                book TEXT NOT NULL,
+                chapter TEXT NOT NULL,
+                verse TEXT NOT NULL,
+                points REAL NOT NULL DEFAULT 0,
+                picks INTEGER NOT NULL DEFAULT 0,
+                updated_ms INTEGER NOT NULL
+            );
             
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
@@ -106,7 +117,13 @@ def init_db():
             CREATE VIRTUAL TABLE IF NOT EXISTS slides_fts USING fts5(
                 title, slide_text, tags,
                 content='', content_rowid='id',
-                tokenize='porter unicode61',
+                tokenize='porter unicode61 remove_diacritics 2',
+                contentless_delete=1
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS slides_fts_prefix USING fts5(
+                title, slide_text, tags,
+                content='', content_rowid='id',
+                tokenize='unicode61 remove_diacritics 2',
                 contentless_delete=1
             );
         """)
@@ -120,16 +137,40 @@ def init_db():
     # content='' (no DELETE by rowid — sync fallback was lossy).
     _ensure_slide_fts(conn)
 
+    # Popularity store for operator-learned verse ranking (idempotent).
+    _ensure_verse_popularity(conn)
+
     conn.commit()
     conn.close()
 
 
-def _ensure_slide_fts(conn: sqlite3.Connection):
-    """Recreate slides_fts when its definition is outdated.
+def _ensure_verse_popularity(conn: sqlite3.Connection):
+    """Create the verse_popularity table on older databases."""
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS verse_popularity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                book TEXT NOT NULL,
+                chapter TEXT NOT NULL,
+                verse TEXT NOT NULL,
+                points REAL NOT NULL DEFAULT 0,
+                picks INTEGER NOT NULL DEFAULT 0,
+                updated_ms INTEGER NOT NULL
+            );
+        """)
+    except Exception:
+        pass
 
-    Handles two legacy states:
+
+def _ensure_slide_fts(conn: sqlite3.Connection):
+    """Recreate slide FTS indexes when their definition is outdated.
+
+    Handles legacy states:
       - content='slide_decks' (external-content, breaks without real columns)
       - plain content='' without contentless_delete=1 (no DELETE by rowid)
+      - any tokenizer without remove_diacritics (no vernacular folding)
+      - missing slides_fts_prefix (no prefix-stable search)
     Reindexes from slide_decks after recreation.
     """
     try:
@@ -137,10 +178,15 @@ def _ensure_slide_fts(conn: sqlite3.Connection):
         if not row or not row[0]:
             return
         sql = row[0]
+        prefix_missing = not conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='slides_fts_prefix'"
+        ).fetchone()
         legacy = (
             "content='slide_decks'" in sql or 'content="slide_decks"' in sql
             or "content=slide_decks" in sql
             or "contentless_delete" not in sql
+            or "remove_diacritics" not in sql
+            or prefix_missing
         )
         if not legacy:
             return
@@ -152,14 +198,25 @@ def _ensure_slide_fts(conn: sqlite3.Connection):
             DROP TABLE IF EXISTS slides_fts_idx;
             DROP TABLE IF EXISTS slides_fts_docsize;
             DROP TABLE IF EXISTS slides_fts_config;
+            DROP TABLE IF EXISTS slides_fts_prefix;
+            DROP TABLE IF EXISTS slides_fts_prefix_data;
+            DROP TABLE IF EXISTS slides_fts_prefix_idx;
+            DROP TABLE IF EXISTS slides_fts_prefix_docsize;
+            DROP TABLE IF EXISTS slides_fts_prefix_config;
             CREATE VIRTUAL TABLE slides_fts USING fts5(
                 title, slide_text, tags,
                 content='', content_rowid='id',
-                tokenize='porter unicode61',
+                tokenize='porter unicode61 remove_diacritics 2',
+                contentless_delete=1
+            );
+            CREATE VIRTUAL TABLE slides_fts_prefix USING fts5(
+                title, slide_text, tags,
+                content='', content_rowid='id',
+                tokenize='unicode61 remove_diacritics 2',
                 contentless_delete=1
             );
         """)
-        # Re-index existing decks
+        # Re-index existing decks (both tables)
         import json as _json
         from core.slide_parser import strip_inline_markup as _strip
         for d in decks:
@@ -168,9 +225,14 @@ def _ensure_slide_fts(conn: sqlite3.Connection):
             except Exception:
                 slides = []
             slide_text = " \n ".join(_strip(s.get("text", "")) for s in slides)
+            tags = d["tags"] or ""
             conn.execute(
                 "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
-                (d["id"], d["title"], slide_text, d["tags"] or ""),
+                (d["id"], d["title"], slide_text, tags),
+            )
+            conn.execute(
+                "INSERT INTO slides_fts_prefix(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
+                (d["id"], d["title"], slide_text, tags),
             )
         # Also drop legacy triggers if any
         conn.executescript("""
@@ -202,7 +264,7 @@ def _run_migrations(conn: sqlite3.Connection, from_version: int, to_version: int
             CREATE VIRTUAL TABLE IF NOT EXISTS slides_fts USING fts5(
                 title, slide_text, tags,
                 content='', content_rowid='id',
-                tokenize='porter unicode61'
+                tokenize='porter unicode61 remove_diacritics 2'
             );
         """)
         # FTS is maintained explicitly by slide_service._fts_sync_deck (slide_text derived
@@ -477,6 +539,69 @@ def mark_search_chosen(row_id: int | None, chosen_ref: str) -> None:
         conn.close()
     except Exception:
         pass
+
+
+def log_verse_pick(prompt: str, book: str, chapter, verse,
+                   points: float) -> None:
+    """Accumulate popularity for a picked verse under a prompt.
+
+    Same (prompt, verse) accumulates points/picks (multiple prompts per
+    verse are kept — never collapsed); oldest rows past the cap are
+    pruned. Private by design: debug-logged only, never console.
+    Never raises.
+    """
+    from core.constants import POPULARITY_MAX_PROMPTS
+    if not (prompt or "").strip() or not book:
+        return
+    try:
+        now = int(time.time() * 1000)
+        prompt = prompt.strip()
+        book, chapter, verse = str(book), str(chapter), str(verse)
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT id, points, picks FROM verse_popularity"
+            " WHERE prompt = ? AND book = ? AND chapter = ? AND verse = ?",
+            (prompt, book, chapter, verse),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE verse_popularity SET points = points + ?,"
+                " picks = picks + 1, updated_ms = ? WHERE id = ?",
+                (float(points), now, row["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO verse_popularity"
+                " (prompt, book, chapter, verse, points, picks, updated_ms)"
+                " VALUES (?, ?, ?, ?, ?, 1, ?)",
+                (prompt, book, chapter, verse, float(points), now),
+            )
+        conn.execute(
+            "DELETE FROM verse_popularity WHERE id NOT IN ("
+            "SELECT id FROM verse_popularity"
+            " ORDER BY updated_ms DESC, id DESC LIMIT ?)",
+            (POPULARITY_MAX_PROMPTS,),
+        )
+        conn.commit()
+        conn.close()
+        logger.debug("Popularity pick: %r -> %s %s:%s (+%s)",
+                     prompt, book, chapter, verse, points)
+    except Exception:
+        pass
+
+
+def read_verse_popularity() -> list:
+    """All (prompt, verse, points) rows for prompt matching. Never raises."""
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT prompt, book, chapter, verse, points, picks"
+            " FROM verse_popularity"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 def get_history_sessions() -> list:

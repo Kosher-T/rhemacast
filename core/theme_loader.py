@@ -15,6 +15,7 @@ To create a new theme:
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -132,6 +133,50 @@ def get_theme(name: str) -> Optional[dict]:
     return _cache.get(name)
 
 
+# Contract fallback (docs/theme-switch-contract.md): switch payloads must
+# never carry a null theme_data. Unknown names resolve to a per-kind
+# default with a loud warning — per-machine settings may name themes that
+# do not exist on that machine (renamed/deleted files), and the switch
+# must stay clean.
+#
+# Fallbacks are per content KIND, never app-wide: the scripture "default"
+# theme is only the default for scriptures. Slides/freeform fall back to
+# "slides"; future kinds (images, video) get their own entry here.
+_FALLBACK_THEME = "default"
+
+DEFAULT_THEME_FOR_KIND = {
+    SCRIPTURE: "default",
+    FREEFORM: "slides",
+}
+
+
+def resolve_theme(name: str, fallback: Optional[str] = None) -> tuple[str, dict]:
+    """Resolve a theme name to (name, deepcopy of theme dict).
+
+    Unknown/empty names fall back to `fallback` (default: the scripture
+    "default" theme) and log an error naming the bad configured value.
+    Slide/freeform callers MUST pass fallback="slides" (or
+    DEFAULT_THEME_FOR_KIND[FREEFORM]) so a missing slides theme never
+    renders with the scripture theme. Returns a deepcopy: payload
+    builders must never hand out (or mutate) the live cache reference.
+    """
+    import copy
+    _load_all()
+    _check_for_changes()
+    theme = _cache.get(name) if name else None
+    if theme is None:
+        if fallback is None:
+            fallback = _FALLBACK_THEME
+        logger.error(
+            f"Theme '{name}' not found — falling back to "
+            f"'{fallback}'. Check output theme settings and "
+            f"themes/*.json on this machine."
+        )
+        name = fallback
+        theme = _cache.get(fallback, {})
+    return name, copy.deepcopy(theme)
+
+
 def get_all_themes() -> dict[str, dict]:
     """Return all loaded themes as {name: theme_dict}. Checks for file changes."""
     _load_all()
@@ -171,6 +216,135 @@ def slide_title_visible(theme_data: Optional[dict]) -> bool:
     if not isinstance(theme_data, dict):
         return True
     return theme_data.get("slide", {}).get("show_title", True) is not False
+
+
+# A hard shadow: dx dy blur color, any `px` suffix optional (themes write
+# single-axis shadows as "-2px 0 0 #000"), blur must be exactly zero.
+_HARD_SHADOW_RE = re.compile(
+    r"^\s*(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?\s+"
+    r"(#[0-9a-fA-F]{3,6})\s*$")
+
+
+def theme_outline(text_block: Optional[dict]) -> Optional[str]:
+    """A theme's text block -> canonical outline value ("2px #000000").
+
+    Prefers an explicit `text_outline` key. Falls back to `text_shadow` when
+    that shadow is actually a hard outline: zero blur, one color, uniform
+    offsets — the classic hand-rolled 8-direction outline. Its thickness is
+    the offset magnitude, so the theme's outline and a deck's `outline=Npx`
+    are the same knob. Real drop shadows (blur > 0, or mixed colors) are left
+    alone: they are depth, not outline.
+    """
+    if not isinstance(text_block, dict):
+        return None
+    explicit = str(text_block.get("text_outline") or "").strip()
+    if explicit:
+        # An explicit "none" is a decision, not an absence: it switches the
+        # outline off even when a legacy hard text_shadow is present (that
+        # shadow then renders literally, as the shadow it claims to be).
+        if explicit.lower() in ("none", "off"):
+            return None
+        from core.slide_parser import _parse_outline
+        parsed = _parse_outline(explicit)
+        if parsed and parsed != "none":
+            return parsed
+    shadow = str(text_block.get("text_shadow") or "").strip()
+    if not shadow or shadow.lower() == "none":
+        return None
+    from core.slide_parser import _parse_hex_color
+    axis = 0.0      # pure "2px 0 0 #000" style offsets: the author's intent
+    diagonal = 0.0  # magnitude of the corner copies
+    colors = set()
+    for part in shadow.split(","):
+        m = _HARD_SHADOW_RE.match(part)
+        if not m or float(m.group(3)) != 0:
+            return None  # blur or an odd shape: a real drop shadow
+        dx, dy = float(m.group(1)), float(m.group(2))
+        magnitude = (dx * dx + dy * dy) ** 0.5
+        if dy == 0:
+            axis = max(axis, abs(dx))
+        elif dx == 0:
+            axis = max(axis, abs(dy))
+        else:
+            diagonal = max(diagonal, magnitude)
+        colors.add(_parse_hex_color(m.group(4)))
+    if not colors or len(colors) != 1:
+        return None
+    color = colors.pop()
+    if not color:
+        return None
+    # An 8-direction outline spells out its thickness on the axes; fall back
+    # to the corner magnitude only when there are no axis offsets at all.
+    thickness = axis or diagonal
+    if thickness <= 0:
+        return None
+    return f"{max(1, min(25, int(round(thickness))))}px {color}"
+
+
+def display_format_defaults(theme_data: Optional[dict]) -> dict:
+    """Theme's baseline text formatting, for the designer ribbon.
+
+    The theme styles the DISPLAY (weight, shadow/outline, case, align),
+    but a card's document only carries what the deck's txt stores — so
+    with nothing focused the ribbon would show everything inactive even
+    though the theme makes the text bold and outlined on display. This
+    maps the theme's "text" block onto the same switches the display
+    renderer uses (see display_view: weight/text_shadow/text_transform/
+    text_align), so the ribbon reflects the effective formatting.
+
+    Only keys the theme actually sets are returned: absent means "no
+    opinion", letting the deck's own run props decide.
+    """
+    import re as _re
+    if not isinstance(theme_data, dict):
+        return {}
+    t = theme_data.get("text")
+    if not isinstance(t, dict):
+        return {}
+    out: dict = {}
+
+    weight = t.get("weight")
+    if weight is not None:
+        try:
+            out["bold"] = int(float(str(weight).rstrip("px").strip())) >= 600
+        except (TypeError, ValueError):
+            pass
+
+    # The theme's outline is ONE property (`outline = "Npx #hex"`), the same
+    # one a deck run sets, so `outline=12` in the txt simply broadens it and
+    # `outline=none` switches it off. Themes may declare it directly, or keep
+    # the legacy hard multi-direction `text_shadow`, which is an outline in
+    # disguise (single color, zero blur, uniform offsets) and is converted.
+    outline = theme_outline(t)
+    if outline:
+        out["outline"] = outline
+
+    transform = str(t.get("text_transform") or "").strip().lower()
+    if transform == "uppercase":
+        out["case"] = "upper"
+    elif transform == "lowercase":
+        out["case"] = "lower"
+
+    align = str(t.get("text_align") or "").strip().lower()
+    if align in ("left", "center", "right", "justify"):
+        out["align"] = align
+    return out
+
+
+def slide_display_ref(title: str, section: Optional[str],
+                      theme_data: Optional[dict]) -> str:
+    """Reference line for a slide payload under the rendering theme.
+
+    Mirrors what the display output shows: themes opting out with
+    {"slide": {"show_title": false}} (e.g. the freeform "slides" theme)
+    render a blank reference line; all other themes show "Title · Section"
+    (or just the title). Every slide preview MUST go through here so
+    previews render exactly what display renders.
+    """
+    if not slide_title_visible(theme_data):
+        return ""
+    title = title or "(untitled)"
+    return f"{title} · {section}" if section else title
 
 
 def reload_themes():

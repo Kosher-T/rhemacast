@@ -17,7 +17,7 @@ from ui.styles import (
     SLATE_950, SLATE_900, SLATE_800, SLATE_700, SLATE_600,
     SLATE_500, SLATE_400, SLATE_300, WHITE,
     BLUE_500, BLUE_400, EMERALD_500, EMERALD_400,
-    BORDER_SUBTLE, BORDER_LIGHT
+    BORDER_SUBTLE, BORDER_LIGHT, SELECTION_BG,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class _Sidebar(QWidget):
         self.btn_bibles.clicked.connect(lambda: self.filter_changed.emit("all"))
         self.btn_bibles.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(59, 130, 246, 0.15);
+                background: {SELECTION_BG};
                 color: {WHITE};
                 border: none;
                 border-radius: 6px;

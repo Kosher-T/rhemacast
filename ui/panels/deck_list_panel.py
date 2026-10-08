@@ -31,8 +31,10 @@ from PyQt6.QtGui import (
 from ui.styles import (
     SLATE_950, SLATE_800, SLATE_700,
     SLATE_600, SLATE_500, SLATE_400,
-    WHITE, BLUE_500,
+    WHITE, SELECTION_BG, SELECTION_BORDER,
+    BORDER_SUBTLE, CYAN_400, MENU_BG, apply_minimal_scrollbar,
 )
+from ui.widgets.text_nav import install_line_edit_nav
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +121,10 @@ class DeckCardDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         rect = option.rect.adjusted(1, 1, -1, -1)
-        bg = QColor(59, 130, 246, 46) if selected else (
+        bg = QColor(SELECTION_BG) if selected else (
             QColor(SLATE_700) if hover else QColor(SLATE_800))
         painter.setBrush(bg)
-        painter.setPen(QPen(QColor(BLUE_500) if selected else QColor(255, 255, 255, 25),
+        painter.setPen(QPen(QColor(SELECTION_BORDER) if selected else QColor(255, 255, 255, 25),
                             1.5 if selected else 1))
         painter.drawRoundedRect(rect, 8, 8)
         title = d.get("title") or "(untitled)"
@@ -201,9 +203,36 @@ class DeckListPanel(QWidget):
 
         # ── Search ──
         self.search_box = QLineEdit()
+        # Word gestures + focus-select-all + triple-click-select-all.
+        # A plain QLineEdit on purpose: emulating a single-line field on
+        # QTextEdit is what produced the selection and caret bugs.
+        install_line_edit_nav(self.search_box)
         self.search_box.setPlaceholderText("Search title or lyrics…")
-        self.search_box.textChanged.connect(self._on_search)
+        self.search_box.setStyleSheet(f"""
+            QLineEdit {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border-color: {CYAN_400};
+            }}
+        """)
+        self.search_box.textChanged.connect(
+            lambda: self._on_search(self.search_box.text()))
         root.addWidget(self.search_box)
+
+        # ── Session-only search history (Up/Down recall) ──
+        # Qualifying a query: 2s idle, or the operator opens/activates a
+        # matching deck / scrolls the list.
+        from core.constants import SEARCH_HISTORY_IDLE_MS, SEARCH_HISTORY_MAX_ENTRIES
+        from ui.widgets.search_history import SearchHistory
+        self._search_history = SearchHistory(
+            self.search_box, idle_ms=SEARCH_HISTORY_IDLE_MS,
+            max_entries=SEARCH_HISTORY_MAX_ENTRIES)
 
         # ── Virtualized card list (only visible rows paint) ──
         self._model = DeckListModel(self)
@@ -222,10 +251,15 @@ class DeckListPanel(QWidget):
             "QListView { background: transparent; border: none; outline: none; }"
             "QListView::item { background: transparent; border: none; }"
         )
+        apply_minimal_scrollbar(self._view)
         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._on_context_menu)
         self._view.selectionModel().currentChanged.connect(self._on_current_changed)
         root.addWidget(self._view, 1)
+
+        # Scroll-qualifies the query, but only after a render settles
+        # (populating the list moves the scrollbar on its own).
+        self._search_history.bind_scroll(self._view.verticalScrollBar())
 
         self._empty = QLabel("No decks yet.\nImport a .txt file or an\nEasyWorship library to begin.")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -345,6 +379,8 @@ class DeckListPanel(QWidget):
         if emit:
             # History: a deck picked while searching answers that search.
             if self.search_box.text().strip() and self._last_search_row:
+                # Clicking a hit qualifies the query (no idle wait).
+                self._search_history.note_used()
                 from core.database import mark_search_chosen
                 mark_search_chosen(self._last_search_row, deck.get("title", ""))
             self.deck_selected.emit(dict(deck))
@@ -356,6 +392,9 @@ class DeckListPanel(QWidget):
         deck = self._lookup(current.data(DeckListModel._ID_ROLE))
         if deck is not None:
             self._current_deck = deck
+            if self.search_box.text().strip():
+                # Selecting a matching deck qualifies the query.
+                self._search_history.note_used()
             self.deck_selected.emit(dict(deck))
 
     def _deck_menu(self, deck_id: int) -> QMenu:
@@ -399,7 +438,7 @@ class DeckListPanel(QWidget):
     def _menu_style() -> str:
         return f"""
             QMenu {{
-                background: rgba(30, 41, 59, 240);
+                background: {MENU_BG};
                 color: {WHITE};
                 border: 1px solid rgba(255, 255, 255, 20);
                 border-radius: 6px;
@@ -410,7 +449,7 @@ class DeckListPanel(QWidget):
                 border-radius: 4px;
             }}
             QMenu::item:selected {{
-                background: rgba(59, 130, 246, 60);
+                background: {SELECTION_BG};
             }}
         """
 
@@ -425,6 +464,9 @@ class DeckListPanel(QWidget):
         rows = [self._to_summary(d) for d in search_decks(query)]
         self._apply_rows(rows)
         self._current_deck = None
+        # Repopulating scrolls the list on its own; re-arm so only the
+        # operator's own scrolling counts as qualifying the query.
+        self._search_history.arm_scroll()
         # History: document the search (FTS hits). Keystroke runs coalesce.
         from core.database import (current_operator_session, log_search_event)
         self._last_search_row = log_search_event(
@@ -495,6 +537,33 @@ class DeckListPanel(QWidget):
             return
         logger.info(f"Exported {len(decks)} decks to {path}")
 
+    @staticmethod
+    def _ask_existing_songs(existing: int, total: int):
+        """Skip-vs-overwrite choice for songs already in the library.
+
+        Returns "skip", "overwrite", or None (cancelled). Skip is the
+        default: it never touches the operator's current decks.
+        """
+        box = QMessageBox()
+        box.setWindowTitle("EasyWorship Import")
+        box.setText(
+            f"{existing} of {total} songs are already in your library.\n\n"
+            "Skip them, or overwrite them with the imported versions?"
+        )
+        skip_btn = box.addButton(
+            "Skip existing", QMessageBox.ButtonRole.ActionRole)
+        overwrite_btn = box.addButton(
+            "Overwrite existing", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(skip_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is skip_btn:
+            return "skip"
+        if clicked is overwrite_btn:
+            return "overwrite"
+        return None
+
     def _on_import_easyworship(self):
         """Import songs from an EasyWorship v6 Data directory."""
         from PyQt6.QtWidgets import QApplication
@@ -512,10 +581,25 @@ class DeckListPanel(QWidget):
                 "(e.g. EasyWorship/Default/v6.1/Databases/Data).",
             )
             return
+        from core.easyworship_import import (
+            import_easyworship, count_existing_easyworship,
+        )
+        try:
+            existing, total = count_existing_easyworship(data_dir)
+        except Exception as e:
+            logger.error(f"EasyWorship import failed: {e}")
+            QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
+            return
+        on_existing = "overwrite"
+        if existing > 0:
+            choice = self._ask_existing_songs(existing, total)
+            if choice is None:
+                return
+            on_existing = choice
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            from core.easyworship_import import import_easyworship
-            result = import_easyworship(data_dir=data_dir)
+            result = import_easyworship(
+                data_dir=data_dir, on_existing=on_existing)
         except Exception as e:
             logger.error(f"EasyWorship import failed: {e}")
             QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
@@ -529,6 +613,8 @@ class DeckListPanel(QWidget):
             f"Existing updated:   {result['updated']}\n"
             f"Skipped (no lyrics): {result['skipped']}"
         )
+        if result.get("skipped_existing"):
+            msg += f"\nSkipped (already in library): {result['skipped_existing']}"
         if failed:
             detail = "\n".join(f"{t}: {err}" for t, err in failed[:5])
             more = f"\n… and {len(failed) - 5} more" if len(failed) > 5 else ""

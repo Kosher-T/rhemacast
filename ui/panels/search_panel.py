@@ -9,16 +9,18 @@ import logging
 import time
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QListWidget, QListWidgetItem, QFrame, QApplication
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
+    QListWidget, QListWidgetItem, QFrame, QApplication
 )
+from ui.widgets.text_nav import install_line_edit_nav
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtGui import QWheelEvent
 
 from ui.styles import (
     PANEL_BODY_STYLE, SHOW_BTN_STYLE,
-    CYAN_400, SLATE_300, SLATE_400, SLATE_500, SLATE_600,
+    ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
+    SLATE_300, SLATE_400, SLATE_500, SLATE_600,
     SLATE_800, WHITE, BORDER_SUBTLE
 )
 
@@ -63,9 +65,9 @@ class _TabButton(QPushButton):
         if checked:
             self.setStyleSheet(f"""
                 QPushButton {{
-                    background: rgba(34, 211, 238, 0.15);
-                    color: {CYAN_400};
-                    border: 1px solid rgba(34, 211, 238, 0.3);
+                    background: {ACCENT_SOFT};
+                    color: {ACCENT};
+                    border: 1px solid {ACCENT_BORDER};
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 9px;
@@ -135,6 +137,7 @@ class SearchResultWidget(QFrame):
         self._click_timer.setInterval(_CLICK_DELAY)
         self._click_timer.timeout.connect(self._on_single_click)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setProperty("selected", False)
         self.setStyleSheet(f"""
             QFrame {{
                 background: transparent;
@@ -143,19 +146,30 @@ class SearchResultWidget(QFrame):
             QFrame:hover {{
                 background: rgba(255, 255, 255, 0.03);
             }}
+            QFrame[selected="true"] {{
+                background: {SELECTION_BG};
+            }}
+            QFrame[selected="true"]:hover {{
+                background: {SELECTION_BG};
+            }}
         """)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 2)
         layout.setSpacing(6)
 
-        # Confidence badge
-        conf = data.get("confidence", 0)
-        conf_label = QLabel(f"{conf:.0f}%")
-        conf_label.setFixedWidth(32)
+        # Confidence badge (★ when lifted by the operator's own picks)
+        # Belt and braces: nothing should produce >100%, but a badge is
+        # the last place that can guarantee it.
+        conf = min(100.0, data.get("confidence", 0) or 0)
+        star = "★" if data.get("boosted") else ""
+        conf_label = QLabel(f"{star}{conf:.0f}%")
+        conf_label.setFixedWidth(40 if star else 32)
+        if star:
+            conf_label.setToolTip("Boosted by your picks")
         conf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if conf >= 70:
-            badge_color = CYAN_400
+            badge_color = ACCENT
         elif conf >= 40:
             badge_color = SLATE_400
         else:
@@ -225,9 +239,16 @@ class SearchResultWidget(QFrame):
                 self.live_requested.emit(self.data)
             else:
                 self._click_timer.start()
+        super().mousePressEvent(event)
 
     def _on_single_click(self):
         self.navigate_requested.emit(self.data)
+
+    def set_selected(self, selected: bool):
+        """Reflect QListWidget selection with the theme highlight."""
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class SearchPanel(QWidget):
@@ -252,6 +273,8 @@ class SearchPanel(QWidget):
         self._verse_results = []
         self._topical_results = []
         self._active_tab = "all"
+        # Last submitted query (popularity pick logging context).
+        self._last_query = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -267,6 +290,10 @@ class SearchPanel(QWidget):
         input_row.setSpacing(6)
 
         self.query_input = QLineEdit()
+        # Word gestures + focus-select-all + triple-click-select-all.
+        # A plain QLineEdit on purpose: emulating a single-line field on
+        # QTextEdit is what produced the selection and caret bugs.
+        install_line_edit_nav(self.query_input)
         self.query_input.setPlaceholderText("e.g., prodigal son, David and Goliath...")
         self.query_input.setAccessibleName("Fuzzy search query")
         self.query_input.setAccessibleDescription("Type a natural language description to find Bible verses")
@@ -280,7 +307,7 @@ class SearchPanel(QWidget):
                 font-size: 12px;
             }}
             QLineEdit:focus {{
-                border-color: {CYAN_400};
+                border-color: {ACCENT};
             }}
         """)
         self.query_input.returnPressed.connect(self._on_search)
@@ -291,16 +318,16 @@ class SearchPanel(QWidget):
         self.search_btn.setAccessibleDescription("Execute semantic search for Bible verses")
         self.search_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(34, 211, 238, 0.15);
-                color: {CYAN_400};
-                border: 1px solid rgba(34, 211, 238, 0.3);
+                background: {ACCENT_SOFT};
+                color: {ACCENT};
+                border: 1px solid {ACCENT_BORDER};
                 border-radius: 6px;
                 padding: 8px 16px;
                 font-size: 11px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
-                background: rgba(34, 211, 238, 0.25);
+                background: {SELECTION_BG};
             }}
         """)
         self.search_btn.setFixedWidth(70)
@@ -340,6 +367,8 @@ class SearchPanel(QWidget):
 
         # ── Results list ──
         self.results_list = _SearchResultsList()
+        self.results_list.itemSelectionChanged.connect(
+            self._sync_row_selection)
         self.results_list.setAccessibleName("Fuzzy search results")
         self.results_list.setAccessibleDescription("List of Bible verse search results ordered by relevance")
         self.results_list.setSpacing(2)
@@ -350,7 +379,7 @@ class SearchPanel(QWidget):
                 padding: 0;
             }}
             QListWidget::item:focus {{
-                outline: 2px solid {CYAN_400};
+                outline: 2px solid {ACCENT};
                 outline-offset: -2px;
             }}
             QScrollBar:vertical {{
@@ -369,6 +398,17 @@ class SearchPanel(QWidget):
         """)
         layout.addWidget(self.results_list, 1)
 
+        # ── Session-only search history (Up/Down recall) ──
+        # Qualifying a query: 2s idle, or the operator clicks a hit /
+        # scrolls the results.
+        from core.constants import SEARCH_HISTORY_IDLE_MS, SEARCH_HISTORY_MAX_ENTRIES
+        from ui.widgets.search_history import SearchHistory
+        self._search_history = SearchHistory(
+            self.query_input, idle_ms=SEARCH_HISTORY_IDLE_MS,
+            max_entries=SEARCH_HISTORY_MAX_ENTRIES)
+        self._search_history.bind_scroll(
+            self.results_list.verticalScrollBar())
+
         # ── Status / latency label ──
         self.status_label = QLabel("")
         self.status_label.setAccessibleName("Search status")
@@ -381,6 +421,12 @@ class SearchPanel(QWidget):
         self.verse_to_live.connect(self._on_result_chosen)
         self.trans_badge_to_navigator.connect(self._on_result_chosen)
         self.trans_badge_to_live.connect(self._on_result_chosen)
+        # Popularity: weighted pick logging (private, debug-logged).
+        self.verse_to_navigator.connect(self._on_pop_navigate)
+        self.trans_badge_to_navigator.connect(self._on_pop_navigate)
+        self.verse_to_schedule.connect(self._on_pop_schedule)
+        self.verse_to_live.connect(self._on_pop_live)
+        self.trans_badge_to_live.connect(self._on_pop_live)
 
     def _switch_tab(self, tab: str):
         """Switch between All / Verses / Topics views."""
@@ -458,6 +504,14 @@ class SearchPanel(QWidget):
             self.status_label.setText(f"Error loading indexes: {e}")
             return False
 
+    def _sync_row_selection(self):
+        """Mirror QListWidget selection onto row widgets (theme highlight)."""
+        for i in range(self.results_list.count()):
+            item = self.results_list.item(i)
+            widget = self.results_list.itemWidget(item)
+            if isinstance(widget, SearchResultWidget):
+                widget.set_selected(item.isSelected())
+
     def _on_search(self):
         query = self.query_input.text().strip()
         if not query or self._searching:
@@ -470,7 +524,11 @@ class SearchPanel(QWidget):
         self.query_input.setEnabled(False)
         self.status_label.setText("Searching...")
         self.results_list.clear()
+        # Rendering scrolls the list on its own; re-arm so only the
+        # operator's own scrolling counts as qualifying the query.
+        self._search_history.arm_scroll()
         QApplication.processEvents()
+        self._last_query = query
 
         try:
             if not self._ensure_indexes_loaded():
@@ -484,6 +542,11 @@ class SearchPanel(QWidget):
             fused = rrf_fuse(bm25_res, faiss_res, word_count=len(query.split()))
             topical_res = topical_search(query, top_k=3)
             latency_ms = (time.perf_counter() - t0) * 1000
+
+            # Operator learning: previously picked verses for similar
+            # prompts ride near the top (weight, not verdict).
+            from core.bible_service import apply_popularity, popularity_boosts
+            fused = apply_popularity(fused, popularity_boosts(query))
 
             logger.info("Search '%s': bm25=%d, faiss=%d, fused=%d, topical=%d (%.0fms)",
                         query, len(bm25_res), len(faiss_res), len(fused),
@@ -557,8 +620,33 @@ class SearchPanel(QWidget):
         """Record which search result the operator picked."""
         if not isinstance(data, dict):
             return
+        # Clicking a hit qualifies the query outright (no idle wait).
+        self._search_history.note_used()
         from core.database import mark_search_chosen
         mark_search_chosen(self._last_search_row, self._verse_ref(data))
+
+    def _log_pick(self, data: dict, points: float, action: str):
+        """Popularity pick (private): prompt + verse + action weight."""
+        if not isinstance(data, dict) or not self._last_query:
+            return
+        from core.database import log_verse_pick
+        log_verse_pick(self._last_query, data.get("book"),
+                       data.get("chapter"),
+                       data.get("verse_num", data.get("verse")), points)
+        logger.debug("Popularity %s: %r -> %s", action, self._last_query,
+                     self._verse_ref(data))
+
+    def _on_pop_navigate(self, data: dict):
+        from core.constants import POPULARITY_POINTS_NAVIGATE
+        self._log_pick(data, POPULARITY_POINTS_NAVIGATE, "navigate")
+
+    def _on_pop_schedule(self, data: dict):
+        from core.constants import POPULARITY_POINTS_SCHEDULE
+        self._log_pick(data, POPULARITY_POINTS_SCHEDULE, "schedule")
+
+    def _on_pop_live(self, data: dict):
+        from core.constants import POPULARITY_POINTS_LIVE
+        self._log_pick(data, POPULARITY_POINTS_LIVE, "live")
 
     def _on_live_requested(self, data: dict):
         """Double-click on result row → send to live in current browser translation."""
@@ -573,6 +661,6 @@ class SearchPanel(QWidget):
         self.trans_badge_to_live.emit(data)
 
     def focus_query(self):
-        """Programmatically focus the query input (for Ctrl+Shift+S)."""
+        """Programmatically focus the query input (for Ctrl+Shift+S).
+        Contents are selected by the app-wide focus watcher."""
         self.query_input.setFocus()
-        self.query_input.selectAll()

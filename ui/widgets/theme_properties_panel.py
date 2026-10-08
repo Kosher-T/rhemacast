@@ -18,6 +18,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from ui.styles import SLATE_500, SLATE_400, WHITE, BLUE_500
+from ui.styles import (
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, ACCENT, SELECTION_BG, SELECTION_BORDER,
+    SLATE_600, TEXT_SELECTION,
+)
 
 
 # ─── Shared Styles ────────────────────────────────────────────────────────────
@@ -27,14 +31,14 @@ _INPUT_STYLE = (
     "border: 1px solid rgba(255,255,255,0.08);"
     "border-radius: 4px;"
     "padding: 2px 6px;"
-    "color: #f8fafc;"
+    "color: " + TEXT_PRIMARY + ";"
     "font-size: 10px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #64748b;"
+    "color: " + TEXT_FAINT + ";"
     "font-size: 10px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
@@ -46,7 +50,7 @@ _COMBO_STYLE = (
     "  border: 1px solid rgba(255,255,255,0.08);"
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 10px;"
     "}"
     "QComboBox::drop-down {"
@@ -54,10 +58,10 @@ _COMBO_STYLE = (
     "  width: 14px;"
     "}"
     "QComboBox QAbstractItemView {"
-    "  background: #1e293b;"
-    "  color: #f8fafc;"
+    "  background: " + BG_RAISED + ";"
+    "  color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255,255,255,0.08);"
-    "  selection-background-color: rgba(59,130,246,0.3);"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "}"
 )
 
@@ -296,7 +300,7 @@ class SectionLabel(QLabel):
         self.setStyleSheet(
             "background: transparent;"
             "border: none;"
-            "color: #475569;"
+            "color: " + SLATE_600 + ";"
             "font-size: 9px;"
             "font-weight: 700;"
             "text-transform: uppercase;"
@@ -337,7 +341,7 @@ class ElementToggle(QFrame):
         self._label.setStyleSheet(
             "background: transparent;"
             "border: none;"
-            "color: #94a3b8;"
+            "color: " + TEXT_MUTED + ";"
             "font-size: 10px;"
             "font-weight: 600;"
         )
@@ -360,7 +364,7 @@ class ElementToggle(QFrame):
         if checked:
             return (
                 "QPushButton {"
-                "  background: #3b82f6;"
+                "  background: " + ACCENT + ";"
                 "  border: none;"
                 "  border-radius: 9px;"
                 "}"
@@ -384,7 +388,7 @@ class ElementToggle(QFrame):
                 "QPushButton::indicator {"
                 "  width: 14px; height: 14px;"
                 "  border-radius: 7px;"
-                "  background: #64748b;"
+                "  background: " + TEXT_FAINT + ";"
                 "  margin: 2px;"
                 "}"
                 "QPushButton:checked::indicator {"
@@ -401,15 +405,15 @@ class ElementToggle(QFrame):
         if self._focused:
             self.setStyleSheet(
                 "QFrame {"
-                "  background: rgba(59,130,246,0.12);"
-                "  border-left: 2px solid #3b82f6;"
+                "  background: " + SELECTION_BG + ";"
+                "  border-left: 2px solid " + SELECTION_BORDER + ";"
                 "  border-radius: 0;"
                 "}"
             )
             self._label.setStyleSheet(
                 "background: transparent;"
                 "border: none;"
-                "color: #f8fafc;"
+                "color: " + TEXT_PRIMARY + ";"
                 "font-size: 10px;"
                 "font-weight: 600;"
             )
@@ -425,7 +429,7 @@ class ElementToggle(QFrame):
                 self._label.setStyleSheet(
                     "background: transparent;"
                     "border: none;"
-                    "color: #94a3b8;"
+                    "color: " + TEXT_MUTED + ";"
                     "font-size: 10px;"
                     "font-weight: 600;"
                 )
@@ -433,7 +437,7 @@ class ElementToggle(QFrame):
                 self._label.setStyleSheet(
                     "background: transparent;"
                     "border: none;"
-                    "color: #475569;"
+                    "color: " + SLATE_600 + ";"
                     "font-size: 10px;"
                     "font-weight: 600;"
                 )
@@ -570,8 +574,8 @@ class ThemePropertiesPanel(QWidget):
         if active:
             return (
                 "QPushButton {"
-                "  background: rgba(59,130,246,0.2);"
-                "  color: #60a5fa;"
+                "  background: " + SELECTION_BG + ";"
+                "  color: " + ACCENT + ";"
                 "  border: none;"
                 "  border-radius: 4px;"
                 "  font-size: 10px;"
@@ -582,14 +586,14 @@ class ThemePropertiesPanel(QWidget):
         return (
             "QPushButton {"
             "  background: transparent;"
-            "  color: #64748b;"
+                "  color: " + TEXT_FAINT + ";"
             "  border: none;"
             "  border-radius: 4px;"
             "  font-size: 10px;"
             "  font-weight: 700;"
             "  padding: 0 12px;"
             "}"
-            "QPushButton:hover { color: #94a3b8; }"
+            "QPushButton:hover { color: " + TEXT_MUTED + "; }"
         )
 
     def _switch_tab(self, tab: str):

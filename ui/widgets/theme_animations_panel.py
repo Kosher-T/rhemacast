@@ -14,6 +14,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QLinearGradient
 
 from ui.styles import SLATE_500, SLATE_400, WHITE, BLUE_500
+from ui.styles import (
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, ACCENT, ACCENT_SOFT, SELECTION_BG,
+    SLATE_600, TEXT_SELECTION,
+)
 
 
 # ─── Shared Styles ──────────────────────────────────────────────────────────
@@ -24,7 +28,7 @@ _COMBO_STYLE = (
     "  border: 1px solid rgba(255,255,255,0.08);"
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 10px;"
     "  min-height: 20px;"
     "}"
@@ -33,10 +37,10 @@ _COMBO_STYLE = (
     "  width: 14px;"
     "}"
     "QComboBox QAbstractItemView {"
-    "  background: #1e293b;"
-    "  color: #f8fafc;"
+    "  background: " + BG_RAISED + ";"
+    "  color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255,255,255,0.08);"
-    "  selection-background-color: rgba(59,130,246,0.3);"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "}"
 )
 
@@ -45,14 +49,14 @@ _INPUT_STYLE = (
     "border: 1px solid rgba(255,255,255,0.08);"
     "border-radius: 4px;"
     "padding: 2px 6px;"
-    "color: #f8fafc;"
+    "color: " + TEXT_PRIMARY + ";"
     "font-size: 10px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #64748b;"
+    "color: " + TEXT_FAINT + ";"
     "font-size: 10px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
@@ -61,7 +65,7 @@ _LABEL_STYLE = (
 _SECTION_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #475569;"
+    "color: " + SLATE_600 + ";"
     "font-size: 9px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
@@ -104,10 +108,10 @@ class TimelineWidget(QWidget):
         # Track line (4px height, centered)
         track_y = h // 2 - 2
         gradient = QLinearGradient(12, 0, w - 12, 0)
-        gradient.setColorAt(0, QColor(59, 130, 246, 0))  # start transparent
-        gradient.setColorAt(0.15, QColor(59, 130, 246, 76))  # 30% opacity
-        gradient.setColorAt(0.85, QColor(59, 130, 246, 76))
-        gradient.setColorAt(1, QColor(59, 130, 246, 0))  # end transparent
+        gradient.setColorAt(0, QColor(168, 85, 247, 0))  # start transparent
+        gradient.setColorAt(0.15, QColor(168, 85, 247, 76))  # 30% opacity
+        gradient.setColorAt(0.85, QColor(168, 85, 247, 76))
+        gradient.setColorAt(1, QColor(168, 85, 247, 0))  # end transparent
         painter.setBrush(gradient)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(12, track_y, w - 24, 4, 2, 2)
@@ -119,7 +123,7 @@ class TimelineWidget(QWidget):
             cy = h // 2
 
             # Outer ring
-            painter.setBrush(QColor(59, 130, 246, 255))  # blue
+            painter.setBrush(QColor(SELECTION_BORDER))  # accent
             painter.setPen(QPen(QColor(255, 255, 255, 51), 2))  # 2px border
             painter.drawEllipse(cx - 5, cy - 5, 10, 10)
 
@@ -146,7 +150,7 @@ class ToggleSwitch(QPushButton):
         if on:
             return (
                 "QPushButton {"
-                "  background: #22d3ee;"
+                "  background: " + ACCENT + ";"
                 "  border: none;"
                 "  border-radius: 8px;"
                 "}"
@@ -163,14 +167,14 @@ class ToggleSwitch(QPushButton):
         else:
             return (
                 "QPushButton {"
-                "  background: #475569;"
+                "  background: " + SLATE_600 + ";"
                 "  border: none;"
                 "  border-radius: 8px;"
                 "}"
                 "QPushButton::indicator {"
                 "  width: 12px; height: 12px;"
                 "  border-radius: 6px;"
-                "  background: #94a3b8;"
+                "  background: " + TEXT_MUTED + ";"
                 "  margin: 2px;"
                 "}"
                 "QPushButton:checked::indicator {"
@@ -189,10 +193,10 @@ class ToggleSwitch(QPushButton):
 # ─── Badge Label ────────────────────────────────────────────────────────────
 
 class BadgeLabel(QLabel):
-    """Small colored badge: cyan for "In", amber for "Cycle", red for "Out"."""
+    """Small colored badge: accent for "In", amber for "Cycle", red for "Out"."""
 
     _COLORS = {
-        "In": ("#22d3ee", "rgba(34,211,238,0.15)"),
+        "In": (ACCENT, ACCENT_SOFT),
         "Cycle": ("#f59e0b", "rgba(245,158,11,0.15)"),
         "Out": ("#ef4444", "rgba(239,68,68,0.15)"),
     }
@@ -253,7 +257,7 @@ class AnimationCard(QFrame):
         title_lbl.setStyleSheet(
             "background: transparent;"
             "border: none;"
-            "color: #f8fafc;"
+            "color: " + TEXT_PRIMARY + ";"
             "font-size: 11px;"
             "font-weight: 700;"
         )
@@ -383,7 +387,7 @@ class BetweenSlidesCard(QFrame):
         title_lbl.setStyleSheet(
             "background: transparent;"
             "border: none;"
-            "color: #f8fafc;"
+            "color: " + TEXT_PRIMARY + ";"
             "font-size: 11px;"
             "font-weight: 700;"
         )
@@ -586,7 +590,7 @@ class EasingReference(QWidget):
             name_lbl.setStyleSheet(
                 "background: transparent;"
                 "border: none;"
-                "color: #60a5fa;"
+                "color: " + ACCENT + ";"
                 "font-size: 10px;"
                 "font-weight: 600;"
                 "font-family: 'Courier New', monospace;"
@@ -597,8 +601,8 @@ class EasingReference(QWidget):
             dot = QLabel()
             dot.setFixedSize(8, 8)
             dot.setStyleSheet(
-                "background: rgba(59,130,246,0.3);"
-                "border: 1px solid rgba(59,130,246,0.5);"
+                "background: " + SELECTION_BG + ";"
+                "border: 1px solid " + SELECTION_BORDER + ";"
                 "border-radius: 4px;"
             )
             row.addWidget(dot)
@@ -608,7 +612,7 @@ class EasingReference(QWidget):
             desc_lbl.setStyleSheet(
                 "background: transparent;"
                 "border: none;"
-                "color: #64748b;"
+                "color: " + TEXT_FAINT + ";"
                 "font-size: 10px;"
             )
             row.addWidget(desc_lbl, 1)

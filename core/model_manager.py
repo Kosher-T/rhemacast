@@ -179,7 +179,7 @@ class ModelManager:
             self.faiss_index = faiss.read_index(faiss_path)
 
             # Load FAISS-specific verse lookup (required — FAISS translations
-            # differ from the FTS BM25 set, so the FTS lookup cannot map them)
+            # differ from the FTS translation set, so FTS cannot map them)
             if os.path.exists(faiss_lookup_path):
                 with open(faiss_lookup_path, "rb") as f:
                     self.faiss_verse_lookup = pickle.load(f)

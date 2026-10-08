@@ -4,11 +4,13 @@ core/slide_service.py
 CRUD + FTS for slide_decks (songs / freeform slides).
 
 Storage: data/slides/*.txt  (convention, not enforced)
-DB: app.db  slide_decks + slides_fts (porter stemming)
+DB: app.db  slide_decks + slides_fts (porter stemming) + slides_fts_prefix
+    (unstemmed, for prefix-stable search)
 Parser: core.slide_parser
 """
 
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -16,6 +18,8 @@ from typing import Optional
 
 from core.database import DB_PATH, get_connection, init_db
 from core.slide_parser import parse_slide_txt, parse_deck_format, strip_inline_markup, split_multisong, deck_to_txt
+
+logger = logging.getLogger(__name__)
 
 _SLIDES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "slides")
 
@@ -46,36 +50,41 @@ def section_run_starts(slides: list[dict]) -> list[int]:
 
 
 def _fts_sync_deck(conn: sqlite3.Connection, deck_id: int, title: str, slides: list[dict], tags: str | None):
-    """Upsert FTS row for deck_id. Caller must commit. Works for content='' FTS."""
+    """Upsert FTS rows for deck_id (both stemmed + prefix tables). Caller must commit."""
     slide_text = _slides_to_fts_text(slides)
-    # For content='' FTS, delete via rowid, then insert. Both forms work; prefer explicit DELETE.
-    try:
-        conn.execute("DELETE FROM slides_fts WHERE rowid = ?", (deck_id,))
-    except Exception:
+    tags = tags or ""
+    for table in ("slides_fts", "slides_fts_prefix"):
+        # For content='' FTS, delete via rowid, then insert.
         try:
-            conn.execute(
-                "INSERT INTO slides_fts(slides_fts, rowid, title, slide_text, tags) VALUES('delete', ?, ?, ?, ?)",
-                (deck_id, title, "", tags or ""),
-            )
+            conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (deck_id,))
         except Exception:
-            pass
-    conn.execute(
-        "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
-        (deck_id, title, slide_text, tags or ""),
-    )
+            try:
+                conn.execute(
+                    f"INSERT INTO {table}({table}, rowid, title, slide_text, tags)"
+                    " VALUES('delete', ?, ?, ?, ?)",
+                    (deck_id, title, "", tags),
+                )
+            except Exception:
+                pass
+        conn.execute(
+            f"INSERT INTO {table}(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
+            (deck_id, title, slide_text, tags),
+        )
 
 
 def _fts_delete_deck(conn: sqlite3.Connection, deck_id: int, title: str = "", tags: str | None = ""):
-    try:
-        conn.execute("DELETE FROM slides_fts WHERE rowid = ?", (deck_id,))
-    except Exception:
+    for table in ("slides_fts", "slides_fts_prefix"):
         try:
-            conn.execute(
-                "INSERT INTO slides_fts(slides_fts, rowid, title, slide_text, tags) VALUES('delete', ?, ?, ?, ?)",
-                (deck_id, title, "", tags or ""),
-            )
+            conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (deck_id,))
         except Exception:
-            pass
+            try:
+                conn.execute(
+                    f"INSERT INTO {table}({table}, rowid, title, slide_text, tags)"
+                    " VALUES('delete', ?, ?, ?, ?)",
+                    (deck_id, title, "", tags or ""),
+                )
+            except Exception:
+                pass
 
 
 # ── CRUD ────────────────────────────────────────────────────────────────────
@@ -149,13 +158,7 @@ def create_deck_from_slides(
             (title, author, year, ccli, tags, source_path, raw_text, slides_json, now, now),
         )
         deck_id = cur.lastrowid
-        try:
-            conn.execute(
-                "INSERT INTO slides_fts(rowid, title, slide_text, tags) VALUES (?, ?, ?, ?)",
-                (deck_id, title, _slides_to_fts_text(slides), tags or ""),
-            )
-        except Exception:
-            _fts_sync_deck(conn, deck_id, title, slides, tags)
+        _fts_sync_deck(conn, deck_id, title, slides, tags)
         was_created = True
 
     conn.commit()
@@ -472,69 +475,84 @@ def reparse_all() -> int:
 
 def search_decks(query: str, limit: int = 20) -> list[dict]:
     """
-    FTS5 search over title/slide_text/tags with porter stemming.
-    Ranking: FTS rank (title implicitly boosted via separate column) + fallback ordering.
-    Returns decks ordered by relevance; each deck includes 'rank' if available.
+    Prefix-stable deck search with vernacular folding.
+
+    All query words but the last are exact (porter-stemmed) AND terms;
+    the last word is a PREFIX on the unstemmed index — so each keystroke
+    narrows (filters) instead of reshuffling, and partial stems never
+    go empty mid-word. A trailing space starts no new word (pure filter:
+    identical results). To broaden, delete back to the stem ("worship"
+    covers the whole worship family). Diacritics fold both sides via
+    unicode61 remove_diacritics (Yorùbá ↔ yoruba).
+    Ranking: bm25 title 3.0 / slide_text 1.0 / tags 0.5 for multi-word
+    queries; title-startswith first, then recency, for single-prefix
+    queries. Returns decks ordered by relevance.
 
     Relevance intent: title match > slide_text match > tags match.
-    Achieved by querying with column filter when query hits title, else default FTS rank
-    already favors rarer terms. For explicit boost we use bm25() weighting if available.
     """
-    if not query or not query.strip():
+    from core.text_utils import split_search_words, fold_diacritics
+    words = split_search_words(query)
+    if not words:
         return []
 
     init_db()
     conn = get_connection()
 
-    # Use FTS5 query as-is (porter handles stemming). Escape double quotes.
-    q = query.strip().replace('"', '""')
-
-    # Try bm25-weighted ranking with column weights: title 3.0, slide_text 1.0, tags 0.5
-    # FTS5 bm25(table, weight, weight, ...) — available in SQLite >=3.38
+    complete, last = words[:-1], words[-1]
+    prefix_q = "{title slide_text tags} : " + last + "*"
+    results = []
     try:
-        # Weight order matches CREATE VIRTUAL TABLE column order: title, slide_text, tags
-        rows = conn.execute(
-            """
-            SELECT d.*, rank
-            FROM slide_decks d
-            JOIN (
-                SELECT rowid, rank
-                FROM slides_fts
-                WHERE slides_fts MATCH ?
-                ORDER BY bm25(slides_fts, 3.0, 1.0, 0.5)
-                LIMIT ?
-            ) f ON f.rowid = d.id
-            ORDER BY f.rank
-            """,
-            (q, limit),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        # Fallback: plain rank
-        try:
+        if complete:
+            # Multi-word: porter candidates ranked by bm25, intersected
+            # with the prefix set (same rowids, both tables share ids).
+            porter_q = " ".join(f'"{w}"' for w in complete)
             rows = conn.execute(
                 """
                 SELECT d.*, f.rank as rank
                 FROM slide_decks d
                 JOIN (
-                    SELECT rowid, rank
+                    SELECT rowid, bm25(slides_fts, 3.0, 1.0, 0.5) AS rank
                     FROM slides_fts
                     WHERE slides_fts MATCH ?
                     ORDER BY rank
+                ) f ON f.rowid = d.id
+                WHERE EXISTS (
+                    SELECT 1 FROM slides_fts_prefix p
+                    WHERE p.rowid = d.id AND slides_fts_prefix MATCH ?
+                )
+                ORDER BY f.rank
+                """,
+                (porter_q, prefix_q),
+            ).fetchall()
+        else:
+            # Single prefix: filter-like; title-startswith first.
+            rows = conn.execute(
+                """
+                SELECT d.* FROM slide_decks d
+                JOIN (
+                    SELECT rowid FROM slides_fts_prefix
+                    WHERE slides_fts_prefix MATCH ?
                     LIMIT ?
                 ) f ON f.rowid = d.id
                 """,
-                (q, limit),
+                (prefix_q, limit),
             ).fetchall()
-        except sqlite3.OperationalError:
-            # FTS table missing or query syntax error — return empty
-            conn.close()
-            return []
+            # Stable sorts: recency first, then title-startswith grouping.
+            rows = sorted(rows, key=lambda r: r["updated_at"] or "",
+                          reverse=True)
+            rows.sort(key=lambda r: (
+                0 if fold_diacritics(r["title"] or "").lower().startswith(last)
+                else 1))
+    except sqlite3.OperationalError as e:
+        # FTS tables missing or query syntax error — return empty.
+        # Logged loud: this mask once hid a real MATCH bug as "no hits".
+        logger.warning("search_decks query failed for %r: %s", query, e)
+        conn.close()
+        return []
 
     conn.close()
-    results = []
-    for r in rows:
+    for r in rows[:limit]:
         d = _row_to_deck(r)
-        # sqlite returns rank negative for bm25; keep as is for sorting but expose
         try:
             d["rank"] = r["rank"]
         except Exception:

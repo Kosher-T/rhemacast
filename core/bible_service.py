@@ -8,11 +8,11 @@ Queries bible.db (SQLite) for chapter/verse lookups and natural language search.
 import csv
 import os
 import pickle
+import re
 import shutil
 import sqlite3
 import logging
 import sys
-import concurrent.futures
 import numpy as np
 from typing import List, Dict, Optional
 
@@ -31,8 +31,105 @@ _JSON_DIR = os.path.join(_PROJECT_ROOT, "data", "bible", "json")
 # Default translations (fallback if bible.db query fails)
 _DEFAULT_TRANSLATIONS = ["AMP", "ESV", "KJV", "NIV", "NKJV", "NLT"]
 
+# Compact per-version search structures: inverted postings as numpy
+# arrays (indices int32 + freqs uint16) plus BM25 globals. Built once
+# from the pickled index, then the heavyweight object is dropped
+# (~3MB/version live instead of ~10x that). Scoring is pure numpy
+# (GIL-free), so all translations score truly in parallel.
+_postings_cache: Dict[str, dict] = {}
+_ref_index_cache: Dict[str, dict] = {}
+
 # Lazy-loaded per-version BM25 caches: {version: (bm25_index, verse_lookup)}
 _bm25_cache: Dict[str, tuple] = {}
+
+
+
+
+def _book_index(version: str) -> dict:
+    """Normalized book names: full name → (number_or_None, alpha_name).
+
+    Keys are lowercase alphanumeric ("1 samuel", "psalms"). Cached.
+    """
+    import re as _re
+    cache = _book_index_cache.get(version.upper())
+    if cache is not None:
+        return cache
+    try:
+        conn = _get_connection()
+        names = [r[0] for r in conn.execute(
+            "SELECT DISTINCT book FROM verses WHERE version = ?",
+            (version.upper(),)).fetchall()]
+        conn.close()
+    except Exception:
+        names = []
+    index = {}
+    for name in names:
+        norm = _re.sub(r"[^a-z0-9 ]", "", (name or "").lower())
+        norm = " ".join(norm.split())
+        if not norm:
+            continue
+        parts = norm.split(" ", 1)
+        if parts[0] in ("1", "2", "3", "i", "ii", "iii", "1st", "2nd",
+                        "3rd", "first", "second", "third") and len(parts) > 1:
+            num = {"1": "1", "i": "1", "1st": "1", "first": "1",
+                   "2": "2", "ii": "2", "2nd": "2", "second": "2",
+                   "3": "3", "iii": "3", "3rd": "3", "third": "3"}[parts[0]]
+            index[norm] = (num, parts[1])
+        else:
+            index[norm] = (None, norm)
+    _book_index_cache[version.upper()] = index
+    return index
+
+
+
+
+def _ref_index(version: str) -> Optional[dict]:
+    """(book, chapter, verse_num) → corpus idx for FTS rowid mapping."""
+    version = version.upper()
+    if version in _ref_index_cache:
+        return _ref_index_cache[version]
+    bm25, verse_lookup = _load_bm25_index(version)
+    if not verse_lookup:
+        return None
+    mapping = {}
+    for idx, entry in enumerate(verse_lookup):
+        try:
+            _ver, book, chapter, verse_num, _text = entry
+            mapping[(book, chapter, verse_num)] = idx
+        except (TypeError, ValueError):
+            continue
+    _ref_index_cache[version] = mapping
+    return mapping
+
+
+def _score_postings(compact: dict, tokens: list) -> tuple:
+    """Exact BM25Okapi scores + per-doc matched-term counts.
+
+    Same formula and accumulation order as BM25Okapi.get_scores —
+    bit-comparable outputs — but vectorized per term over postings
+    (numpy, GIL-free) instead of a Python loop over the corpus.
+    Returns (scores float64[N], hits int32[N]).
+    """
+    n = compact["corpus_size"]
+    scores = np.zeros(n, dtype=np.float64)
+    hits = np.zeros(n, dtype=np.int32)
+    k1, b, avgdl = compact["k1"], compact["b"], compact["avgdl"]
+    doc_len = compact["doc_len"]
+    postings = compact["postings"]
+    idf = compact["idf"]
+    for q in tokens:
+        slot = postings.get(q)
+        if slot is None:
+            continue
+        term_idf = idf.get(q) or 0
+        if not term_idf:
+            continue
+        idx, freq = slot
+        freq = freq.astype(np.float64)
+        denom = freq + k1 * (1.0 - b + b * doc_len[idx] / avgdl)
+        scores[idx] += term_idf * (freq * (k1 + 1.0) / denom)
+        hits[idx] += 1
+    return scores, hits
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -236,16 +333,18 @@ def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> Lis
     Simple FTS5 search on verse text within a specific translation.
     Falls back to LIKE query if FTS is not available.
     """
-    if not query.strip():
+    from core.text_utils import split_search_words
+    words = split_search_words(query)
+    if not words:
         return []
 
     try:
         conn = _get_connection()
-        
-        # Use raw query for FTS5 - let it handle stopwords naturally
-        # Phrase matching breaks with stopwords since they're removed during indexing
-        fts_query = query.strip()
-        
+
+        # Sanitized AND (never raw user text: FTS syntax errors used to
+        # collapse into a full-table LIKE scan per keystroke).
+        fts_query = " ".join(f'"{w}"' for w in words)
+
         # Try FTS5 first (verses_fts table exists in bible.db)
         try:
             cursor = conn.execute(
@@ -267,12 +366,14 @@ def search_verses_text(query: str, version: str = "KJV", limit: int = 20) -> Lis
         except sqlite3.OperationalError:
             pass
         
-        # Fallback: LIKE query
+        # Fallback: LIKE query over the sanitized words (raw user text
+        # could smuggle %/_ wildcards).
+        like_q = f"%{' '.join(words)}%"
         cursor = conn.execute(
             "SELECT book, chapter, verse_num, text FROM verses "
             "WHERE version = ? AND text LIKE ? "
             "LIMIT ?",
-            (version.upper(), f"%{query}%", limit)
+            (version.upper(), like_q, limit)
         )
         results = [
             {"chapter": row["chapter"], "verse": row["verse_num"],
@@ -340,54 +441,710 @@ def bm25_search(query: str, version: str = "KJV", limit: int = 20) -> List[Dict]
     return results
 
 
-def hybrid_search(query: str, version: str = "KJV", limit: int = 20) -> List[Dict]:
-    """Run FTS5 and BM25 in parallel, fuse with RRF.
+def _variant_forms(word: str) -> list:
+    """British/American spelling counterparts (KJV uses -our/-ise/-re).
 
-    Returns fused results sorted by confidence, limited to *limit*.
+    Rule-based and deliberately generous — over-generation only adds
+    recall alternatives (bounded per group), never removes. Each
+    alternative is stemmed by callers before use.
     """
-    if not query.strip():
+    out = []
+    seen = {word}
+    pairs = (("or", "our"), ("ize", "ise"), ("er", "re"))
+    for a, b in pairs:
+        if word.endswith(a) and len(word) > len(a) + 1:
+            cand = word[: -len(a)] + b
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+        if word.endswith(b) and len(word) > len(b) + 1:
+            cand = word[: -len(b)] + a
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out[:2]
+
+
+def _prefilter_groups(query: str) -> List[str]:
+    """MATCH-ready groups: each content word as a stemmed prefix, paired
+    with its raw surface form and British/American spelling variants:
+    `(stem* OR var1* OR "raw")` when they differ, so accented text
+    matches either spelling and inflections match their family on the
+    unstemmed index. FTS syntax is neutralized by construction (stems
+    are alnum; raw forms are double-quoted)."""
+    import re as _re
+    from core.text_utils import split_search_words, fold_diacritics, STEMMER
+    groups: List[str] = []
+    seen = set()
+
+    def _stem_term(surface: str):
+        term = f"{STEMMER.stemWord(surface)}*"
+        if term not in seen:
+            seen.add(term)
+            return term
+        return None
+
+    for tok in (query or "").split():
+        parts = split_search_words(tok)
+        raw = tok.replace('"', '""').strip()
+        raw_group = None
+        if raw and _re.search(r"\w", raw, _re.UNICODE) \
+                and raw.lower() != fold_diacritics(tok).lower() \
+                and raw not in seen:
+            raw_group = f'"{raw}"'
+            seen.add(raw)
+        members = []
+        stems_here = []
+        for w in parts:
+            stem = STEMMER.stemWord(w)
+            stems_here.append(stem)
+            term = _stem_term(w)
+            if term is not None:
+                members.append(term)
+        # Variants from stems too ("colors"→"color"→"colour").
+        for stem in stems_here:
+            for variant in _variant_forms(stem):
+                vterm = _stem_term(variant)
+                if vterm is not None:
+                    members.append(vterm)
+        if raw_group is not None:
+            members.append(raw_group)
+        if not members:
+            continue
+        groups.append(members[0] if len(members) == 1
+                      else f"({' OR '.join(members)})")
+        if len(groups) >= 32:
+            break
+    return groups
+
+
+def _group_stem(group: str) -> str:
+    """Bare stem of a prefilter group (for stopword checks)."""
+    return group.lstrip("(").split("*")[0].split()[0].strip('"').lower()
+
+
+def _fts_candidate_ids(query: str, version: str, limit: int,
+                       match_all: bool = False) -> tuple[List[int], set]:
+    """FTS5 recall prefilter: (verse rowids rank-first, relaxed rowids).
+
+    AND-first, OR-top-up: the AND of the terms is fast and already
+    contains the best hits; only a thin AND set pays for per-term
+    top-ups (same terms ORed would bury single-term hits past the cap).
+    Terms with zero hits anywhere get progressively relaxed prefixes
+    (word[:-1]*, word[:-2]* while len ≥ 2) so typos still seed the pool;
+    relaxed hits are reported separately — the rerank gates its rescue
+    lane on that provenance, never on raw scores alone.
+    Bare stopwords are skipped (they match everything and rank nothing
+    — BM25 strips them too, so recall is unaffected); quoted raw
+    alternatives always stay (accented recall). match_all (AND) is the
+    stopword-only fallback (no top-up: ORing stopwords is pure noise).
+    """
+    from core.text_utils import STOP_WORDS
+    groups = _prefilter_groups(query)
+    if not groups:
+        return [], set()
+    if not match_all:
+        # Drop bare stopword groups (they match everything and rank
+        # nothing — BM25 strips them too, so recall is unaffected).
+        # Quoted raw alternatives always stay (accented recall).
+        kept = [g for g in groups if _group_stem(g) not in STOP_WORDS
+                or g.startswith("(")]
+        groups = kept or groups
+    and_q = " ".join(groups)
+    if match_all:
+        # Degenerate query: arbitrary slice, no rank sort (sorting tens
+        # of thousands of stopword matches is pure cost; nothing here
+        # can be meaningfully ordered without scoring tokens anyway).
+        return _fts_match_ids(and_q, version, 100, order=False), set()
+    ids = _fts_match_ids(and_q, version, limit)
+    relaxed: set = set()
+    seen = set(ids)
+    if len(groups) == 1:
+        # Single word: the AND already exhausted the exact form, so only
+        # relaxation can add anything (the typo-rescue case).
+        if not ids and not groups[0].startswith("("):
+            stem = _group_stem(groups[0])
+            if len(stem) >= 3:
+                cut = stem[:-1]
+                while len(cut) >= 2:
+                    hits = _fts_match_ids(cut + "*", version, 100)
+                    if hits:
+                        for rid in hits:
+                            if rid not in seen:
+                                seen.add(rid)
+                                ids.append(rid)
+                                relaxed.add(rid)
+                        break
+                    cut = cut[:-1]
+        return ids, relaxed
+    # Per-term top-up (not one OR sweep): each query word contributes
+    # its own best hits, so verses matching only ONE word — the
+    # indirect case BM25 is loved for — still surface. An OR sweep
+    # would bury them past the cap under multi-match verses.
+    # Short stems (< 3 chars) sit out: ubiquitous, expensive to rank,
+    # and noise as single-term recall (they stay in the AND above).
+    topup = [g for g in groups if len(_group_stem(g)) >= 3]
+    per_term = max(50, (limit - len(ids)) // max(1, len(topup)) + 1)
+    for group in topup:
+        if len(ids) >= limit:
+            break
+        hits = _fts_match_ids(group, version, per_term)
+        is_relaxed = False
+        if not hits and not group.startswith("("):
+            # Zero-hit bare stem (typo or rare form): progressively
+            # relax trailing chars until something matches. Only ids
+            # arriving via THIS path join the rescue set below.
+            cut = _group_stem(group)[:-1]
+            while not hits and len(cut) >= 2:
+                hits = _fts_match_ids(cut + "*", version, per_term)
+                if hits:
+                    is_relaxed = True
+                cut = cut[:-1]
+        for rid in hits:
+            if rid not in seen:
+                seen.add(rid)
+                ids.append(rid)
+                if is_relaxed:
+                    relaxed.add(rid)
+                if len(ids) >= limit:
+                    break
+    return ids, relaxed
+
+
+def _fts_match_ids(match_q: str, version: str, limit: int,
+                   order: bool = True) -> List[int]:
+    """Run one FTS MATCH query, return rowids rank-first (or []).
+
+    order=False skips the rank sort (arbitrary slice) for degenerate
+    queries where sorting is pure cost.
+    """
+    order_sql = "ORDER BY rank " if order else ""
+    try:
+        conn = _get_connection()
+        rows = conn.execute(
+            "SELECT fts.rowid AS rowid "
+            "FROM verses_fts fts "
+            "JOIN verses v ON v.id = fts.rowid "
+            "WHERE fts.text MATCH ? AND v.version = ? "
+            f"{order_sql}LIMIT ?",
+            (match_q, version.upper(), limit),
+        ).fetchall()
+        conn.close()
+        return [r["rowid"] for r in rows]
+    except sqlite3.OperationalError as e:
+        logger.warning("FTS prefilter failed for %r: %s", match_q, e)
         return []
 
-    word_count = len(query.split())
 
-    # Run both searches in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        fts_future = pool.submit(search_verses_text, query, version, limit)
-        bm25_future = pool.submit(bm25_search, query, version, limit)
-        fts_results = fts_future.result()
-        bm25_results = bm25_future.result()
+def _fetch_verse_dicts(version: str, rowids: List[int],
+                       limit: int) -> List[Dict]:
+    """Fetch verse dicts for rowids (DB order), formatted FTS-rank-first."""
+    if not rowids:
+        return []
+    try:
+        conn = _get_connection()
+        placeholders = ",".join("?" for _ in rowids)
+        rows = conn.execute(
+            "SELECT id AS rowid, book, chapter, verse_num, text FROM verses "
+            f"WHERE version = ? AND rowid IN ({placeholders})",
+            (version.upper(), *rowids),
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning("Verse fetch failed: %s", e)
+        return []
+    by_id = {r["rowid"]: r for r in rows}
+    out = []
+    for rid in rowids:
+        r = by_id.get(rid)
+        if r is None:
+            continue
+        out.append({"rowid": rid, "book": r["book"], "chapter": r["chapter"],
+                    "verse": r["verse_num"], "verse_num": r["verse_num"],
+                    "text": r["text"], "confidence": 1.0})
+        if len(out) >= limit:
+            break
+    return out
 
-    # If BM25 returned nothing (index missing), fall back to FTS5 only
-    if not bm25_results:
-        return fts_results
 
-    # Convert to 7-tuple format expected by rrf_fuse
-    fts_tuples = [
-        (i + 1, version, r["book"], r["chapter"], r["verse"], 0.0, r["text"])
-        for i, r in enumerate(fts_results)
-    ]
-    bm25_tuples = [
-        (i + 1, version, r["book"], r["chapter"], r["verse"], 0.0, r["text"])
-        for i, r in enumerate(bm25_results)
-    ]
 
-    # Lazy import to avoid pulling in model_manager at module load time
-    from core.search_engine import rrf_fuse
-    fused = rrf_fuse(bm25_tuples, fts_tuples, word_count=word_count)
 
-    # rrf_fuse returns dicts with confidence, book, chapter, verse_num, text, etc.
-    # Trim to limit and return in the standard dict format
+
+
+def _grams_of_folded(s: str) -> set:
+    """Trigram set of folded spaceless text (typo-tolerant)."""
+    import re as _re
+    t = _re.sub(r"[^a-z0-9]", "", s or "")
+    if len(t) < 3:
+        return {t} if t else set()
+    return {t[i:i + 3] for i in range(len(t) - 2)}
+
+
+def _trigram_profile(text: str) -> set:
+    """Character-3-gram set of folded spaceless text (typo-tolerant)."""
+    from core.text_utils import fold_diacritics
+    return _grams_of_folded(fold_diacritics(text or "").lower())
+
+
+def _trigram_dice(query_grams: set, verse_grams: set) -> float:
+    if not query_grams or not verse_grams:
+        return 0.0
+    return 2.0 * len(query_grams & verse_grams) / (
+        len(query_grams) + len(verse_grams))
+
+
+def _surface_words(text: str) -> list:
+    """Lowercased word surfaces (unicode letters, interior apostrophes)."""
+    from core.text_utils import fold_diacritics
+    return _SURFACE_RE.findall(fold_diacritics(text or "").lower())
+
+
+_SURFACE_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)?", re.UNICODE)
+
+
+def _matched_surfaces(text: str, query_stems: set,
+                      query_grams: set) -> list:
+    """Verse surfaces explaining the hit: stem matches plus the most
+    typo-similar word per query word (Dice >= 0.3). Powers highlight.
+    Query grams are precomputed once per search (never per word)."""
+    from core.text_utils import STEMMER
+    out = []
+    for w in _surface_words(text):
+        if STEMMER.stemWord(w) in query_stems:
+            out.append(w)
+            continue
+        if len(w) >= 4 and _trigram_dice(
+                query_grams, _trigram_profile(w)) >= 0.3:
+            out.append(w)
+    seen = set()
+    uniq = []
+    for w in out:
+        if w not in seen:
+            seen.add(w)
+            uniq.append(w)
+    return uniq
+
+
+def _prompt_overlap(query_tokens: set, prompt: str) -> float:
+    """Overlap coefficient between a query and a logged prompt.
+
+    |intersection| / min(|A|, |B|): a shorter prompt fully contained in
+    a longer query (or vice versa — the operator added just one more
+    thing) scores 1.0. Symmetric with search tokenization, so
+    diacritics fold on both sides. Takes the best of raw-word and
+    stemmed overlap so inflection drift across sessions ("loved" vs
+    "love") still counts; raw-word behavior is unchanged.
+    """
+    from core.text_utils import split_search_words, tokenize, STEMMER
+    logged = set(split_search_words(prompt))
+    if not logged or not query_tokens:
+        return 0.0
+    raw = len(query_tokens & logged) / min(len(query_tokens), len(logged))
+    if raw >= 1.0:
+        return raw
+    stemmed_q = {STEMMER.stemWord(w) for w in query_tokens}
+    stemmed_logged = set(tokenize(prompt))
+    if not stemmed_logged or not stemmed_q:
+        return raw
+    stem = len(stemmed_q & stemmed_logged) / min(len(stemmed_q),
+                                                 len(stemmed_logged))
+    return max(raw, stem)
+
+
+def popularity_boosts(query: str) -> dict:
+    """{(book, chapter, verse): boost} from operator pick history.
+
+    Every logged prompt resembling the query contributes
+    log(1 + points) × similarity for its verse; multiple prompts per
+    verse accumulate (old phrasings are kept, never collapsed). Empty
+    when nothing resembles. Never raises.
+    """
+    from core.text_utils import split_search_words
+    from core.constants import POPULARITY_SIM_THRESHOLD
+    from core.database import read_verse_popularity
+    import math
+    try:
+        tokens = set(split_search_words(query))
+        if not tokens:
+            return {}
+        boosts: dict = {}
+        for row in read_verse_popularity():
+            sim = _prompt_overlap(tokens, row.get("prompt", ""))
+            if sim < POPULARITY_SIM_THRESHOLD:
+                continue
+            try:
+                pts = float(row.get("points") or 0)
+            except (TypeError, ValueError):
+                continue
+            if pts <= 0:
+                continue
+            key = (str(row.get("book") or "").lower(),
+                   str(row.get("chapter") or ""),
+                   str(row.get("verse") or ""))
+            boosts[key] = boosts.get(key, 0.0) + math.log1p(pts) * sim
+        return boosts
+    except Exception:
+        return {}
+
+
+def apply_popularity(results: list, boosts: dict) -> list:
+    """Fold popularity into confidence and re-sort (stable).
+
+    Boost is confidence-space: weight × log-dampened points ×
+    similarity — one or two picks nudge, dozens eventually top.
+    Mutates confidence in place (the badge then reflects why a verse
+    leads). Never raises.
+    """
+    from core.constants import POPULARITY_WEIGHT
+    try:
+        if not boosts or not results:
+            return results
+        for r in results:
+            key = (str(r.get("book") or "").lower(),
+                   str(r.get("chapter") or ""),
+                   str(r.get("verse_num", r.get("verse")) or ""))
+            bump = boosts.get(key)
+            if bump:
+                base = r.get("confidence", 0) or 0
+                raw = base + POPULARITY_WEIGHT * bump
+                # The badge is a percentage, so it is capped — but the cap
+                # must not flatten ordering. Two verses both sitting at
+                # 100% would tie and be separated only by input order,
+                # which throws away what the operator just taught us.
+                # So the uncapped score is kept for ranking.
+                r["confidence_rank"] = raw
+                r["confidence"] = round(min(100.0, raw), 1)
+                r["boosted"] = True
+        results.sort(key=lambda r: r.get("confidence_rank")
+                     if r.get("confidence_rank") is not None
+                     else (r.get("confidence", 0) or 0), reverse=True)
+        return results
+    except Exception:
+        return results
+
+
+
+
+
+
+
+
+def _fts_ranked(match_q: str, version: str, limit: int) -> List[tuple]:
+    """One FTS5 MATCH query as `[(rowid, score)]`, best first.
+
+    `score` is `-bm25(verses_fts)`, i.e. positive and larger-is-better
+    (FTS5's raw bm25 is negative-better). This is the whole relevance
+    signal for the FTS lane: SQLite's own keyword scorer, computed over
+    the Porter-stemmed index. Returns [] on an FTS error rather than
+    raising — the panel treats a failed lane as "no hits".
+    """
+    try:
+        conn = _get_connection()
+        rows = conn.execute(
+            "SELECT fts.rowid AS rowid, bm25(verses_fts) AS score "
+            "FROM verses_fts fts "
+            "JOIN verses v ON v.id = fts.rowid "
+            "WHERE fts.text MATCH ? AND v.version = ? "
+            "ORDER BY rank LIMIT ?",
+            (match_q, version.upper(), limit),
+        ).fetchall()
+        conn.close()
+        return [(r["rowid"], -r["score"]) for r in rows]
+    except sqlite3.OperationalError as e:
+        logger.warning("FTS query failed for %r: %s", match_q, e)
+        return []
+
+
+def fts_search(query: str, version: str = "KJV",
+               limit: int = 20) -> List[Dict]:
+    """FTS5 keyword search over the Porter-stemmed verse index.
+
+    Ranking is keyword match and nothing else:
+
+      1. coverage — how many distinct query words the verse actually
+         carries (most-matches-wins);
+      2. SQLite FTS5's own bm25 over those terms.
+
+    Nothing learned, blended or semantic is mixed in. A verse that
+    literally contains the words the operator typed outranks one that is
+    merely about them — which is the whole point of having the Nave and
+    Strong's lanes beside this one.
+
+    Recall is AND-first: the AND of the query terms is what an operator
+    searching for a phrase actually wants. Only a thin AND set pays for
+    per-term top-ups, so partial matches appear below the full matches
+    instead of burying them.
+    """
+    from core.text_utils import split_search_words, STOP_WORDS, tokenize
+    words = split_search_words(query)
+    if not words:
+        return []
+    all_groups = _prefilter_groups(query)
+    # Bare stopwords match everything and rank nothing. Quoted raw
+    # alternatives always stay (accented recall).
+    groups = [g for g in all_groups
+              if _group_stem(g) not in STOP_WORDS or g.startswith("(")]
+    if not groups:
+        # Stopword-only query: any verse "matches". An arbitrary slice is
+        # honest here — ordering stopword matches by keyword score is
+        # meaningless, so we don't pretend otherwise.
+        return _fetch_verse_dicts(
+            version, _fts_match_ids(" ".join(all_groups), version, limit,
+                                    order=False), limit)
+
+    # FTS5 will not read a parenthesised group as an implicit-AND operand
+    # ("a* (b* OR c*)" is a syntax error), so the conjunction is explicit.
+    ranked = _fts_ranked(" AND ".join(groups), version, limit)
+    ids = [rid for rid, _ in ranked]
+    score = {rid: sc for rid, sc in ranked}
+    coverage = {rid: len(groups) for rid in ids}
+
+    if len(ids) < limit:
+        # Thin AND: top up so a verse carrying only SOME of the words still
+        # surfaces (below every full match, via coverage).
+        #
+        # Bounded on purpose. Every probe is a prefix scan over the whole
+        # verse corpus, and the naive "probe every word" version made
+        # latency grow with query length — the exact complaint from the
+        # field. Probe the longest stems first: "sight" and "walk"
+        # discriminate, "we" and "for" match nearly every verse and buy
+        # almost no recall for a full corpus scan. The cap (see
+        # constants.FTS_TOPUP_TERMS) then makes the cost independent of
+        # how much the operator has typed.
+        from core.constants import FTS_TOPUP_TERMS
+        probes = sorted(groups,
+                        key=lambda g: (-len(_group_stem(g)), g))[:FTS_TOPUP_TERMS]
+        per_term = max(50, (limit - len(ids)) // max(1, len(probes)) + 1)
+        group_sets = []
+        for group in probes:
+            hits = _fts_ranked(group, version, per_term)
+            group_sets.append({rid for rid, _ in hits})
+            for rid, sc in hits:
+                if rid not in score:
+                    score[rid] = sc
+                    ids.append(rid)
+        if group_sets:
+            # Coverage from what we actually probed. Only probed groups can
+            # contribute, so an unprobed word is neither credit nor debit:
+            # taking the max with what the AND proved keeps coverage from
+            # ever being understated (it is the primary sort key).
+            for rid in ids:
+                counted = sum(1 for gs in group_sets if rid in gs)
+                coverage[rid] = max(coverage.get(rid, 0), counted)
+
+    verses = {v["rowid"]: v for v in _fetch_verse_dicts(version, ids, len(ids))}
+    distinct = max(1, len(groups))
+
+    # Adjacency: among verses carrying the SAME number of query words, the
+    # one holding them side by side ("living water") is a sharper keyword
+    # hit than one scattering them. Tied-break only — it must never let a
+    # partial-coverage verse outrank a fuller one. Still pure keyword
+    # matching: one extra FTS5 phrase probe, no learned score.
+    adjacent = set()
+    if len(words) > 1:
+        phrase = " ".join(f'"{w}"' for w in words if w.replace('"', ""))
+        if phrase.strip():
+            adjacent = {rid for rid, _ in _fts_ranked(phrase, version, limit * 4)}
+
+    order = sorted(ids, key=lambda rid: (coverage.get(rid, 0),
+                                         rid in adjacent,
+                                         score.get(rid, 0.0)), reverse=True)
+
+    query_grams = _trigram_profile(" ".join(words))
+    match_stems = set(tokenize(query)) | {
+        v for g in groups for v in _variant_forms(_group_stem(g))}
     results = []
-    for r in fused[:limit]:
+    for position, rid in enumerate(order[:limit]):
+        v = verses.get(rid)
+        if v is None:
+            continue
+        # Strictly decreasing in emitted position so the panel's
+        # confidence badge never contradicts the row order.
+        conf = (100.0 * (0.35 + 0.65 * min(1.0, coverage.get(rid, 0) / distinct))
+                * (1.0 - 0.5 * position / max(1, limit)))
         results.append({
-            "book": r["book"],
-            "chapter": r["chapter"],
-            "verse": r["verse_num"],
-            "verse_num": r["verse_num"],
-            "text": r["text"],
-            "confidence": r["confidence"],
+            "book": v["book"], "chapter": v["chapter"],
+            "verse": v["verse_num"], "verse_num": v["verse_num"],
+            "text": v["text"],
+            "confidence": round(conf, 1),
+            "coverage": coverage.get(rid, 0),
+            "matched": _matched_surfaces(v["text"], match_stems, query_grams),
         })
     return results
+
+
+# ─── Keyword lane (Nave's topics + Strong's lemmas) ──────────────────────────
+
+_keywords_compact = None
+_keywords_missing_logged = False
+
+
+def _load_keywords() -> Optional[dict]:
+    """Lazy-load the keyword postings compact (once per process)."""
+    global _keywords_compact, _keywords_missing_logged
+    if _keywords_compact is not None:
+        return _keywords_compact
+    kw_path = os.path.join(_INDEXES_DIR, "keywords.pkl")
+    if not os.path.exists(kw_path):
+        if not _keywords_missing_logged:
+            logger.warning("Keyword index not found — run build_keywords.py")
+            _keywords_missing_logged = True
+        return None
+    try:
+        with open(kw_path, "rb") as f:
+            _keywords_compact = pickle.load(f)
+        logger.info(f"Loaded keyword index: "
+                    f"{len(_keywords_compact['postings']):,} terms, "
+                    f"{_keywords_compact['corpus_size']:,} verses")
+    except Exception as e:
+        logger.warning(f"Keyword index load failed: {e}")
+        return None
+    return _keywords_compact
+
+
+def fts_translations() -> List[str]:
+    """Translations the FTS lane searches: the operator's choice.
+
+    Stored as JSON in `search.fts_translations`. Read live rather than
+    cached so changing it in Settings takes effect on the next query, and
+    clamped to what is actually installed so a translation that was
+    removed from bible.db cannot poison the lane into returning nothing.
+    """
+    import json
+    from core.constants import (FTS_TRANSLATIONS, FTS_MAX_TRANSLATIONS)
+    from core.database import get_setting
+    raw = get_setting("search.fts_translations", None)
+    chosen: List[str] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                chosen = [str(v).strip() for v in parsed if str(v).strip()]
+        except (TypeError, ValueError):
+            chosen = []
+    if not chosen:
+        chosen = list(FTS_TRANSLATIONS)
+    # De-duplicate, keep order, cap.
+    seen = set()
+    ordered = []
+    for v in chosen:
+        key = v.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    ordered = ordered[:FTS_MAX_TRANSLATIONS]
+    available = set(get_available_translations())
+    kept = [v for v in ordered if v in available]
+    return kept or [v for v in FTS_TRANSLATIONS if v in available] or \
+        list(FTS_TRANSLATIONS)[:1]
+
+
+def set_fts_translations(values) -> List[str]:
+    """Persist the operator's FTS translation choice. Returns what stuck."""
+    import json
+    from core.constants import FTS_MAX_TRANSLATIONS
+    from core.database import set_setting
+    seen, ordered = set(), []
+    for v in values or []:
+        key = str(v).strip().upper()
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    ordered = ordered[:FTS_MAX_TRANSLATIONS]
+    set_setting("search.fts_translations", json.dumps(ordered))
+    return ordered
+
+
+def keyword_display_translation() -> str:
+    """Translation used to render keyword-lane hits (operator setting)."""
+    from core.database import get_setting
+    want = (get_setting("search.keyword_display_translation", "KJV")
+            or "KJV").upper()
+    try:
+        conn = _get_connection()
+        row = conn.execute(
+            "SELECT 1 FROM verses WHERE version = ? LIMIT 1",
+            (want,)).fetchone()
+        conn.close()
+        if row:
+            return want
+    except Exception:
+        pass
+    return "KJV"
+
+
+def keyword_search(query: str, limit: int = 30):
+    """Score the keyword index for a query (once per query, not per version).
+
+    Returns (results, elapsed_ms, display_version). Each result carries
+    verse text fetched live from the operator's display translation, in
+    the same dict shape as fts_search (confidence normalized 0–100).
+    Missing index → ([], 0.0, display_version): the lane degrades away.
+    """
+    import time as _time
+    from core.text_utils import split_search_words, STOP_WORDS
+    from core.constants import KEYWORD_COVERAGE_MIX
+    t0 = _time.perf_counter()
+    display = keyword_display_translation()
+    compact = _load_keywords()
+    if compact is None:
+        return [], 0.0, display
+    words = split_search_words(query)
+    if not words or all(w.strip('"').lower() in STOP_WORDS for w in words):
+        return [], (_time.perf_counter() - t0) * 1000, display
+    tokens = tokenize(query)
+    if not tokens:
+        return [], (_time.perf_counter() - t0) * 1000, display
+    variant_words = []
+    for stem in set(tokens):
+        variant_words.extend(_variant_forms(stem))
+    variant_tokens = tokenize(" ".join(variant_words)) if variant_words else []
+    all_tokens = tokens + variant_tokens
+    scores, hits = _score_postings(compact, all_tokens)
+    distinct = len(set(tokens)) or 1
+    coverage = np.minimum(1.0, hits.astype(np.float64) / distinct)
+    blended = scores * (KEYWORD_COVERAGE_MIX
+                        + (1.0 - KEYWORD_COVERAGE_MIX) * coverage)
+    order = np.argsort(blended)[::-1][:limit]
+    order = [i for i in order if blended[i] > 0]
+    if not order:
+        return [], (_time.perf_counter() - t0) * 1000, display
+    best = float(blended[order[0]])
+    # Fetch display-translation texts for the hit coordinates in one query.
+    coords = [(compact["lookup"][i][1], compact["lookup"][i][2],
+               compact["lookup"][i][3]) for i in order]
+    texts = {}
+    try:
+        conn = _get_connection()
+        # Row-value IN keeps the covering index seeks (~0.5ms); a
+        # disjunct OR chain degrades to a 31k-row index scan (~35ms).
+        place = ",".join(["(?,?,?)"] * len(coords))
+        params = [p for c in coords for p in c]
+        for r in conn.execute(
+                "SELECT book, chapter, verse_num, text FROM verses "
+                "WHERE version = ? AND (book, chapter, verse_num) "
+                f"IN ({place})",
+                (display, *params)).fetchall():
+            texts[(r["book"], r["chapter"], r["verse_num"])] = r["text"]
+        conn.close()
+    except Exception as e:
+        logger.warning("Keyword text fetch failed: %s", e)
+    match_stems = set(tokens) | set(variant_tokens)
+    query_grams = _trigram_profile(" ".join(words))
+    results = []
+    for i in order:
+        _ver, book, chapter, verse_num, _kw = compact["lookup"][i]
+        text = texts.get((book, chapter, verse_num), "")
+        results.append({
+            "book": book, "chapter": chapter,
+            "verse": verse_num, "verse_num": verse_num,
+            "text": text,
+            "confidence": round(min(100.0, 100.0 * float(blended[i]) / best), 1),
+            "matched": _matched_surfaces(text, match_stems, query_grams),
+            "keyword": True,
+        })
+    return results, (_time.perf_counter() - t0) * 1000, display
 
 
 # ─── Translation Import ──────────────────────────────────────────────────────
@@ -567,10 +1324,13 @@ def _load_into_db(json_path: str) -> str:
             ON verses(version, book, chapter, verse_num);
         CREATE INDEX IF NOT EXISTS idx_verses_version
             ON verses(version);
+        -- No `content=` option: an external-content FTS5 table mirrors its
+        -- whole source table and cannot be restricted to the chosen
+        -- translations. This table owns its text and holds only what
+        -- fts_translations() selects.
         CREATE VIRTUAL TABLE IF NOT EXISTS verses_fts USING fts5(
             text,
-            content='verses',
-            content_rowid='id'
+            tokenize='porter unicode61 remove_diacritics 2'
         );
     """)
 
@@ -605,8 +1365,14 @@ def _load_into_db(json_path: str) -> str:
         (version, sha.hexdigest(), os.path.basename(json_path), len(rows), now),
     )
 
-    # Rebuild FTS index
-    conn.execute("INSERT INTO verses_fts(verses_fts) VALUES('rebuild')")
+    # Add this translation to the search index if it is one the operator
+    # searches. Anything else stays out until chosen (and rebuilt).
+    if version.upper() in {t.upper() for t in fts_translations()}:
+        conn.execute("DELETE FROM verses_fts WHERE rowid IN "
+                     "(SELECT id FROM verses WHERE version = ?)", (version,))
+        conn.execute(
+            "INSERT INTO verses_fts(rowid, text) "
+            "SELECT id, text FROM verses WHERE version = ?", (version,))
     conn.commit()
     conn.close()
 

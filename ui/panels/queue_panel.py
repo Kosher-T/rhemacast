@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 from ui.styles import (
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
     QUEUE_ITEM_STYLE, SHOW_BTN_STYLE, REJECT_BTN_STYLE,
-    CYAN_400, SLATE_300, SLATE_500, SLATE_600, WHITE, BORDER_SUBTLE
+    ACCENT, ACCENT_SOFT, SLATE_300, SLATE_500, SLATE_600, WHITE, BORDER_SUBTLE
 )
 from core.queues import db_write_queue
 from core.bible_service import get_display_name
@@ -232,9 +232,9 @@ class QueuePanel(QWidget):
         if active:
             return f"""
                 QPushButton {{
-                    color: {CYAN_400};
+                    color: {ACCENT};
                 font-size: 20px; font-weight: 700;
-                background: rgba(34, 211, 238, 0.1);
+                background: {ACCENT_SOFT};
                     border-radius: 6px;
                     border: none;
                 }}
@@ -275,10 +275,14 @@ class QueuePanel(QWidget):
             self._ensure_fts_search_loaded()
             self._stack.setCurrentIndex(self._fts_search_index)
             self.count_label.setVisible(False)
+            # Clicking the tab is as much "go search" as the hotkey is:
+            # hand the operator the box with its text already selected.
+            self._fts_search_panel.focus_query()
         elif name == "fuzzy":
             self._ensure_fuzzy_search_loaded()
             self._stack.setCurrentIndex(self._fuzzy_search_index)
             self.count_label.setVisible(False)
+            self._fuzzy_search_panel.focus_query()
 
     def _ensure_themes_loaded(self):
         if self._themes_panel is None:

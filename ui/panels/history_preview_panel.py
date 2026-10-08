@@ -26,7 +26,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.styles import (
     SLATE_950, SLATE_800, SLATE_500, SLATE_400, SLATE_300,
-    WHITE, BLUE_500,
+    WHITE, SELECTION_BG, SELECTION_BORDER,
 )
 from ui.panels.slide_grid_panel import SlideGridPanel
 
@@ -125,8 +125,8 @@ class _StripRow(QFrame):
                  parent=None):
         super().__init__(parent)
         self.setStyleSheet(
-            f"QFrame {{ background: {'rgba(59, 130, 246, 0.18)' if highlighted else SLATE_800}; "
-            f"border: 1px solid {BLUE_500 if highlighted else 'transparent'}; "
+            f"QFrame {{ background: {SELECTION_BG if highlighted else SLATE_800}; "
+            f"border: 1px solid {SELECTION_BORDER if highlighted else 'transparent'}; "
             f"border-radius: 8px; }}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -200,19 +200,25 @@ class HistoryPreviewPanel(QWidget):
 
     @staticmethod
     def _verse_payload(ref: str, text: str, translation: str, theme_name: str) -> dict:
-        from core.theme_loader import get_theme
+        from core.theme_loader import resolve_theme
+        theme_name, theme_data = resolve_theme(theme_name)
         return {"action": "display", "text": text, "ref": ref, "reference": ref,
                 "translation": translation or "", "book": "", "chapter": "",
                 "verse": "", "content": "verse", "theme": theme_name,
-                "theme_data": get_theme(theme_name)}
+                "theme_data": theme_data}
 
     @staticmethod
     def _slide_payload(text: str, ref: str, theme_name: str, fmt) -> dict:
-        from core.theme_loader import get_theme
-        payload = {"action": "display", "text": text, "ref": "", "reference": "",
+        from core.theme_loader import resolve_theme, slide_title_visible
+        # Slides resolve against the freeform default — never the
+        # scripture theme — and honor the theme's slide.show_title.
+        theme_name, theme_data = resolve_theme(theme_name, fallback="slides")
+        display_ref = ref if slide_title_visible(theme_data) else ""
+        payload = {"action": "display", "text": text, "ref": display_ref,
+                   "reference": display_ref,
                    "translation": "", "book": "", "chapter": "", "verse": "",
                    "content": "slide", "theme": theme_name,
-                   "theme_data": get_theme(theme_name)}
+                   "theme_data": theme_data}
         if fmt:
             payload["slide_format"] = fmt
         return payload

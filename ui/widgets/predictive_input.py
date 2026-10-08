@@ -43,6 +43,12 @@ class BookInput(QLineEdit):
     book_resolved = pyqtSignal(str)
     push = pyqtSignal()
 
+    # Verified vocabulary; subclasses extend (e.g. testament filter).
+    candidates = BIBLE_BOOKS
+    # When False, Space/Right/Enter merely commit the autofill instead
+    # of emitting navigation signals (filter-box behavior).
+    navigate_on_commit = True
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setPlaceholderText("Book")
@@ -81,9 +87,13 @@ class BookInput(QLineEdit):
                 self._typed += " "
                 self._update_prediction()
                 return
-            if self.text().strip():
-                self.book_resolved.emit(self.text().strip())
-                self.advance_to_chapter.emit()
+            if self.navigate_on_commit:
+                if self.text().strip():
+                    self.book_resolved.emit(self.text().strip())
+                    self.advance_to_chapter.emit()
+            else:
+                # Filter-box mode: merely commit the autofill, no navigation.
+                self.setCursorPosition(len(self.text()))
             return
 
         if key == Qt.Key.Key_Backspace:
@@ -96,10 +106,14 @@ class BookInput(QLineEdit):
             return
 
         if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
-            if self.text().strip():
-                self.book_resolved.emit(self.text().strip())
-                self.push.emit()
-                self.clearFocus()
+            if self.navigate_on_commit:
+                if self.text().strip():
+                    self.book_resolved.emit(self.text().strip())
+                    self.push.emit()
+                    self.clearFocus()
+            else:
+                # Filter-box mode: commit the autofill, keep focus for retyping.
+                self.setCursorPosition(len(self.text()))
             return
 
         if key == Qt.Key.Key_Control or key == Qt.Key.Key_Shift or key == Qt.Key.Key_Alt:
@@ -125,8 +139,8 @@ class BookInput(QLineEdit):
             self.setSelection(len(self._typed), len(match) - len(self._typed))
 
     def _find_match(self, prefix: str) -> str | None:
-        """Find the first book matching the typed prefix (case-insensitive).
-        
+        """Find the first candidate matching the typed prefix (case-insensitive).
+
         Supports typed shortcuts like "1c" for "1 Chronicles" by also
         trying the prefix with a space after leading digits.
         """
@@ -134,13 +148,13 @@ class BookInput(QLineEdit):
         if not lower:
             return None
         # Direct match
-        for book in BIBLE_BOOKS:
+        for book in self.candidates:
             if book.lower().startswith(lower):
                 return book
         # Try with space after leading digits (e.g., "1c" -> "1 c")
         if lower[0].isdigit():
             spaced = lower[0] + " " + lower[1:]
-            for book in BIBLE_BOOKS:
+            for book in self.candidates:
                 if book.lower().startswith(spaced):
                     return book
         return None
@@ -164,6 +178,79 @@ class BookInput(QLineEdit):
         """Programmatically set the book name (no signals emitted)."""
         self._typed = text
         self.setText(text)
+
+
+# Extra verified terms accepted by the book filter (beyond BIBLE_BOOKS).
+FILTER_TERMS = ["Old Testament", "New Testament", "Gospels"]
+
+# Testament membership derived from canonical order (Genesis..Malachi | Matthew..Revelation).
+OLD_TESTAMENT_BOOKS = frozenset(BIBLE_BOOKS[:39])
+NEW_TESTAMENT_BOOKS = frozenset(BIBLE_BOOKS[39:])
+
+# The four gospels.
+GOSPELS_BOOKS = frozenset(["Matthew", "Mark", "Luke", "John"])
+
+
+class BookFilterInput(BookInput):
+    """Book/testament filter box: identical typing mechanics to BookInput
+    (typed-buffer, verified-inputs-only, highlighted autofill, click-select-all)
+    but Space/Right/Enter merely commit the autofill — no navigation signals.
+    """
+
+    candidates = BIBLE_BOOKS + FILTER_TERMS
+    navigate_on_commit = False  # defense in depth; commit keys are intercepted above
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPlaceholderText("Filter: book…")
+
+    def _autosize(self):
+        # Padded box style (unlike the navigator's borderless fields).
+        text = self.text() or self.placeholderText()
+        w = self.fontMetrics().horizontalAdvance(text) + 28
+        self.setFixedWidth(max(w, 130))
+
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        if key in (
+            Qt.Key.Key_Space,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            # Preserve the "1/2/3 + Space inserts a space" rule for
+            # numbered books ("1 Samuel"); otherwise commit, never navigate.
+            if (
+                key == Qt.Key.Key_Space
+                and self._typed
+                and self._typed[-1] in "123"
+            ):
+                super().keyPressEvent(event)
+                return
+            self._commit()
+            return
+        super().keyPressEvent(event)
+
+    def _commit(self):
+        self._typed = self.text()
+        self.setCursorPosition(len(self.text()))
+
+    def current_filter(self) -> str | None:
+        """Resolved verified term (autofilled match) or None when empty/unmatched."""
+        if not self._typed:
+            return None
+        match = self._find_match(self._typed)
+        if match:
+            return match
+        shown = self.text().strip()
+        for term in self.candidates:
+            if term.lower() == shown.lower():
+                return term
+        return None
+
+    def clear_filter(self):
+        self._typed = ""
+        self.clear()
 
 
 class NumericInput(QLineEdit):

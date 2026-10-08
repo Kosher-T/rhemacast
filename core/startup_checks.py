@@ -199,6 +199,31 @@ class StartupValidator:
         else:
             self._add_result("Display HTML", CheckStatus.WARNING, "display.html not found. UI rendering may fail.", False)
 
+    def check_output_themes(self):
+        """Configured per-output themes must resolve (contract: theme_data
+        never null). Per-machine settings may name themes missing on this
+        machine — report loudly; payloads fall back to "default" at runtime."""
+        try:
+            from core.theme_loader import get_theme_names
+            from core.database import get_setting
+            known = set(get_theme_names())
+            configured = {}
+            for oid in ("1", "2", "3"):
+                configured[f"display.output_{oid}_theme"] = get_setting(
+                    f"display.output_{oid}_theme", "default")
+                configured[f"display.slides_output_{oid}_theme"] = get_setting(
+                    f"display.slides_output_{oid}_theme", "slides")
+            bad = {k: v for k, v in configured.items() if v not in known}
+            if not bad:
+                self._add_result("Output Themes", CheckStatus.PASS,
+                                 f"All configured output themes resolve ({len(known)} themes loaded).", True)
+            else:
+                detail = "; ".join(f"{k}='{v}'" for k, v in bad.items())
+                self._add_result("Output Themes", CheckStatus.WARNING,
+                                 f"Unknown configured theme(s) — runtime falls back to 'default': {detail}", False)
+        except Exception as e:
+            self._add_result("Output Themes", CheckStatus.WARNING, f"Could not validate output themes: {e}", False)
+
     def check_permissions(self):
         try:
             os.makedirs(self.log_dir, exist_ok=True)
@@ -242,6 +267,7 @@ class StartupValidator:
         self.check_ram()
         self.check_vosk()
         self.check_display_html()
+        self.check_output_themes()
         self.check_permissions()
         self.check_gpu_temp()
         

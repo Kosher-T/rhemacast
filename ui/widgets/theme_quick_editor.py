@@ -15,6 +15,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from ui.widgets.theme_properties_panel import ThemePropertiesPanel
 from ui.widgets.theme_preview import ThemePreview
 from ui.styles import BLUE_500
+from ui.styles import (
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT,
+    ACCENT, ACCENT_HOVER, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
+)
 import core.theme_loader
 
 
@@ -22,10 +26,10 @@ import core.theme_loader
 
 _POPUP_STYLE = (
     "QWidget {"
-    "  background: rgba(15, 23, 42, 0.97);"
+    "  background: rgba(20, 20, 23, 0.97);"
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 16px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-family: 'Nunito', sans-serif;"
     "  font-size: 11px;"
     "}"
@@ -41,15 +45,15 @@ _TITLE_BAR_STYLE = (
 _TITLE_LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #f8fafc;"
+    "color: " + TEXT_PRIMARY + ";"
     "font-size: 12px;"
     "font-weight: 700;"
 )
 
 _BADGE_STYLE = (
-    "background: rgba(6, 182, 212, 0.15);"
-    "color: #22d3ee;"
-    "border: 1px solid rgba(6, 182, 212, 0.3);"
+    "background: " + ACCENT_SOFT + ";"
+    "color: " + ACCENT + ";"
+    "border: 1px solid " + ACCENT_BORDER + ";"
     "border-radius: 4px;"
     "padding: 1px 8px;"
     "font-size: 10px;"
@@ -59,14 +63,14 @@ _BADGE_STYLE = (
 _ICON_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #22d3ee;"
+    "color: " + ACCENT + ";"
     "font-size: 14px;"
 )
 
 _BTN_GHOST = (
     "QPushButton {"
     "  background: transparent;"
-    "  color: #94a3b8;"
+    "  color: " + TEXT_MUTED + ";"
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 4px;"
     "  padding: 4px 12px;"
@@ -75,7 +79,7 @@ _BTN_GHOST = (
     "}"
     "QPushButton:hover {"
     "  background: rgba(255, 255, 255, 0.06);"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "}"
 )
 
@@ -90,35 +94,35 @@ _BTN_PRIMARY = (
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"
-    "  background: #2563eb;"
+    "  background: " + ACCENT_HOVER + ";"
     "}"
     "QPushButton:pressed {"
-    "  background: #1d4ed8;"
+    "  background: " + ACCENT + ";"
     "}"
 )
 
 _BTN_EXPAND = (
     "QPushButton {"
-    "  background: rgba(6, 182, 212, 0.15);"
-    "  color: #22d3ee;"
-    "  border: 1px solid rgba(6, 182, 212, 0.3);"
+    "  background: " + ACCENT_SOFT + ";"
+    "  color: " + ACCENT + ";"
+    "  border: 1px solid " + ACCENT_BORDER + ";"
     "  border-radius: 4px;"
     "  padding: 4px 14px;"
     "  font-size: 10px;"
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"
-    "  background: rgba(6, 182, 212, 0.25);"
+    "  background: " + SELECTION_BG + ";"
     "}"
     "QPushButton:pressed {"
-    "  background: rgba(6, 182, 212, 0.35);"
+    "  background: " + ACCENT_BORDER + ";"
     "}"
 )
 
 _BTN_CLOSE = (
     "QPushButton {"
     "  background: transparent;"
-    "  color: #64748b;"
+    "  color: " + TEXT_FAINT + ";"
     "  border: none;"
     "  border-radius: 4px;"
     "  padding: 4px 8px;"

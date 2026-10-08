@@ -20,7 +20,7 @@ from PyQt6.QtGui import QGuiApplication
 
 from ui.main_window import MainWindow
 from ui.workers import OperatorQueueWorker, HardwareTelemetryWorker, TranscriptStreamWorker
-from ui.theme import apply_theme
+from ui.app_theme import apply_palette as apply_theme
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,14 @@ def _boot_background_services():
     except Exception as e:
         logger.error(f"Failed to start WebSocket server: {e}")
 
+    # Clipboard snapshot cache: background system-clipboard polling so
+    # paste/copy never block on a wedged compositor clipboard bridge.
+    try:
+        from core.clipboard import start_cache
+        start_cache()
+    except Exception as e:
+        logger.error(f"Failed to start clipboard cache: {e}")
+
     # Preload search indexes + embedding model in background
     try:
         from core.model_manager import model_manager
@@ -76,8 +84,8 @@ class RhemaCastApp(QApplication):
         _configure_high_dpi()
         super().__init__(argv)
         
-        # Apply theme palette for native look + accessibility
-        apply_theme(self, "dark")
+        # Apply app-theme palette for native look + accessibility
+        apply_theme(self)
         
         # Show loading screen immediately
         from ui.widgets.loading_screen import LoadingScreen

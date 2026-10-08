@@ -27,8 +27,9 @@ from ui.styles import (
     PANEL_BODY_STYLE, SLATE_300, SLATE_400, SLATE_500, BLUE_500, CYAN_400,
     TRANSLATION_BTN_INACTIVE, TRANSLATION_BTN_ACTIVE,
     VERSE_EVEN_BG, VERSE_ODD_BG, VERSE_SELECTED_BG, VERSE_HOVER_BG, VERSE_SELECTED_TEXT,
-    BORDER_SUBTLE, SLATE_950, WHITE,
-    VERSE_TEXT_SIZE, VERSE_REF_SIZE
+    BORDER_SUBTLE, SLATE_950, WHITE,    VERSE_TEXT_SIZE, VERSE_REF_SIZE,
+    TOOLBAR_BG, BG_RAISED, ACCENT_BORDER,
+    apply_minimal_scrollbar,
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
 from ui.dialogs.add_translation_dialog import AddTranslationDialog
@@ -461,6 +462,8 @@ class BrowserPanel(QWidget):
     def __init__(self, translations: list = None, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
+        # Focus ring: owned by PresentationTab's ring state machine and drawn
+        # around the whole work area (this panel + queue), so no ring here.
 
         # Load last used translation from settings, default to AMP
         saved_translation = get_setting("bible.last_translation", "AMP")
@@ -494,7 +497,7 @@ class BrowserPanel(QWidget):
         toolbar = QWidget()
         toolbar.setFixedHeight(44)
         toolbar.setStyleSheet(f"""
-            background-color: rgba(15, 23, 42, 200);
+            background-color: {TOOLBAR_BG};
             border-bottom: 1px solid rgba(0, 0, 0, 0.4);
         """)
         toolbar_layout = QHBoxLayout(toolbar)
@@ -598,6 +601,7 @@ class BrowserPanel(QWidget):
                 outline: none;
             }}
         """)
+        apply_minimal_scrollbar(self.verse_list)
         self.verse_list.clicked.connect(self._on_verse_clicked)
         self.verse_list.doubleClicked.connect(self._on_verse_double_clicked)
 
@@ -609,6 +613,81 @@ class BrowserPanel(QWidget):
         # ── Load entire bible + highlight Genesis 1:1 ──
         self._bible_cache: dict[str, list[dict]] = {}
         self._load_bible()
+
+        # ── Quick-verse typing: bare digits anywhere in this panel (outside
+        # real inputs) start a short-lived verse-number take; Enter pushes it.
+        from ui.widgets.quick_verse import QuickVerseRecorder
+        self._quick_verse = QuickVerseRecorder(self)
+        self._quick_verse.committed.connect(self._on_quick_verse_committed)
+        self._quick_verse.buffer_changed.connect(self._on_quick_verse_buffer)
+
+        self._quick_badge = QLabel(self)
+        self._quick_badge.setStyleSheet(f"""
+            QLabel {{
+                background: {BG_RAISED};
+                color: {WHITE};
+                border: 1px solid {ACCENT_BORDER};
+                border-radius: 8px;
+                padding: 2px 8px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+        """)
+        self._quick_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._quick_badge.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._quick_badge.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_quick_badge()
+
+    def _position_quick_badge(self):
+        """Keep the quick-verse badge pinned bottom-right (never reflows)."""
+        badge = getattr(self, "_quick_badge", None)
+        if badge is None:
+            return
+        margin = 12
+        badge.adjustSize()
+        badge.move(max(0, self.width() - badge.width() - margin),
+                   max(0, self.height() - badge.height() - margin))
+        if not badge.isHidden():
+            badge.raise_()
+
+    def _on_quick_verse_buffer(self, digits: str):
+        """Show the in-progress take; hide the badge when it lapses."""
+        if digits:
+            self._quick_badge.setText(digits)
+            self._position_quick_badge()
+            self._quick_badge.show()
+            self._quick_badge.raise_()
+        else:
+            self._quick_badge.hide()
+
+    def _on_quick_verse_committed(self, digits: str):
+        """Enter on a quick take: inject → navigate → push, or nothing."""
+        try:
+            verse = int(digits)
+        except (TypeError, ValueError):
+            return
+        book = self.predictive_input.book_input.text().strip() \
+            or self._highlighted_book
+        chapter_text = self.predictive_input.chapter_input.text().strip()
+        try:
+            chapter = int(chapter_text) if chapter_text else self._highlighted_chapter
+        except (TypeError, ValueError):
+            chapter = self._highlighted_chapter
+        if not book or chapter is None:
+            return
+        from core.bible_service import get_verse_count
+        try:
+            verse_max = get_verse_count(self._current_translation, book, int(chapter)) or 0
+        except (TypeError, ValueError):
+            return
+        if not 1 <= verse <= verse_max:
+            return  # invalid verse: nothing happens upon Enter
+        self.predictive_input.verse_input.set_value(verse)
+        self.navigate_to_reference(book, str(chapter), str(verse))
+        self.navigator_push.emit(book, str(chapter), str(verse))
 
     # ── Bible Loading ──────────────────────────────────────────────────────
 
@@ -703,8 +782,33 @@ class BrowserPanel(QWidget):
         self._scroll_to_highlight()
 
     def _on_navigator_push(self, book: str, chapter: int, verse: int):
-        """Handle Enter in navigator → push the verse to live."""
+        """Handle Enter in navigator → push the verse to live, then hand
+        keyboard focus back to the verse list.
+
+        Focus has to LEAVE the navigator to do this: it is a real text
+        input, and the quick-verse recorder deliberately ignores
+        keystrokes inside text inputs. Leaving focus there after a push
+        meant typing a verse number just typed more text into the
+        navigator, and the operator had to click a row in the bible list
+        to get digit-capture focus back — two steps where one is the
+        obvious one.
+        """
         self.navigator_push.emit(book, str(chapter), str(verse))
+        self.focus_verse_list()
+
+    def focus_verse_list(self):
+        """Put keyboard focus on the verse list — the same state as
+        clicking a row, which is what arms type-a-verse-number push."""
+        view = getattr(self, "verse_list", None)
+        if view is None:
+            return False
+        try:
+            if not view.isVisible():
+                return False
+            view.setFocus(Qt.FocusReason.OtherFocusReason)
+            return view.hasFocus()
+        except RuntimeError:
+            return False
 
     def navigate_to_reference(self, book: str, chapter: str, verse: str,
                               translation: str = None):

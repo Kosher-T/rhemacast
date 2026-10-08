@@ -16,7 +16,9 @@ from ui.widgets.hotkey_editor import HotkeyEditor
 from ui.styles import (
     SLATE_950, SLATE_800, SLATE_700, SLATE_600, SLATE_500, SLATE_400,
     SLATE_300, WHITE, BLUE_500, CYAN_400, EMERALD_500, RED_500,
-    AMBER_500, BORDER_SUBTLE
+    AMBER_500, BORDER_SUBTLE,
+    ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER,
+    TEXT_SELECTION,
 )
 
 # Load translations from persistent storage
@@ -88,7 +90,7 @@ COMBO_STYLE = f"""
         max-width: 220px;
     }}
     QComboBox:hover {{
-        border-color: rgba(59, 130, 246, 0.5);
+        border-color: {SELECTION_BORDER};
     }}
     QComboBox:focus {{
         border-color: {BLUE_500};
@@ -109,7 +111,7 @@ COMBO_STYLE = f"""
         color: {WHITE};
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 6px;
-        selection-background-color: rgba(59, 130, 246, 0.3);
+        selection-background-color: {TEXT_SELECTION};
         padding: 4px;
     }}
 """
@@ -807,6 +809,28 @@ class SettingsTab(QWidget):
         row4.addStretch()
         font_layout.addLayout(row4)
 
+        # Designer Display Text Size (Lite Designer edit pane: fixed size,
+        # size params render on preview only; picked up when the designer
+        # is next opened)
+        row4b = QHBoxLayout()
+        row4b.setSpacing(12)
+
+        dt_label = QLabel("Designer Text Size")
+        dt_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        dt_label.setToolTip("Fixed text size inside the Lite Designer (lyric size params still apply on display)")
+        row4b.addWidget(dt_label)
+
+        self._designer_text_spin = QSpinBox()
+        self._designer_text_spin.setRange(9, 24)
+        self._designer_text_spin.setValue(int(get_setting("slides.editor_font_size", "13")))
+        self._designer_text_spin.setSuffix("px")
+        self._designer_text_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._designer_text_spin.valueChanged.connect(self._on_designer_font_size_changed)
+        row4b.addWidget(self._designer_text_spin)
+
+        row4b.addStretch()
+        font_layout.addLayout(row4b)
+
         # Slide Navigation Behavior (Ctrl+Left/Right section-hop)
         row5 = QHBoxLayout()
         row5.setSpacing(12)
@@ -871,6 +895,45 @@ class SettingsTab(QWidget):
         font_layout.addLayout(row7)
 
         layout.addWidget(font_card)
+
+        # Quick-verse typing budget (Bible panel: bare digits → Enter pushes)
+        qv_card = GlassCard()
+        qv_layout = QVBoxLayout(qv_card)
+        qv_layout.setContentsMargins(12, 8, 12, 8)
+        qv_layout.setSpacing(8)
+
+        qv_row = QHBoxLayout()
+        qv_row.setSpacing(12)
+
+        qv_label = QLabel("Quick Verse Timeout")
+        qv_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        qv_label.setToolTip("Gap allowed between quick-verse keystrokes before the typed number is discarded")
+        qv_row.addWidget(qv_label)
+
+        from core.constants import (
+            QUICK_VERSE_TIMEOUT_MS_DEFAULT, QUICK_VERSE_TIMEOUT_MS_MIN,
+            QUICK_VERSE_TIMEOUT_MS_MAX,
+        )
+        self._quick_verse_spin = QSpinBox()
+        self._quick_verse_spin.setRange(QUICK_VERSE_TIMEOUT_MS_MIN,
+                                        QUICK_VERSE_TIMEOUT_MS_MAX)
+        try:
+            saved_timeout = int(get_setting("bible.quick_verse_timeout_ms",
+                                            str(QUICK_VERSE_TIMEOUT_MS_DEFAULT)))
+        except (TypeError, ValueError):
+            saved_timeout = QUICK_VERSE_TIMEOUT_MS_DEFAULT
+        self._quick_verse_spin.setValue(max(QUICK_VERSE_TIMEOUT_MS_MIN,
+                                            min(QUICK_VERSE_TIMEOUT_MS_MAX,
+                                                saved_timeout)))
+        self._quick_verse_spin.setSuffix(" ms")
+        self._quick_verse_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._quick_verse_spin.valueChanged.connect(self._on_quick_verse_timeout_changed)
+        qv_row.addWidget(self._quick_verse_spin)
+
+        qv_row.addStretch()
+        qv_layout.addLayout(qv_row)
+
+        layout.addWidget(qv_card)
         layout.addStretch()
 
         self._sections["Display & Broadcast"] = section
@@ -895,6 +958,11 @@ class SettingsTab(QWidget):
         from core.database import set_setting
         set_setting("slides.deck_font_size", str(self._deck_text_spin.value()))
 
+    def _on_designer_font_size_changed(self):
+        """Persist designer text size. The designer picks it up when next opened."""
+        from core.database import set_setting
+        set_setting("slides.editor_font_size", str(self._designer_text_spin.value()))
+
     def _on_song_nav_mode_changed(self):
         """Persist song section-hop display behavior (read live on each use)."""
         from core.database import set_setting
@@ -904,6 +972,11 @@ class SettingsTab(QWidget):
         """Persist History preview context size (read live on each use)."""
         from core.database import set_setting
         set_setting("history.context_verses", str(self._history_context_spin.value()))
+
+    def _on_quick_verse_timeout_changed(self):
+        """Persist the quick-verse inter-keystroke budget (read live on each use)."""
+        from core.database import set_setting
+        set_setting("bible.quick_verse_timeout_ms", str(self._quick_verse_spin.value()))
     
     def _create_database_section(self):
         """Create the Database section with index status and rebuild controls."""
@@ -924,7 +997,9 @@ class SettingsTab(QWidget):
         # ── Index Management Cards ──
         self._index_widgets = {}
         index_defs = [
-            ("FTS BM25", "fts", "bm25_fingerprint.json", "Full-text search (exact match)"),
+            ("FTS5 Index", "fts", None,
+             "Keyword search over all translations — Porter stemming in the "
+             "index, ranked by SQLite FTS5 bm25"),
             ("Fuzzy BM25", "fuzzy_bm25", "fuzzy_bm25_fingerprint.json", "Keyword search for fuzzy lane"),
             ("Fuzzy FAISS", "fuzzy_faiss", "faiss_fingerprint.json", "Semantic search (vectors)"),
         ]
@@ -954,16 +1029,16 @@ class SettingsTab(QWidget):
             build_btn.setFixedHeight(26)
             build_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: rgba(59, 130, 246, 0.15);
-                    color: {BLUE_500};
-                    border: 1px solid rgba(59, 130, 246, 0.3);
+                    background: {ACCENT_SOFT};
+                    color: {ACCENT};
+                    border: 1px solid {ACCENT_BORDER};
                     border-radius: 4px;
                     padding: 4px 12px;
                     font-size: 10px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
-                    background: rgba(59, 130, 246, 0.25);
+                    background: {SELECTION_BG};
                 }}
                 QPushButton:disabled {{
                     background: rgba(255, 255, 255, 0.05);
@@ -981,81 +1056,94 @@ class SettingsTab(QWidget):
             desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
             card_layout.addWidget(desc_label)
 
-            # Translation tags container
-            trans_label = QLabel("Translations:")
-            trans_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
-            card_layout.addWidget(trans_label)
+            # Every card registers its status label here. The FTS5 card
+            # used to register it inside the branch below, which left its
+            # status line permanently dead.
+            self._index_widgets[key] = {"status_label": status_label}
 
-            tags_container = QWidget()
-            tags_layout = QHBoxLayout(tags_container)
-            tags_layout.setContentsMargins(0, 0, 0, 0)
-            tags_layout.setSpacing(4)
-            tags_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            card_layout.addWidget(tags_container)
+            if fingerprint_file is None:
+                # FTS5 holds every translation in one table, so there is no
+                # build-time translation set to pass to a script. But there
+                # IS a search-time one: which translations a query fans out
+                # across, and that is the operator's choice.
+                self._build_fts_translation_picker(card_layout)
+            else:
+                # Indexes built from a chosen set of translations get the
+                # tag picker that feeds their rebuild command.
+                # Translation tags container
+                trans_label = QLabel("Translations:")
+                trans_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+                card_layout.addWidget(trans_label)
 
-            # Add translation row
-            add_row = QHBoxLayout()
-            add_row.setSpacing(4)
+                tags_container = QWidget()
+                tags_layout = QHBoxLayout(tags_container)
+                tags_layout.setContentsMargins(0, 0, 0, 0)
+                tags_layout.setSpacing(4)
+                tags_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                card_layout.addWidget(tags_container)
 
-            add_combo = QComboBox()
-            add_combo.setStyleSheet(f"""
-                QComboBox {{
-                    background: rgba(0, 0, 0, 0.3);
-                    color: {SLATE_300};
-                    border: 1px solid {BORDER_SUBTLE};
-                    border-radius: 4px;
-                    padding: 4px 8px;
-                    font-size: 10px;
-                    min-width: 120px;
-                    max-height: 24px;
-                }}
-                QComboBox::drop-down {{
-                    border: none;
-                    width: 20px;
-                }}
-                QComboBox::down-arrow {{
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-top: 5px solid {SLATE_400};
-                }}
-            """)
-            add_combo.setPlaceholderText("Add...")
-            add_row.addWidget(add_combo)
+                # Add translation row
+                add_row = QHBoxLayout()
+                add_row.setSpacing(4)
 
-            add_btn = QPushButton("+")
-            add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            add_btn.setFixedSize(24, 24)
-            add_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(34, 197, 94, 0.15);
-                    color: {EMERALD_500};
-                    border: 1px solid rgba(34, 197, 94, 0.3);
-                    border-radius: 4px;
-                    font-size: 14px;
-                    font-weight: 700;
-                }}
-                QPushButton:hover {{
-                    background: rgba(34, 197, 94, 0.3);
-                }}
-            """)
-            add_row.addWidget(add_btn)
-            add_row.addStretch()
+                add_combo = QComboBox()
+                add_combo.setStyleSheet(f"""
+                    QComboBox {{
+                        background: rgba(0, 0, 0, 0.3);
+                        color: {SLATE_300};
+                        border: 1px solid {BORDER_SUBTLE};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                        font-size: 10px;
+                        min-width: 120px;
+                        max-height: 24px;
+                    }}
+                    QComboBox::drop-down {{
+                        border: none;
+                        width: 20px;
+                    }}
+                    QComboBox::down-arrow {{
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 5px solid {SLATE_400};
+                    }}
+                """)
+                add_combo.setPlaceholderText("Add...")
+                add_row.addWidget(add_combo)
 
-            card_layout.addLayout(add_row)
+                add_btn = QPushButton("+")
+                add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                add_btn.setFixedSize(24, 24)
+                add_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: rgba(34, 197, 94, 0.15);
+                        color: {EMERALD_500};
+                        border: 1px solid rgba(34, 197, 94, 0.3);
+                        border-radius: 4px;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }}
+                    QPushButton:hover {{
+                        background: rgba(34, 197, 94, 0.3);
+                    }}
+                """)
+                add_row.addWidget(add_btn)
+                add_row.addStretch()
 
-            # Store widgets
-            self._index_widgets[key] = {
-                "status_label": status_label,
-                "tags_container": tags_container,
-                "tags_layout": tags_layout,
-                "add_combo": add_combo,
-                "add_btn": add_btn,
-                "current_translations": [],
-            }
+                card_layout.addLayout(add_row)
 
-            # Wire up add button
-            add_btn.clicked.connect(lambda checked, k=key: self._add_translation_to_index(k))
-            add_combo.currentIndexChanged.connect(lambda idx, k=key: self._on_combo_changed(idx, k))
+                # Build-flag widgets, alongside the status label stored above
+                self._index_widgets[key].update({
+                    "tags_container": tags_container,
+                    "tags_layout": tags_layout,
+                    "add_combo": add_combo,
+                    "add_btn": add_btn,
+                    "current_translations": [],
+                })
+
+                # Wire up add button
+                add_btn.clicked.connect(lambda checked, k=key: self._add_translation_to_index(k))
+                add_combo.currentIndexChanged.connect(lambda idx, k=key: self._on_combo_changed(idx, k))
 
             layout.addWidget(card)
 
@@ -1083,16 +1171,16 @@ class SettingsTab(QWidget):
         topical_build_btn.setFixedHeight(26)
         topical_build_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(59, 130, 246, 0.15);
-                color: {BLUE_500};
-                border: 1px solid rgba(59, 130, 246, 0.3);
+                background: {ACCENT_SOFT};
+                color: {ACCENT};
+                border: 1px solid {ACCENT_BORDER};
                 border-radius: 4px;
                 padding: 4px 12px;
                 font-size: 10px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: rgba(59, 130, 246, 0.25);
+                background: {SELECTION_BG};
             }}
         """)
         topical_build_btn.clicked.connect(lambda: self._rebuild_single_index("topical"))
@@ -1106,6 +1194,97 @@ class SettingsTab(QWidget):
 
         self._topical_status = topical_status
         layout.addWidget(topical_card)
+
+        # ── Keyword Index (special case) ──
+        keyword_card = GlassCard()
+        keyword_layout = QVBoxLayout(keyword_card)
+        keyword_layout.setContentsMargins(12, 10, 12, 10)
+        keyword_layout.setSpacing(6)
+
+        keyword_header = QHBoxLayout()
+        keyword_header.setSpacing(8)
+
+        keyword_name = QLabel("Keyword")
+        keyword_name.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 700;")
+        keyword_header.addWidget(keyword_name)
+
+        keyword_status = QLabel("Loading...")
+        keyword_status.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        keyword_header.addWidget(keyword_status)
+
+        keyword_header.addStretch()
+
+        keyword_build_btn = QPushButton("Rebuild")
+        keyword_build_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        keyword_build_btn.setFixedHeight(26)
+        keyword_build_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT_SOFT};
+                color: {ACCENT};
+                border: 1px solid {ACCENT_BORDER};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: {SELECTION_BG};
+            }}
+        """)
+        keyword_build_btn.clicked.connect(lambda: self._rebuild_single_index("keywords"))
+        keyword_header.addWidget(keyword_build_btn)
+
+        keyword_layout.addLayout(keyword_header)
+
+        keyword_desc = QLabel("Per-verse topics (Nave's) + lemma glosses (Strong's) — synonyms the verse text never spells out")
+        keyword_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        keyword_desc.setWordWrap(True)
+        keyword_layout.addWidget(keyword_desc)
+
+        # Display translation: which translation renders keyword-lane hits
+        # (keyword results are bare references until looked up here).
+        display_row = QHBoxLayout()
+        display_row.setSpacing(8)
+        display_label = QLabel("Display translation:")
+        display_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        display_row.addWidget(display_label)
+
+        keyword_display_combo = QComboBox()
+        keyword_display_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: rgba(0, 0, 0, 0.3);
+                color: {SLATE_300};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 10px;
+                min-width: 120px;
+                max-height: 24px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QComboBox::down-arrow {{
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {SLATE_400};
+            }}
+            QComboBox QAbstractItemView {{
+                background: rgba(0, 0, 0, 0.9);
+                color: {SLATE_300};
+        selection-background-color: {TEXT_SELECTION};
+            }}
+        """)
+        keyword_display_combo.currentTextChanged.connect(self._on_keyword_display_changed)
+        display_row.addWidget(keyword_display_combo)
+        display_row.addStretch()
+        keyword_layout.addLayout(display_row)
+
+        self._keyword_status = keyword_status
+        self._keyword_build_btn = keyword_build_btn
+        self._keyword_display_combo = keyword_display_combo
+        layout.addWidget(keyword_card)
 
         # ── Rebuild All ──
         btn_row = QHBoxLayout()
@@ -1182,9 +1361,9 @@ class SettingsTab(QWidget):
         tag.setFixedHeight(22)
         tag.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(59, 130, 246, 0.2);
-                color: {BLUE_500};
-                border: 1px solid rgba(59, 130, 246, 0.3);
+                background: {ACCENT_SOFT};
+                color: {ACCENT};
+                border: 1px solid {ACCENT_BORDER};
                 border-radius: 4px;
                 padding: 2px 8px;
                 font-size: 10px;
@@ -1262,6 +1441,244 @@ class SettingsTab(QWidget):
         if idx >= 0:
             self._add_translation_to_index(index_key)
 
+    # ── FTS5 search translations (search-time, not build-time) ────────────
+
+    def _build_fts_translation_picker(self, card_layout):
+        """Which translations an FTS query fans out across.
+
+        This is a search-time setting, so it persists straight to
+        `search.fts_translations` and takes effect on the next query —
+        there is no index to rebuild. Capped because past a handful the
+        fan-out stops being a search and becomes a corpus scan per
+        keystroke.
+        """
+        from core.constants import FTS_MAX_TRANSLATIONS
+        from core.bible_service import fts_translations
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        label = QLabel("Search translations:")
+        label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        header.addWidget(label)
+        self._fts_trans_count = QLabel("")
+        self._fts_trans_count.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        header.addWidget(self._fts_trans_count)
+        header.addStretch()
+        card_layout.addLayout(header)
+
+        tags_container = QWidget()
+        tags_layout = QHBoxLayout(tags_container)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        tags_layout.setSpacing(4)
+        tags_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        card_layout.addWidget(tags_container)
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(4)
+        combo = QComboBox()
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background: rgba(0, 0, 0, 0.3);
+                color: {SLATE_300};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 10px;
+                min-width: 120px;
+                max-height: 24px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {SLATE_400};
+            }}
+        """)
+        combo.setPlaceholderText("Add...")
+        add_row.addWidget(combo)
+        add_row.addStretch()
+        card_layout.addLayout(add_row)
+
+        self._fts_trans_widgets = {
+            "tags_layout": tags_layout,
+            "combo": combo,
+            "current": list(fts_translations()),
+        }
+        combo.currentIndexChanged.connect(self._on_fts_translation_picked)
+        self._refresh_fts_translation_tags()
+
+    def _refresh_fts_translation_tags(self):
+        """Redraw the tags and the n/max counter, and refill the combo."""
+        from core.constants import FTS_MAX_TRANSLATIONS
+        from core.bible_service import get_available_translations
+
+        w = getattr(self, "_fts_trans_widgets", None)
+        if not w:
+            return
+        current = w["current"]
+        while w["tags_layout"].count():
+            item = w["tags_layout"].takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not current:
+            empty = QLabel("No translations selected")
+            empty.setStyleSheet(f"color: {SLATE_600}; font-size: 10px; font-style: italic;")
+            w["tags_layout"].addWidget(empty)
+        for t in current:
+            tag = QPushButton(f"  {t}  ×")
+            tag.setCursor(Qt.CursorShape.PointingHandCursor)
+            tag.setFixedHeight(22)
+            tag.setStyleSheet(f"""
+                QPushButton {{
+                    background: {ACCENT_SOFT};
+                    color: {ACCENT};
+                    border: 1px solid {ACCENT_BORDER};
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background: rgba(239, 68, 68, 0.2);
+                    color: {RED_500};
+                    border: 1px solid rgba(239, 68, 68, 0.3);
+                }}
+            """)
+            tag.clicked.connect(lambda _=False, t=t: self._remove_fts_translation(t))
+            w["tags_layout"].addWidget(tag)
+
+        at_cap = len(current) >= FTS_MAX_TRANSLATIONS
+        if getattr(self, "_fts_trans_count", None) is not None:
+            self._fts_trans_count.setText(f"{len(current)} / {FTS_MAX_TRANSLATIONS}")
+
+        combo = w["combo"]
+        combo.clear()
+        if not at_cap:
+            try:
+                available = get_available_translations()
+            except Exception:
+                available = []
+            for t in sorted(available):
+                if t.upper() not in current:
+                    combo.addItem(t, t)
+        combo.setEnabled(not at_cap and combo.count() > 0)
+
+    def _on_fts_translation_picked(self, idx):
+        """Add the chosen translation and persist immediately."""
+        from core.bible_service import set_fts_translations
+        w = getattr(self, "_fts_trans_widgets", None)
+        if not w or idx < 0:
+            return
+        combo = w["combo"]
+        translation = combo.itemData(idx)
+        combo.setCurrentIndex(-1)
+        if not translation or translation.upper() in w["current"]:
+            return
+        w["current"] = set_fts_translations(w["current"] + [translation])
+        self._refresh_fts_translation_tags()
+        self._rebuild_fts_index_for_selection()
+
+    def _rebuild_fts_index_for_selection(self):
+        """The index IS the selection, so a new selection means a rebuild.
+
+        Left to the Rebuild button this would be a silent trap: the search
+        would keep answering from the old set, and a translation the
+        operator just chose would return nothing with no explanation. The
+        build is a subprocess writing to bible.db, so it runs off the GUI
+        thread exactly like the other index builds; the card's status line
+        reports progress and the build log carries the output.
+        """
+        self._load_fts_status(self._project_root())
+        self._rebuild_single_index("fts")
+
+    @staticmethod
+    def _project_root() -> str:
+        return _os.path.dirname(_os.path.dirname(
+            _os.path.dirname(_os.path.abspath(__file__))))
+
+    def _remove_fts_translation(self, translation):
+        """Drop a translation and persist immediately."""
+        from core.bible_service import set_fts_translations
+        w = getattr(self, "_fts_trans_widgets", None)
+        if not w:
+            return
+        remaining = [t for t in w["current"] if t.upper() != translation.upper()]
+        if not remaining:
+            # Never leave the lane searching nothing.
+            return
+        w["current"] = set_fts_translations(remaining)
+        self._refresh_fts_translation_tags()
+        self._rebuild_fts_index_for_selection()
+
+    def _load_fts_status(self, project_root):
+        """Report the live FTS5 index: row count and its tokenizer.
+
+        Stemming lives in the index, so the tokenizer is the fact that
+        matters here — a table without `porter` is a stale build that will
+        silently miss inflections.
+        """
+        import sqlite3
+        widgets = self._index_widgets.get("fts")
+        if not widgets:
+            return
+        label = widgets["status_label"]
+        db_path = _os.path.join(project_root, "data", "bible", "bible.db")
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE name='verses_fts'"
+                ).fetchone()
+                indexed = conn.execute(
+                    "SELECT COUNT(*) FROM verses_fts").fetchone()[0]
+                verses = conn.execute(
+                    "SELECT COUNT(*) FROM verses").fetchone()[0]
+                # Which translations are actually IN the index, as opposed
+                # to which ones are chosen. These diverge whenever the
+                # selection changes and the rebuild has not happened yet —
+                # and until it does, every query silently misses the newly
+                # chosen translation.
+                indexed_versions = {r[0] for r in conn.execute(
+                    "SELECT DISTINCT v.version FROM verses_fts fts "
+                    "JOIN verses v ON v.id = fts.rowid")}
+            finally:
+                conn.close()
+        except Exception as e:
+            label.setText(f"Error reading index: {e}")
+            label.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+            return
+        if not row:
+            label.setText("Not built")
+            label.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            return
+        tokenizer = ""
+        for part in row[0].split(","):
+            if "tokenize" in part:
+                tokenizer = part.strip().strip("()").strip().strip("'\"")
+                break
+        stemmed = "porter" in tokenizer
+        from core.bible_service import fts_translations
+        chosen = set(fts_translations())
+        stale = indexed_versions != chosen
+        if not stemmed or stale:
+            note = []
+            if not stemmed:
+                note.append("no stemming")
+            if stale:
+                missing = sorted(chosen - indexed_versions)
+                extra = sorted(indexed_versions - chosen)
+                if missing:
+                    note.append(f"missing {', '.join(missing)}")
+                if extra:
+                    note.append(f"stale {', '.join(extra)}")
+            label.setText(f"{indexed:,} indexed  •  needs rebuild — "
+                          + "; ".join(note))
+            label.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            return
+        label.setText(f"{indexed:,} indexed  •  Porter stemming  •  "
+                      f"{len(chosen)} translation(s)")
+        label.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+
     def _load_index_status(self):
         """Load and display current index status from fingerprint files."""
         import json
@@ -1270,8 +1687,11 @@ class SettingsTab(QWidget):
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         indexes_dir = os.path.join(project_root, "data", "indexes")
 
+        # The FTS lane has no fingerprint: it is a virtual table inside
+        # bible.db, so its status is the table itself.
+        self._load_fts_status(project_root)
+
         fingerprint_map = {
-            "fts": "bm25_fingerprint.json",
             "fuzzy_bm25": "fuzzy_bm25_fingerprint.json",
             "fuzzy_faiss": "faiss_fingerprint.json",
         }
@@ -1324,6 +1744,46 @@ class SettingsTab(QWidget):
             self._topical_status.setText("Not built")
             self._topical_status.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
 
+        # Keyword index status + display-translation combo
+        meta_path = os.path.join(indexes_dir, "keywords_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                verses = meta.get("verses_indexed", 0)
+                built_at = meta.get("built_at", "")[:10]
+                self._keyword_status.setText(f"{verses:,} verses  •  {built_at}")
+                self._keyword_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+            except Exception:
+                self._keyword_status.setText("Error reading keyword index")
+                self._keyword_status.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+        else:
+            self._keyword_status.setText("Not built")
+            self._keyword_status.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+        self._refresh_keyword_display_combo()
+
+    def _refresh_keyword_display_combo(self):
+        """Populate the keyword display-translation combo from the setting."""
+        from core.database import get_setting
+        combo = self._keyword_display_combo
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            options = [t for t in ALL_TRANSLATIONS] if ALL_TRANSLATIONS else ["KJV"]
+            for t in options:
+                combo.addItem(t)
+            current = (get_setting("search.keyword_display_translation", "KJV") or "KJV").upper()
+            idx = combo.findText(current)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            combo.blockSignals(False)
+
+    def _on_keyword_display_changed(self, text: str):
+        """Persist the keyword display translation (validated at read time)."""
+        from core.database import set_setting
+        if text:
+            set_setting("search.keyword_display_translation", text.upper())
+
     def _rebuild_single_index(self, index_type: str):
         """Rebuild a single index type."""
         import subprocess
@@ -1341,10 +1801,11 @@ class SettingsTab(QWidget):
         self._set_build_buttons_enabled(False)
 
         scripts = {
-            "fts": [python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py")],
+            "fts": [python_bin, os.path.join(project_root, "data", "bible", "rebuild_fts.py")],
             "fuzzy_bm25": [python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"), "--fuzzy"],
             "fuzzy_faiss": [python_bin, os.path.join(project_root, "data", "bible", "build_faiss.py")],
             "topical": [python_bin, os.path.join(project_root, "data", "bible", "build_topical.py"), "--cpu"],
+            "keywords": [python_bin, os.path.join(project_root, "data", "bible", "build_keywords.py")],
         }
 
         cmd = scripts.get(index_type)
@@ -1353,12 +1814,9 @@ class SettingsTab(QWidget):
             self._set_build_buttons_enabled(True)
             return
 
-        # Add translation flags from the index widgets
-        if index_type == "fts" and "fts" in self._index_widgets:
-            trans = self._index_widgets["fts"]["current_translations"]
-            if trans:
-                cmd.extend(["--translations", ",".join(trans)])
-        elif index_type in ("fuzzy_bm25", "fuzzy_faiss") and index_type in self._index_widgets:
+        # Add translation flags from the index widgets. The FTS index has
+        # no tag picker: it spans every translation in one table.
+        if index_type in ("fuzzy_bm25", "fuzzy_faiss") and index_type in self._index_widgets:
             trans = self._index_widgets[index_type]["current_translations"]
             if trans:
                 cmd.extend(["--translations", ",".join(trans)])
@@ -1428,18 +1886,21 @@ class SettingsTab(QWidget):
 
         self._set_build_buttons_enabled(False)
 
-        fts_trans = self._index_widgets.get("fts", {}).get("current_translations", [])
         fuzzy_trans = self._index_widgets.get("fuzzy_bm25", {}).get("current_translations", [])
 
         scripts = [
-            ([python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"),
-              "--translations", ",".join(fts_trans)], "FTS BM25"),
+            # FTS is one stemmed table over every translation: no
+            # translation set to pass, and no BM25 pickle to build.
+            ([python_bin, os.path.join(project_root, "data", "bible", "rebuild_fts.py")],
+             "FTS5 Index"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"),
               "--fuzzy", "--translations", ",".join(fuzzy_trans)], "Fuzzy BM25"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_faiss.py"),
               "--translations", ",".join(fuzzy_trans)], "Fuzzy FAISS"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_topical.py"),
               "--cpu"], "Topical"),
+            ([python_bin, os.path.join(project_root, "data", "bible", "build_keywords.py")],
+             "Keyword"),
         ]
 
         self._build_queue = scripts
@@ -1518,6 +1979,8 @@ class SettingsTab(QWidget):
                 widgets["build_btn"].setEnabled(enabled)
         if hasattr(self, "_rebuild_all_btn"):
             self._rebuild_all_btn.setEnabled(enabled)
+        if hasattr(self, "_keyword_build_btn"):
+            self._keyword_build_btn.setEnabled(enabled)
 
     def _create_recording_section(self):
         """Create the Recording section."""

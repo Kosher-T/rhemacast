@@ -16,6 +16,8 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QMouseEvent
 from ui.styles import (
     SLATE_950, SLATE_900, SLATE_800, SLATE_700, SLATE_600,
     SLATE_500, SLATE_400, WHITE, BLUE_500,
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, BG_APP,
+    ACCENT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER, TEXT_SELECTION,
 )
 from ui.widgets.aspect_ratio import AspectRatioWidget
 
@@ -47,7 +49,7 @@ DEFAULT_CONTAINER = {
 # ─── Styles ───────────────────────────────────────────────────────────────────
 
 _SECTION_STYLE = (
-    "color: #475569;"
+    "color: " + SLATE_600 + ";"
     "font-size: 9px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
@@ -58,7 +60,7 @@ _SECTION_STYLE = (
 )
 
 _LABEL_STYLE = (
-    "color: #64748b;"
+    "color: " + TEXT_FAINT + ";"
     "font-size: 10px;"
     "font-weight: 600;"
     "background: transparent;"
@@ -72,12 +74,12 @@ _INPUT_STYLE = (
     "  border: 1px solid rgba(255,255,255,0.08);"
     "  border-radius: 4px;"
     "  padding: 3px 6px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 11px;"
     "  font-family: 'Consolas', monospace;"
     "}"
     "QLineEdit:focus {"
-    "  border: 1px solid rgba(59,130,246,0.4);"
+    "  border: 1px solid " + SELECTION_BORDER + ";"
     "}"
 )
 
@@ -87,11 +89,11 @@ _COMBO_STYLE = (
     "  border: 1px solid rgba(255,255,255,0.08);"
     "  border-radius: 4px;"
     "  padding: 3px 6px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 11px;"
     "}"
     "QComboBox:focus {"
-    "  border: 1px solid rgba(59,130,246,0.4);"
+    "  border: 1px solid " + SELECTION_BORDER + ";"
     "}"
     "QComboBox::drop-down {"
     "  border: none;"
@@ -101,14 +103,14 @@ _COMBO_STYLE = (
     "  image: none;"
     "  border-left: 4px solid transparent;"
     "  border-right: 4px solid transparent;"
-    "  border-top: 5px solid #94a3b8;"
+    "  border-top: 5px solid " + TEXT_MUTED + ";"
     "  margin-right: 4px;"
     "}"
     "QComboBox QAbstractItemView {"
-    "  background: #1e293b;"
+    "  background: " + BG_RAISED + ";"
     "  border: 1px solid rgba(255,255,255,0.1);"
-    "  color: #f8fafc;"
-    "  selection-background-color: rgba(59,130,246,0.3);"
+    "  color: " + TEXT_PRIMARY + ";"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "  padding: 2px;"
     "}"
 )
@@ -230,13 +232,13 @@ class _PropToggle(QWidget):
     def _style(self, on: bool) -> str:
         if on:
             return (
-                "QPushButton { background: #3b82f6; border: none; border-radius: 9px; }"
+                "QPushButton { background: " + ACCENT + "; border: none; border-radius: 9px; }"
                 "QPushButton::indicator { width: 14px; height: 14px; border-radius: 7px; background: white; margin: 2px; }"
                 "QPushButton:checked::indicator { margin-left: 16px; }"
             )
         return (
             "QPushButton { background: rgba(255,255,255,0.1); border: none; border-radius: 9px; }"
-            "QPushButton::indicator { width: 14px; height: 14px; border-radius: 7px; background: #64748b; margin: 2px; }"
+            "QPushButton::indicator { width: 14px; height: 14px; border-radius: 7px; background: " + TEXT_FAINT + "; margin: 2px; }"
             "QPushButton:checked::indicator { margin-left: 16px; }"
         )
 
@@ -389,7 +391,7 @@ class ContainerCanvas(QWidget):
         w, h = self.width(), self.height()
 
         # Background
-        p.fillRect(0, 0, w, h, QColor("#0f172a"))
+        p.fillRect(0, 0, w, h, QColor(BG_APP))
 
         # Grid
         grid_pen = QPen(QColor(255, 255, 255, 8), 1)
@@ -440,14 +442,14 @@ class ContainerCanvas(QWidget):
             p_scale_y = pad * h / VIRTUAL_H
             inner = rect.adjusted(int(p_scale_x), int(p_scale_y),
                                   -int(p_scale_x), -int(p_scale_y))
-            p.setPen(QPen(QColor(59, 130, 246, 60), 1, Qt.PenStyle.DashLine))
+            p.setPen(QPen(QColor(SELECTION_BORDER), 1, Qt.PenStyle.DashLine))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(inner, 4, 4)
 
         # Center crosshair
         mid_x = int(sx + sw / 2)
         mid_y = int(sy + sh / 2)
-        p.setPen(QPen(QColor(59, 130, 246, 40), 1))
+        p.setPen(QPen(QColor(SELECTION_BORDER), 1))
         p.drawLine(mid_x, int(sy), mid_x, int(sy + sh))
         p.drawLine(int(sx), mid_y, int(sx + sw), mid_y)
 

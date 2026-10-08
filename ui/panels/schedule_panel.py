@@ -15,6 +15,7 @@ Interactions:
 """
 
 import logging
+import time
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -26,7 +27,10 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
 
 from ui.styles import (
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE,
-    PANEL_BODY_STYLE, SLATE_400, SLATE_500, WHITE, BORDER_SUBTLE, BLUE_500
+    PANEL_BODY_STYLE, SLATE_400, SLATE_500, WHITE, BORDER_SUBTLE,
+    TEXT_MUTED, ACCENT, ACCENT_SOFT, ACCENT_BORDER,
+    SELECTION_BG, SELECTION_BORDER, MENU_BG,
+    apply_minimal_scrollbar,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,7 +84,7 @@ _BOOK_COLORS = [
     ("#4a3030", "#705050", "#382424"),  # 7: wine
 ]
 
-_DEFAULT_BG = "rgba(70, 100, 246, 60)"
+_DEFAULT_BG = "rgba(255, 255, 255, 8)"
 
 
 class ScheduleItem(QFrame):
@@ -88,6 +92,8 @@ class ScheduleItem(QFrame):
 
     clicked = pyqtSignal()
     double_clicked = pyqtSignal()
+    # One of two routes to the same event; see
+    # SchedulePanel._emit_item_double_clicked.
     delete_requested = pyqtSignal()
     rename_requested = pyqtSignal()
     theme_change_requested = pyqtSignal(str)
@@ -117,14 +123,17 @@ class ScheduleItem(QFrame):
         self.setProperty("selected", False)
         self.setStyleSheet(f"""
             QFrame {{
-                background: rgba(70, 100, 246, 60);
+                background: {_DEFAULT_BG};
                 padding: 6px;
             }}
             QFrame[selected="true"] {{
-                background: rgba(59, 130, 200, 50);
+                background: {SELECTION_BG};
             }}
             QFrame:hover {{
-                background: rgba(59, 130, 246, 40);
+                background: {ACCENT_SOFT};
+            }}
+            QFrame[selected="true"]:hover {{
+                background: {SELECTION_BG};
             }}
         """)
 
@@ -146,7 +155,7 @@ class ScheduleItem(QFrame):
             QLineEdit {{
                 background: rgba(0, 0, 0, 80);
                 color: {WHITE};
-                border: 1px solid rgba(59, 130, 246, 100);
+                border: 1px solid {SELECTION_BORDER};
                 border-radius: 4px;
                 padding: 2px 6px;
                 font-size: 12px;
@@ -181,6 +190,11 @@ class ScheduleItem(QFrame):
     def set_selected(self, selected: bool):
         """Update the selected visual state."""
         self.setProperty("selected", selected)
+        # Secondary label brightens on selection so it stays readable
+        # against the dark selection wash.
+        self._theme_label.setStyleSheet(
+            f"color: {TEXT_MUTED if selected else SLATE_500}; "
+            f"font-size: 8px; background: transparent;")
         self.style().unpolish(self)
         self.style().polish(self)
 
@@ -193,10 +207,13 @@ class ScheduleItem(QFrame):
                 padding: 6px;
             }}
             QFrame[selected="true"] {{
-                background: rgba(59, 130, 200, 50);
+                background: {SELECTION_BG};
             }}
             QFrame:hover {{
-                background: rgba(59, 130, 246, 40);
+                background: {ACCENT_SOFT};
+            }}
+            QFrame[selected="true"]:hover {{
+                background: {SELECTION_BG};
             }}
         """)
 
@@ -263,7 +280,7 @@ class ScheduleItem(QFrame):
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
-                background: rgba(30, 41, 59, 240);
+                background: {MENU_BG};
                 color: {WHITE};
                 border: 1px solid rgba(255, 255, 255, 20);
                 border-radius: 6px;
@@ -274,7 +291,7 @@ class ScheduleItem(QFrame):
                 border-radius: 4px;
             }}
             QMenu::item:selected {{
-                background: rgba(59, 130, 246, 60);
+                background: {SELECTION_BG};
             }}
         """)
 
@@ -326,7 +343,10 @@ class SchedulePanel(QWidget):
         super().__init__(parent)
         from core.schedule_model import schedule_model as _default_model
         self._model = model or _default_model
+        self._last_double_click_at = 0.0
         self.setStyleSheet(PANEL_BODY_STYLE)
+        # Focus ring: drawn by PresentationTab's ring state machine around the
+        # schedule wrapper (so it can pair with the work-area ring), not here.
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -357,6 +377,7 @@ class SchedulePanel(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_widget.setSpacing(2)
         self.list_widget.setStyleSheet("QListWidget { padding: 4px; }")
+        apply_minimal_scrollbar(self.list_widget)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._on_context_menu)
         self.list_widget.model().rowsMoved.connect(self._on_rows_moved)
@@ -399,9 +420,9 @@ class SchedulePanel(QWidget):
                 color: {WHITE};
             }}
             QPushButton:checked {{
-                background: rgba(59, 130, 246, 0.15);
-                color: #60a5fa;
-                border-color: rgba(59, 130, 246, 0.3);
+                background: {ACCENT_SOFT};
+                color: {ACCENT};
+                border-color: {ACCENT_BORDER};
             }}
         """)
         self._color_toggle.clicked.connect(self._toggle_color_coding)
@@ -415,6 +436,14 @@ class SchedulePanel(QWidget):
 
         # Model subscriptions — every mutation anywhere rebuilds this view
         self._rebuilding = False
+        # Qt's own double-click detection on the VIEW: the
+        # platform-reliable route. ScheduleItem.mousePressEvent
+        # deliberately ignores the left press so the view manages
+        # selection, and whether the widget's own mouseDoubleClickEvent is
+        # then reached is not something a widget may rely on across
+        # platforms. The view emits this one everywhere.
+        self.list_widget.itemDoubleClicked.connect(self._on_view_double_clicked)
+
         self._model.items_changed.connect(self._rebuild)
         self._model.items_changed.connect(lambda: self.schedule_modified.emit())
         self._model.file_changed.connect(self._update_title)
@@ -423,11 +452,37 @@ class SchedulePanel(QWidget):
 
     # ── Model-backed view ──────────────────────────────────────────────────
 
+    def _on_view_double_clicked(self, list_item):
+        """QListWidget.itemDoubleClicked — the platform-independent route."""
+        widget = list_item.data(Qt.ItemDataRole.UserRole + 1)
+        if widget is not None and hasattr(widget, "data"):
+            self._emit_item_double_clicked(widget.data)
+
+    def _emit_item_double_clicked(self, data: dict):
+        """Emit item_double_clicked exactly once per double-click.
+
+        Two routes deliver this event — the row widget's own
+        mouseDoubleClickEvent and the view's itemDoubleClicked — and
+        depending on the platform only one of them fires, or on some both
+        do. Firing twice would push the verse to live twice; firing zero
+        times is the bug being fixed (the stale deck stayed on live, and
+        prev/next then walked THAT deck's slides instead of the adjacent
+        verse). Collapse both routes here so the outcome is identical
+        everywhere.
+        """
+        now = time.monotonic()
+        if (now - self._last_double_click_at) * 1000.0 \
+                <= QApplication.doubleClickInterval():
+            return
+        self._last_double_click_at = now
+        self.item_double_clicked.emit(data)
+
     def _add_widget(self, data: dict):
         """Create row widgets for one model item (no model mutation)."""
         item_widget = ScheduleItem(data)
         item_widget.clicked.connect(lambda: self.item_clicked.emit(item_widget.data))
-        item_widget.double_clicked.connect(lambda: self.item_double_clicked.emit(item_widget.data))
+        item_widget.double_clicked.connect(
+            lambda: self._emit_item_double_clicked(item_widget.data))
         item_widget.rename_requested.connect(lambda: self._start_rename(item_widget))
         item_widget.theme_change_requested.connect(lambda theme: self._change_theme(item_widget, theme))
         item_widget.delete_requested.connect(lambda: self._delete_item_widget(item_widget))
@@ -447,10 +502,14 @@ class SchedulePanel(QWidget):
         item_widget.style().polish(item_widget)
 
     def _rebuild(self):
-        """Re-render all rows from the model, preserving selection by uid."""
+        """Re-render all rows from the model, preserving selection by uid
+        and the scroll position (adds must not throw the view to top)."""
         if self._rebuilding:
             return
         self._rebuilding = True
+        bar = self.list_widget.verticalScrollBar()
+        pos = bar.value()
+        at_bottom = pos >= bar.maximum()
         try:
             selected = set()
             for item in self.list_widget.selectedItems():
@@ -470,6 +529,9 @@ class SchedulePanel(QWidget):
             if self._color_enabled:
                 self._assign_colors()
             self._sync_selection_state()
+            # At the bottom: track the new bottom (fresh rows visible).
+            # Anywhere else: absolute position (viewpoint preserved).
+            bar.setValue(bar.maximum() if at_bottom else min(pos, bar.maximum()))
         finally:
             self._rebuilding = False
 
@@ -677,6 +739,10 @@ class SchedulePanel(QWidget):
                         # (don't return True here - let event propagate to list widget)
                 # Don't consume the event - let the list widget handle selection
         if watched is self.list_widget.viewport():
+            if event.type() in (event.Type.DragEnter, event.Type.DragMove):
+                # Schedule rows are uid-unique: Alt must never flip a
+                # move into a copy-drop that clones the item.
+                event.setDropAction(Qt.DropAction.MoveAction)
             if event.type() == event.Type.DragMove:
                 self._update_drop_indicator(event.position().toPoint())
             elif event.type() in (event.Type.DragLeave, event.Type.Drop):
@@ -718,7 +784,7 @@ class SchedulePanel(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
-                background: rgba(30, 41, 59, 240);
+                background: {MENU_BG};
                 color: {WHITE};
                 border: 1px solid rgba(255, 255, 255, 20);
                 border-radius: 6px;
@@ -729,7 +795,7 @@ class SchedulePanel(QWidget):
                 border-radius: 4px;
             }}
             QMenu::item:selected {{
-                background: rgba(59, 130, 246, 60);
+                background: {SELECTION_BG};
             }}
         """)
 

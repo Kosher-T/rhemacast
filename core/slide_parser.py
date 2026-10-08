@@ -55,6 +55,7 @@ Output: {"title": str, "slides": [{"section": str|None, "text": str}],
 
 import html
 import logging
+import math
 import re
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ _LEGACY_TEXT_RE = re.compile(r"^(.*):\s*$")
 
 _FORMAT_KEYS = ("size", "bold", "color", "italics", "case",
                  "underline", "strike", "align", "spacing",
-                 "super", "sub", "outline", "dir", "hr", "font")
+                 "super", "sub", "outline", "shadow", "dir", "hr", "font")
 _TRUE_SET = {"true", "1", "yes"}
 _FALSE_SET = {"false", "0", "no"}
 _CASE_SET = {"upper", "lower", "origin"}
@@ -87,7 +88,7 @@ def blank_deck_format() -> dict:
             "bold": None, "color": None, "italics": None, "case": None,
             "underline": None, "strike": None, "align": None,
             "spacing": None, "super": None, "sub": None, "outline": None,
-            "dir": None, "hr": None, "font": None}
+            "shadow": None, "dir": None, "hr": None, "font": None}
 
 
 def _parse_bool(value: str):
@@ -97,6 +98,209 @@ def _parse_bool(value: str):
     if v in _FALSE_SET:
         return False
     return None
+
+
+def _outline_ring(value: str) -> str:
+    """Convert a stored outline value into a CSS text-shadow LIST.
+
+    The outline is a ring of hard text shadows, NOT -webkit-text-stroke:
+    a stroke straddles the glyph outline, so half of it grows *inwards*
+    and eats the letterform (at 25px the word stops being readable).
+    Shadows only ever sit outside the glyph, and because every shadow is
+    painted before any glyph fill, a letter's outline also ends up behind
+    its neighbours' fills instead of smearing over them.
+
+    The ring resolution scales with the thickness so the outer contour
+    stays smooth instead of scalloped, capped at 48 shadows.
+    """
+    v = value.strip()
+    m = re.match(r"^(\d+(?:\.\d+)?)px\s+(.+)$", v, re.IGNORECASE)
+    if m:
+        try:
+            radius = int(round(float(m.group(1))))
+        except ValueError:
+            radius = 1
+        color = _parse_hex_color(m.group(2).strip())
+    else:
+        radius = 1
+        color = _parse_hex_color(v)
+    if color is None:
+        return ""
+    radius = max(1, min(25, radius))
+    steps = min(48, max(12, round(radius * 1.9)))
+    ring = []
+    seen = set()
+    for i in range(steps):
+        angle = 2 * math.pi * i / steps
+        dx = int(round(math.cos(angle) * radius))
+        dy = int(round(math.sin(angle) * radius))
+        if not dx and not dy:
+            continue  # a dead-centre shadow would be invisible
+        if (dx, dy) in seen:
+            continue  # at small radii several angles round to one offset
+        seen.add((dx, dy))
+        ring.append(f"{dx}px {dy}px 0 {color}")
+    return ",".join(ring)
+
+
+def _outline_to_css(value: str) -> str:
+    """The outline as a text-shadow declaration for an inline span.
+
+    The theme's own soft drop shadow rides along so an outlined run does not
+    lose the depth the un-outlined runs keep.
+    """
+    ring = _outline_ring(value)
+    if not ring:
+        return ""
+    return "text-shadow:" + ring + ",var(--rc-text-shadow,0 4px 12px rgba(0,0,0,0.4))"
+
+
+# Canonical "no outline" value. The deck has to be able to SAY "off",
+# otherwise an inherited (theme) outline reasserts itself on the display and
+# the operator's toggle looks broken there while the button reads off.
+OUTLINE_NONE = "none"
+
+
+def _parse_outline(value: str):
+    """Normalize an outline value for the format dict.
+
+    Accepts the legacy bare color ("#ff0000"), the explicit form
+    "2px #ff0000", and "none"/"off" for an explicit no-outline override.
+    Returns the canonical string consumed by _span_style.
+    """
+    v = value.strip()
+    if v.lower() in ("none", "off"):
+        return OUTLINE_NONE
+    m = re.match(r"^(\d+(?:\.\d+)?)px\s+(.+)$", v, re.IGNORECASE)
+    if m:
+        color = _parse_hex_color(m.group(2).strip())
+        if color is not None:
+            return f"{m.group(1)}px {color}"
+        return None
+    return _parse_hex_color(v)
+
+
+def _parse_shadow(value: str):
+    """Normalize a shadow value: "<size>px <opacity>% <distance>px <#hex> <angle>".
+
+    Opacity, distance and angle are optional, so the short forms "4px #000000"
+    and "8px 40% #000000" work too (angle defaults to 45 = down-right).
+    "none"/"off" is an explicit no-shadow.
+    """
+    v = value.strip()
+    if v.lower() in ("none", "off"):
+        return OUTLINE_NONE
+    parts = v.split()
+    # Trailing angle comes after the color ("... #hex 135"), so it is popped
+    # first: a bare number (or Ndeg) that is not a color.
+    angle = 45
+    if parts and not parts[-1].startswith("#"):
+        token = parts.pop().lower()
+        if token.endswith("deg"):
+            token = token[:-3]
+        try:
+            angle = int(round(float(token))) % 360
+        except ValueError:
+            return None
+    color = None
+    if parts and parts[-1].startswith("#"):
+        color = _parse_hex_color(parts.pop())
+        if color is None:
+            return None
+    size = None
+    if parts:
+        size = _px_int(parts.pop(0))
+        if size is None:
+            return None
+    opacity = 100
+    if parts:
+        token = parts.pop(0)
+        if not token.endswith("%"):
+            return None
+        try:
+            opacity = int(round(float(token[:-1])))
+        except ValueError:
+            return None
+    distance = 0
+    if parts:
+        distance = _px_int(parts.pop(0), default=0)
+        if distance is None:
+            return None
+    if parts:
+        return None  # trailing junk
+    if color is None or (size is None and opacity == 100 and distance == 0):
+        return None
+    if size is None:
+        size = 8
+    return (f"{max(1, min(25, size))}px {max(0, min(100, opacity))}% "
+            f"{max(0, min(60, distance))}px {color} {angle}")
+
+
+def _px_int(token: str, default=None):
+    """"12" / "12px" -> 12, else default (None means invalid)."""
+    tok = token.strip()
+    if tok.lower().endswith("px"):
+        tok = tok[:-2].strip()
+    try:
+        return int(round(float(tok)))
+    except ValueError:
+        return default
+
+
+def _shadow_ring(size: int, opacity: int, distance: int, color: str,
+                 angle: int = 45) -> str:
+    """A hard text-shadow ring: the shadow look, at a given thickness,
+    opacity, distance and direction (degrees, 0 = east, 90 = south). At
+    distance 0 the ring hugs the glyphs (an outline drawn in shadow)."""
+    steps = min(48, max(12, round(size * 1.9)))
+    alpha = max(0, min(100, opacity)) / 100.0
+    rad = math.radians(angle % 360)
+    ox = int(round(distance * math.cos(rad)))
+    oy = int(round(distance * math.sin(rad)))
+    ring = []
+    seen = set()
+    for i in range(steps):
+        angle = 2 * math.pi * i / steps
+        dx = int(round(math.cos(angle) * size)) + ox
+        dy = int(round(math.sin(angle) * size)) + oy
+        if (dx, dy) in seen:
+            continue
+        seen.add((dx, dy))
+        a = round(alpha, 3)
+        if a >= 1:
+            ring.append(f"{dx}px {dy}px 0 {color}")
+        else:
+            ring.append(f"{dx}px {dy}px 0 {color_a(color, a)}")
+    return ",".join(ring)
+
+
+def color_a(color: str, alpha: float) -> str:
+    """#rrggbb + alpha -> rgba(...) (kept separate: the theme path needs it)."""
+    r = int(color[1:3], 16)
+    g = int(color[3:5], 16)
+    b = int(color[5:7], 16)
+    # round() then int() so a whole alpha prints as "0", not "0.0" — the JS
+    # renderer formats it the same way and the two must match byte for byte.
+    a = int(round(alpha * 1000)) / 1000
+    if a == int(a):
+        a = int(a)
+    return f"rgba({r}, {g}, {b}, {a})"
+
+
+def _shadow_to_css(value: str) -> str:
+    """A shadow value -> a text-shadow declaration, or"" if invalid."""
+    parsed = _parse_shadow(value)
+    if not parsed or parsed == OUTLINE_NONE:
+        return ""
+    size, rest = parsed.split(" ", 1)
+    opacity, rest = rest.split(" ", 1)
+    distance, rest = rest.split(" ", 1)
+    color, _, angle = rest.rpartition(" ")
+    ring = _shadow_ring(int(size[:-2]), int(opacity[:-1]),
+                        int(distance[:-2]), color, int(angle))
+    if not ring:
+        return ""
+    return "text-shadow:" + ring
 
 
 def _parse_hex_color(value: str):
@@ -146,10 +350,26 @@ def _apply_format_pair(fmt: dict, key: str, value: str, inline: bool):
             logger.warning(f"Ignoring invalid {key} value: {value!r} (want true/false)")
         else:
             fmt[key] = parsed
-    elif key == "color" or key == "outline":
+    elif key == "color":
         parsed = _parse_hex_color(value)
         if parsed is None:
-            logger.warning(f"Ignoring invalid {key} value: {value!r} (want #rgb/#rrggbb)")
+            logger.warning(f"Ignoring invalid color value: {value!r} (want #rgb/#rrggbb)")
+        else:
+            fmt[key] = parsed
+    elif key == "outline":
+        parsed = _parse_outline(value)
+        if parsed is None:
+            logger.warning("Ignoring invalid outline value: "
+                           f"{value!r} (want #rgb/#rrggbb, Npx #rgb/#rrggbb "
+                           "or none)")
+        else:
+            fmt[key] = parsed
+    elif key == "shadow":
+        parsed = _parse_shadow(value)
+        if parsed is None:
+            logger.warning("Ignoring invalid shadow value: "
+                           f"{value!r} (want Npx [P% [Dpx [A]]] "
+                           "#rgb/#rrggbb, or none)")
         else:
             fmt[key] = parsed
     elif key == "case":
@@ -343,8 +563,22 @@ def _span_style(params: dict, allow: frozenset | None = None) -> str:
         if params.get("spacing") is not None:
             styles.append(f"line-height:{params['spacing']}")
     if allow is None or "outline" in allow:
-        if params.get("outline"):
-            styles.append(f"-webkit-text-stroke:1px {params['outline']}")
+        outline = params.get("outline")
+        if outline == OUTLINE_NONE:
+            # Explicit off: kill the inherited outline/shadow for this run.
+            styles.append("text-shadow:none")
+        # A real outline is NOT a style: -webkit-text-stroke straddles the
+        # glyph path and eats the letterform. It needs a duplicated stroke
+        # layer behind the opaque fill, which the JS renderers emit (class
+        # .rc-oc) and these non-display surfaces simply do without.
+    if allow is None or "shadow" in allow:
+        shadow = params.get("shadow")
+        if shadow == OUTLINE_NONE:
+            styles.append("text-shadow:none")
+        elif shadow:
+            shadow_css = _shadow_to_css(shadow)
+            if shadow_css:
+                styles.append(shadow_css)
     if allow is None or "dir" in allow:
         if params.get("dir"):
             styles.append(f"direction:{params['dir']};unicode-bidi:embed")
@@ -495,6 +729,42 @@ def format_to_line(fmt: dict | None) -> str | None:
     return "; ".join(parts) or None
 
 
+def _slide_block(slides: list[dict], idx: int) -> str:
+    """Raw txt block for one slide: optional `*section` line + text lines.
+
+    Marker lines follow ownership, not value changes: a slide that owns
+    its section always emits, so same-name splits persist as repeated
+    `*Name` lines (read back losslessly by the parser — section syntax
+    is never merged). Section-less slides after a valued one keep the
+    bare `*` clear so re-parse does not inherit.
+    """
+    slide = slides[idx]
+    lines: list[str] = []
+    section = (slide.get("section") or "").strip() or None
+    prev = ((slides[idx - 1].get("section") or "").strip() or None
+            if idx > 0 else None)
+    if section is None and idx > 0 and prev is not None:
+        # Preserve section-lessness: without the bare `*` this slide
+        # would inherit the value above on re-parse.
+        lines.append("*")
+    elif slide_owns_marker(slides, idx) and section:
+        lines.append(f"*{section}")
+    text = slide.get("text", "") or ""
+    lines.append(text.strip())
+    return "\n".join(lines)
+
+
+def slides_body_to_txt(slides: list[dict]) -> str:
+    """Serialize slide blocks only — no title, no format line.
+
+    Used for tier-scoped copy (a section run, a single slide block): the
+    subset carries its own `*` markers via ownership flags, so it
+    re-parses with identical section structure.
+    """
+    return "\n\n\n".join(
+        _slide_block(slides, i) for i in range(len(slides or [])))
+
+
 def deck_to_txt(title: str, slides: list[dict], format: dict | None = None) -> str:
     """Serialize a deck back to raw txt format (round-trips parse_slide_txt).
 
@@ -509,23 +779,8 @@ def deck_to_txt(title: str, slides: list[dict], format: dict | None = None) -> s
     if header:
         blocks.append(header)
     blocks.append(f"# {(title or '').strip() or '(untitled)'}")
-    for idx, slide in enumerate(slides or []):
-        lines: list[str] = []
-        section = (slide.get("section") or "").strip() or None
-        prev = ((slides[idx - 1].get("section") or "").strip() or None
-                if idx > 0 else None)
-        if section is None and idx > 0 and prev is not None:
-            # Preserve section-lessness: without the bare `*` this slide
-            # would inherit the value above on re-parse.
-            lines.append("*")
-        elif slide_owns_marker(slides, idx) and section:
-            # Markers follow ownership, not value changes: a slide that owns
-            # its section always emits, so same-name splits persist as
-            # repeated `*Name` lines (read back losslessly by the parser).
-            lines.append(f"*{section}")
-        text = slide.get("text", "") or ""
-        lines.append(text.strip())
-        blocks.append("\n".join(lines))
+    for idx in range(len(slides or [])):
+        blocks.append(_slide_block(slides, idx))
     return "\n\n\n".join(blocks) + "\n"
 
 

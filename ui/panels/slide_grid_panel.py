@@ -14,13 +14,13 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QFrame,
-    QScrollArea, QGridLayout,
+    QScrollArea, QGridLayout, QGraphicsOpacityEffect,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent, QObject, QPropertyAnimation
 
 from ui.styles import (
-    SLATE_950, SLATE_600, SLATE_400, SLATE_800,
-    BLUE_500, BLUE_400, BORDER_LIGHT,
+    SLATE_950, SLATE_900, SLATE_600, SLATE_400, SLATE_800,
+    BLUE_500, BLUE_400, BORDER_LIGHT, SELECTION_BG, MENU_BG,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,9 +44,8 @@ class SlideCard(QFrame):
     """One slide card: index badge + full multi-line text.
 
     No section label here — sections are group headers in the grid.
-    Card chrome (slate fill + rounded border) is painted manually: Qt
-    stylesheets combining border+border-radius on a QFrame artifact inner
-    boxes around child labels (verified by pixel tests).
+    Card chrome is flat 2D, painted manually: dark fill with no border
+    when idle, vibrant wash + warm orange edge when highlighted.
     Body labels carry no text-interaction flags so clicks anywhere on the
     card propagate here and select the slide.
     """
@@ -136,18 +135,19 @@ class SlideCard(QFrame):
             self.update()
 
     def paintEvent(self, event):
+        # Flat 2D look: dark fill, no border when idle; vibrant wash +
+        # warm orange edge when highlighted. Behavior untouched.
         from PyQt6.QtGui import QPainter, QColor, QPen
+        from PyQt6.QtCore import Qt
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor(SLATE_800))
         if self._selected:
-            pen = QPen(QColor(BLUE_500))
-            pen.setWidth(2)
+            p.setBrush(QColor(SELECTION_BG))
+            p.setPen(QPen(QColor(251, 146, 60, 230)))
         else:
-            pen = QPen(QColor(255, 255, 255, 25))
-            pen.setWidth(1)
-        p.setPen(pen)
-        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 6, 6)
+            p.setBrush(QColor(SLATE_900))
+            p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(self.rect(), 6, 6)
 
     def set_slide_text(self, text: str):
         """Replace the body text in place (no rebuild; layout reflows)."""
@@ -181,6 +181,139 @@ class SlideCard(QFrame):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+
+class _FadeScrollBar(QObject):
+    """Mobile-style scroll indicator for the strips: no reserved lane,
+    thin thumb floating over content, visible on hover/scroll, fading
+    out after idleness. Indicator only — never draggable, never in the
+    layout, so it can never shove cards sideways."""
+
+    LANE = 6
+    MIN_THUMB = 24
+    IDLE_MS = 1200
+    FADE_MS = 150
+
+    def __init__(self, scroll: QScrollArea):
+        super().__init__(scroll)
+        self._scroll = scroll
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._lane = QWidget(scroll)
+        self._lane.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._lane.setStyleSheet("background: transparent; border: none;")
+        self._thumb = QWidget(self._lane)
+        self._thumb.setStyleSheet(
+            "background: rgba(161, 161, 170, 0.45); border: none;"
+            "border-radius: 3px;")
+        self._effect = QGraphicsOpacityEffect(self._lane)
+        self._effect.setOpacity(0.0)
+        self._lane.setGraphicsEffect(self._effect)
+        self._lane.hide()
+        self._fade = QPropertyAnimation(self._effect, b"opacity", self)
+        self._fade.setDuration(_FadeScrollBar.FADE_MS)
+        self._fade.finished.connect(self._on_fade_done)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(_FadeScrollBar.IDLE_MS)
+        self._hide_timer.timeout.connect(self.hide)
+        bar = scroll.verticalScrollBar()
+        bar.valueChanged.connect(lambda _v: self._poke())
+        bar.rangeChanged.connect(lambda _a, _b: self._layout())
+        scroll.viewport().installEventFilter(self)
+        scroll.installEventFilter(self)
+
+    @staticmethod
+    def thumb_geometry(view_h: int, maximum: int, page_step: int,
+                       value: int):
+        """(thumb_h, thumb_y) for the lane; hidden when maximum <= 0."""
+        total = maximum + page_step
+        if maximum <= 0 or total <= 0 or view_h <= 0:
+            return None
+        h = max(_FadeScrollBar.MIN_THUMB, view_h * page_step // total)
+        h = min(h, view_h)
+        y = (view_h - h) * value // maximum if maximum else 0
+        return h, y
+
+    def eventFilter(self, obj, event):
+        try:
+            scroll = self._scroll
+            if obj is scroll.viewport():
+                if event.type() == QEvent.Type.Enter:
+                    self._poke()
+                elif event.type() == QEvent.Type.Leave:
+                    self._arm_hide()
+                elif event.type() == QEvent.Type.Resize:
+                    self._layout()
+            elif obj is scroll \
+                    and event.type() == QEvent.Type.Resize:
+                self._layout()
+        except (AttributeError, RuntimeError):
+            pass  # teardown: owner half-destroyed, stay out
+        return False
+
+    def _layout(self):
+        try:
+            self._place_lane()
+        except RuntimeError:
+            pass  # teardown: owner half-destroyed, stay out
+
+    def _place_lane(self):
+        lane_w = _FadeScrollBar.LANE
+        self._lane.setGeometry(self._scroll.width() - lane_w, 0,
+                               lane_w, self._scroll.height())
+        bar = self._scroll.verticalScrollBar()
+        geo = _FadeScrollBar.thumb_geometry(
+            self._scroll.viewport().height(),
+            bar.maximum(), bar.pageStep(), bar.value())
+        if geo is None:
+            self._lane.hide()
+            return
+        h, y = geo
+        self._thumb.setGeometry(0, y, lane_w, h)
+
+    def _poke(self):
+        try:
+            bar = self._scroll.verticalScrollBar()
+            if bar.maximum() <= 0:
+                self._lane.hide()
+                return
+            self._layout()
+            self._fade.stop()
+            self._hide_timer.stop()
+            self._effect.setOpacity(1.0)
+            self._lane.show()
+            self._lane.raise_()
+            self._hide_timer.start()
+        except RuntimeError:
+            pass  # teardown: owner half-destroyed, stay out
+
+    def _arm_hide(self):
+        try:
+            if self._lane.isVisibleTo(self._scroll):
+                self._hide_timer.start()
+        except RuntimeError:
+            pass
+
+    def hide(self):
+        try:
+            self._hide_timer.stop()
+            if not self._lane.isVisible():
+                return
+            self._fade.stop()
+            self._fade.setStartValue(self._effect.opacity())
+            self._fade.setEndValue(0.0)
+            self._fade.start()
+        except RuntimeError:
+            pass
+
+    def _on_fade_done(self):
+        try:
+            if self._effect.opacity() <= 0.0:
+                self._lane.hide()
+        except RuntimeError:
+            pass
 
 
 class SlideGridPanel(QWidget):
@@ -225,6 +358,9 @@ class SlideGridPanel(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        # Mobile-style overlay indicator (auto-hide); the shared
+        # always-on bar is deliberately NOT used here.
+        self._fade_bar = _FadeScrollBar(self._scroll)
         self._container = QWidget()
         self._container.setStyleSheet("background: transparent;")
         self._grid = QGridLayout(self._container)
@@ -490,10 +626,10 @@ class SlideGridPanel(QWidget):
             return
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu { background: rgba(30, 41, 59, 240); color: #ffffff; "
+            "QMenu { background: " + MENU_BG + "; color: #fafafa; "
             "border: 1px solid rgba(255, 255, 255, 20); border-radius: 6px; padding: 4px; }"
             "QMenu::item { padding: 6px 20px; border-radius: 4px; }"
-            "QMenu::item:selected { background: rgba(59, 130, 246, 60); }"
+            "QMenu::item:selected { background: " + SELECTION_BG + "; }"
         )
         edit = menu.addAction("Edit Slide…")
         edit.triggered.connect(

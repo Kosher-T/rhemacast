@@ -19,7 +19,7 @@ from ui.widgets.aspect_ratio import AspectRatioWidget
 from ui.styles import (
     MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
     PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
-    RED_500
+    ACCENT_BORDER, RED_500, TEXT_MUTED, TEXT_PRIMARY, CHROME_SOFT, CHROME_STRONG
 )
 
 
@@ -128,12 +128,12 @@ class LivePreviewPanel(QWidget):
 
         self.preview_frame = QFrame()
         self.preview_frame.setObjectName("OperatorPreviewViewport")
-        self.preview_frame.setStyleSheet("""
-            QFrame#OperatorPreviewViewport {
+        self.preview_frame.setStyleSheet(f"""
+            QFrame#OperatorPreviewViewport {{
                 background: black;
-                border: 1px solid rgba(59, 130, 246, 0.2);
+                border: 1px solid {ACCENT_BORDER};
                 border-radius: 6px;
-            }
+            }}
         """)
 
         self.preview_view = DisplayView(live_mode=False)
@@ -147,6 +147,14 @@ class LivePreviewPanel(QWidget):
         self._preview_overlay.clicked.connect(self.preview_clicked.emit)
         self._preview_overlay.double_clicked.connect(self.preview_double_clicked.emit)
         self._preview_overlay.raise_()
+        # Switch cover: opaque black, above the view, below the click
+        # overlay. Shown on tab arrival until the silent refresh acks
+        # presented frames — a hidden view's last committed (stale)
+        # frame must never surface, not even for a frame.
+        self._preview_cover = QWidget(self.preview_frame)
+        self._preview_cover.setStyleSheet("background: black;")
+        self._preview_cover.stackUnder(self._preview_overlay)
+        self._preview_cover.hide()
         self.preview_frame.installEventFilter(self)
 
         self.preview_ar_widget = AspectRatioWidget(
@@ -222,6 +230,10 @@ class LivePreviewPanel(QWidget):
         self._live_overlay = LiveOverlay(self.viewport)
         self._live_overlay.clicked.connect(self.live_clicked.emit)
         self._live_overlay.raise_()
+        self._live_cover = QWidget(self.viewport)
+        self._live_cover.setStyleSheet("background: black;")
+        self._live_cover.stackUnder(self._live_overlay)
+        self._live_cover.hide()
         self.viewport.installEventFilter(self)
 
         self.ar_widget = AspectRatioWidget(
@@ -233,16 +245,16 @@ class LivePreviewPanel(QWidget):
         # ── Nav buttons (centered below live viewport) ──
         NAV_BTN_STYLE = f"""
             QPushButton {{
-                background: rgba(30, 41, 59, 0.6);
-                color: #94a3b8;
+                background: {CHROME_SOFT};
+                color: {TEXT_MUTED};
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: rgba(30, 41, 59, 0.9);
-                color: #f8fafc;
+                background: {CHROME_STRONG};
+                color: {TEXT_PRIMARY};
                 border-color: rgba(255, 255, 255, 0.1);
             }}
         """
@@ -264,9 +276,10 @@ class LivePreviewPanel(QWidget):
         btn_clear.setIconSize(QSize(12, 12))
         btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
         btn_clear.setFixedSize(36, 24)
-        btn_clear.setToolTip("Clear / Recall")
+        btn_clear.setToolTip("Cloak / Uncloak")
         btn_clear.clicked.connect(self.clear_recall.emit)
         nav_bar.addWidget(btn_clear)
+        self.btn_clear = btn_clear
 
         btn_next = QPushButton(">")
         btn_next.setStyleSheet(NAV_BTN_STYLE)
@@ -294,18 +307,82 @@ class LivePreviewPanel(QWidget):
         if obj is self.preview_frame and event.type() == QEvent.Type.Resize:
             r = self.preview_frame.contentsRect()
             self._preview_overlay.setGeometry(r)
+            self._preview_cover.setGeometry(r)
         if hasattr(self, 'viewport') and obj is self.viewport and event.type() == QEvent.Type.Resize:
             r = self.viewport.contentsRect()
             self._live_overlay.setGeometry(r)
+            self._live_cover.setGeometry(r)
         return super().eventFilter(obj, event)
 
     def set_live_payload(self, payload: dict):
         """Send a verse payload to the live viewport."""
         self.live_view.display_verse(payload)
 
+    def cover_screens(self):
+        """Black covers over both viewports (tab-switch resync)."""
+        self._preview_cover.setGeometry(self.preview_frame.contentsRect())
+        self._live_cover.setGeometry(self.viewport.contentsRect())
+        self._preview_cover.show()
+        self._live_cover.show()
+
+    def reveal_screens(self):
+        """Hide the switch covers. Idempotent — safe as multi-ack
+        target and timer fallback."""
+        self._preview_cover.hide()
+        self._live_cover.hide()
+
+    def refresh_views(self, live=None, preview=None, done=None):
+        """Cover + silent frame-acked refresh of both views.
+
+        live/preview: payload dict → silent refresh; "clear" → silent
+        blank; None → leave untouched. done() fires after every
+        requested view acks (2 presented frames); skipped views count
+        immediately. Tabs pair this with a reveal fallback timer.
+        """
+        self.cover_screens()
+        pending = []
+        if isinstance(live, dict):
+            pending.append(("live", live))
+        elif live == "clear":
+            pending.append(("clear-live", None))
+        if isinstance(preview, dict):
+            pending.append(("preview", preview))
+        if not pending:
+            self.reveal_screens()
+            if done is not None:
+                done()
+            return
+        remaining = [len(pending)]
+
+        def _ack(_result=None):
+            remaining[0] -= 1
+            if remaining[0] <= 0:
+                self.reveal_screens()
+                if done is not None:
+                    done()
+
+        for kind, payload in pending:
+            if kind == "live":
+                self.live_view.refresh(payload, _ack)
+            elif kind == "clear-live":
+                self.live_view.refresh_clear(_ack)
+            else:
+                self.preview_view.refresh(payload, _ack)
+
     def clear_live(self):
         """Clear the live viewport."""
         self.live_view.clear()
+
+    def set_clear_active(self, active: bool):
+        """Cloak indicator on the cloak button (amber when output is
+        blanked). Mirrors the SHARED cloak state — both tabs subscribe,
+        so both buttons follow whichever tab toggles."""
+        self.btn_clear.setProperty("cloaked", active)
+        self.btn_clear.setToolTip(
+            "Output cloaked — showing blank (click to uncloak)"
+            if active else "Cloak / Uncloak")
+        self.btn_clear.style().unpolish(self.btn_clear)
+        self.btn_clear.style().polish(self.btn_clear)
 
     def set_preview_payload(self, payload: dict):
         """Send a verse payload to the preview viewport."""

@@ -15,7 +15,8 @@ from PyQt6.QtGui import QKeySequence, QKeyEvent, QFont
 from ui.styles import (
     SLATE_950, SLATE_800, SLATE_700, SLATE_600, SLATE_500, SLATE_400,
     SLATE_300, WHITE, BLUE_500, CYAN_400, EMERALD_500, AMBER_500, RED_500,
-    BORDER_SUBTLE
+    BORDER_SUBTLE, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER,
+    TEXT_SELECTION,
 )
 
 
@@ -45,7 +46,7 @@ class HotkeyCaptureButton(QPushButton):
             }}
             QPushButton:hover {{
                 color: {WHITE};
-                border-bottom-color: rgba(59, 130, 246, 0.5);
+                border-bottom-color: {SELECTION_BORDER};
             }}
             QPushButton:checked {{
                 color: {CYAN_400};
@@ -408,7 +409,7 @@ class TranslationHotkeyRow(QFrame):
                 min-width: 60px;
             }}
             QComboBox:hover {{
-                border-bottom-color: rgba(59, 130, 246, 0.5);
+                border-bottom-color: {SELECTION_BORDER};
             }}
             QComboBox::drop-down {{
                 border: none;
@@ -418,7 +419,7 @@ class TranslationHotkeyRow(QFrame):
                 background: {SLATE_800};
                 color: {WHITE};
                 border: 1px solid {BORDER_SUBTLE};
-                selection-background-color: rgba(59, 130, 246, 0.3);
+                selection-background-color: {TEXT_SELECTION};
             }}
         """)
         self._combo.currentTextChanged.connect(self._on_translation_changed)
@@ -464,6 +465,33 @@ class TranslationHotkeyRow(QFrame):
 
     def get_key(self) -> str:
         return self.capture_btn.get_key()
+
+
+# action_id -> (label, description, default key, scope)
+#
+# Navigation is deliberately split in two, and the defaults must not collide:
+#   Left / Right      step WITHIN what is displayed — adjacent verse for
+#                     scripture, the deck's own slides for a deck. They stop
+#                     dead at a boundary and never fall through to the
+#                     schedule.
+#   Alt+Left / Right  step through SCHEDULE items.
+# Merging these is what used to make Right at the last slide jump to the next
+# schedule item.
+DEFAULT_BINDINGS = {
+    "clear_recall": ("Cloak / Uncloak", "Blank live output (cloak) or reveal current", "Esc", "global"),
+    "next_verse": ("Next Verse", "Next verse (or next slide within the deck)", "Right", "global"),
+    "prev_verse": ("Previous Verse", "Previous verse (or previous slide within the deck)", "Left", "global"),
+    "next_schedule_item": ("Next Item", "Next item in the schedule", "Alt+Right", "global"),
+    "prev_schedule_item": ("Prev Item", "Previous item in the schedule", "Alt+Left", "global"),
+    "add_to_schedule": ("Add to Schedule", "Add selection to schedule (verse or deck, per active tab)", "Alt+Return", "global"),
+    "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7", "global"),
+    "double_click": ("Double Click", "Simulate mouse double-click at cursor", "F1", "global"),
+    "fts_search": ("FTS5 Search", "Open keyword FTS5 search (stemmed, all translations)", "Ctrl+Shift+F", "scripture"),
+    "fuzzy_search": ("Fuzzy Search", "Open semantic/FAISS search panel", "Ctrl+Shift+S", "scripture"),
+    "navigate_scripture": ("Navigate", "Go to SCRIPTURE and focus the navigator book field", "Ctrl+N", "scripture"),
+    "song_prev_section": ("Previous Section", "Jump live slide strip to first slide of previous section", "Ctrl+Left", "slides"),
+    "song_next_section": ("Next Section", "Jump live slide strip to first slide of next section", "Ctrl+Right", "slides"),
+}
 
 
 class HotkeyEditor(QWidget):
@@ -542,19 +570,9 @@ class HotkeyEditor(QWidget):
         # Define default actions as (label, description, default key, scope).
         # Scope is display-only grouping: "global" works in any tab (acting on
         # the active workspace), "scripture" always targets the SCRIPTURE tab.
-        self._default_bindings = {
-            "clear_recall": ("Clear / Recall", "Clear live display or recall last verse", "Esc", "global"),
-            "next_verse": ("Next", "Navigate to next scheduled verse", "Right", "global"),
-            "prev_verse": ("Previous", "Navigate to previous scheduled verse", "Left", "global"),
-            "add_to_schedule": ("Add to Schedule", "Add selection to schedule (verse or deck, per active tab)", "Alt+Return", "global"),
-            "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7", "global"),
-            "double_click": ("Double Click", "Simulate mouse double-click at cursor", "F1", "global"),
-            "fts_search": ("FTS Search", "Open FTS5+BM25 search across 6 translations", "Ctrl+Shift+F", "scripture"),
-            "fuzzy_search": ("Fuzzy Search", "Open semantic/FAISS search panel", "Ctrl+Shift+S", "scripture"),
-            "navigate_scripture": ("Navigate", "Go to SCRIPTURE and focus the navigator book field", "Ctrl+N", "scripture"),
-            "song_prev_section": ("Previous Section", "Jump live slide strip to first slide of previous section", "Ctrl+Left", "slides"),
-            "song_next_section": ("Next Section", "Jump live slide strip to first slide of next section", "Ctrl+Right", "slides"),
-        }
+        # NOTE: module-level DEFAULT_BINDINGS so the nav contract (arrows vs
+        # Alt+arrows) is importable/testable without booting the editor.
+        self._default_bindings = DEFAULT_BINDINGS
         self._scopes = (
             ("global", "Global", "Work in any tab, acting on the active workspace"),
             ("scripture", "Scripture Tab", "Always target the SCRIPTURE tab"),
@@ -632,7 +650,7 @@ class HotkeyEditor(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {CYAN_400};
-                border: 1px dashed rgba(34, 211, 238, 0.3);
+                border: 1px dashed {ACCENT_BORDER};
                 border-radius: 6px;
                 padding: 8px 16px;
                 font-size: 12px;
@@ -640,7 +658,7 @@ class HotkeyEditor(QWidget):
             }}
             QPushButton:hover {{
                 border-color: {CYAN_400};
-                background: rgba(34, 211, 238, 0.05);
+                background: {ACCENT_SOFT};
             }}
         """)
         self._add_trans_btn.clicked.connect(self._add_translation_row)

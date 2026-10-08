@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class SlidesTab(QWidget):
     """SLIDES workspace tab."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, schedule_model=None):
         super().__init__(parent)
         self.setStyleSheet(f"background: {SLATE_950};")
 
@@ -66,9 +66,15 @@ class SlidesTab(QWidget):
         # highlight position decoupled from the displayed slide while held.
         self._song_nav_active = False
         self._song_nav_index: int | None = None
+        # Invisibility cloak over OBS output — SHARED live-screen state
+        # (DisplayState.cloaked, replaces per-tab clear): while on, pushes
+        # update the model/operator screens normally but nothing is
+        # broadcast; only a double-click push or the cloak toggle removes
+        # it. Persists across tabs by construction.
+        # (initialized on the shared state; see _cloak property below)
 
         # ── Panels ──
-        self.schedule_panel = SchedulePanel()
+        self.schedule_panel = SchedulePanel(model=schedule_model)
         self.live_preview = LivePreviewPanel()
         self.preview_grid = SlideGridPanel("PREVIEW")
         self.live_grid = SlideGridPanel("LIVE")
@@ -119,6 +125,11 @@ class SlidesTab(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # Screens first: a hidden WebEngine view keeps a current DOM
+        # (background signals) but presents its last committed frame
+        # until a fresh one commits — re-push shared state so the tab
+        # never shows a stale frame on arrival.
+        self.resync_screens()
         # Pick up font-size changes made in Settings while away
         self.preview_grid.refresh_strip_size()
         self.live_grid.refresh_strip_size()
@@ -172,6 +183,14 @@ class SlidesTab(QWidget):
         self._display.live_sched_uid = value
 
     @property
+    def _cloak(self):
+        return self._display.cloaked
+
+    @_cloak.setter
+    def _cloak(self, value):
+        self._display.set_cloaked(value)
+
+    @property
     def _live_from_schedule(self):
         return self._display.live_from_schedule
 
@@ -210,7 +229,8 @@ class SlidesTab(QWidget):
 
         # Live strip → live screen + broadcast
         self.live_grid.slide_clicked.connect(self._on_live_slide_clicked)
-        self.live_grid.slide_double_clicked.connect(self._on_live_slide_clicked)
+        self.live_grid.slide_double_clicked.connect(
+            self._on_live_slide_double_clicked)
 
         # Schedule (same behavior as SCRIPTURE tab)
         self.schedule_panel.item_clicked.connect(self._on_schedule_click)
@@ -228,6 +248,11 @@ class SlidesTab(QWidget):
         self._display.live_changed.connect(self.live_preview.set_live_payload)
         self._display.preview_changed.connect(self.live_preview.set_preview_payload)
         self._display.cleared.connect(self.live_preview.clear_live)
+        # Cloak button mirrors the SHARED cloak state (cloak_changed fires
+        # synchronously, so the button can never drift — whichever tab
+        # toggles, both tabs' buttons follow).
+        self._display.cloak_changed.connect(self.live_preview.set_clear_active)
+        self.live_preview.set_clear_active(self._display.cloaked)
         if self._display.live_payload:
             self.live_preview.set_live_payload(self._display.live_payload)
         if self._display.preview_payload:
@@ -238,11 +263,15 @@ class SlidesTab(QWidget):
     def _build_payload(self, text: str, ref: str, version: str = "",
                        output_id: str = "1", slide_format: dict | None = None,
                        is_slide: bool = True, deck_id: int | None = None) -> dict:
-        from core.theme_loader import get_theme
+        from core.theme_loader import resolve_theme
         if is_slide:
             theme_name = self._themes_by_output.get(output_id, "slides")
+            # Slides fall back to the freeform "slides" theme — never the
+            # scripture "default" (per-kind defaults, not app-wide).
+            theme_name, theme_data = resolve_theme(theme_name, fallback="slides")
         else:
             theme_name = self._verse_themes_by_output.get(output_id, "default")
+            theme_name, theme_data = resolve_theme(theme_name)
         payload = {
             "action": "display",
             "text": text,
@@ -254,7 +283,7 @@ class SlidesTab(QWidget):
             "verse": "",
             "content": "slide" if is_slide else "verse",
             "theme": theme_name,
-            "theme_data": get_theme(theme_name),
+            "theme_data": theme_data,
         }
         if slide_format is not None:
             payload["slide_format"] = slide_format
@@ -280,7 +309,13 @@ class SlidesTab(QWidget):
             is_slide=False,
         )
 
-    def _broadcast_to_ws(self, payload: dict, data: dict | None = None):
+    def _obs_gated(self, payload: dict) -> bool:
+        """True when this payload must not reach OBS: cloaked covers
+        everything except the blank itself."""
+        return bool(self._cloak) and payload.get("action") != "clear"
+
+    def _broadcast_to_ws(self, payload: dict, data: dict | None = None,
+                           preserve_theme: bool = False) -> bool:
         from core.database import log_live_payload
         is_slide = data is not None and data.get("item_type") == "slide"
         # History: anything hitting live gets documented (display + clear),
@@ -288,30 +323,61 @@ class SlidesTab(QWidget):
         # stored ref (identity) even when the theme hides it on screen.
         log_live_payload(payload, kind=("slide" if is_slide else "verse"),
                          ref=(data.get("ref") if is_slide else None))
-        try:
-            from core.websocket_server import broadcast_display, _server_loop
-            if _server_loop is None or _server_loop.is_closed():
-                return
-            if payload.get("action") == "clear":
-                asyncio.run_coroutine_threadsafe(broadcast_display(payload), _server_loop)
+        if payload.get("action") != "clear":
+            is_slide = data is not None and data.get("item_type") == "slide"
+            deck_id = (
+                data.get("deck_id")
+                if is_slide and isinstance(data, dict)
+                else payload.get("deck_id")
+            )
+            if preserve_theme:
+                themed_outputs = self._display.matching_live_output_payloads()
+                for output_id in self._themes_by_output:
+                    if output_id not in themed_outputs:
+                        ref = (self._slide_display_ref(data, output_id) if is_slide
+                               else payload.get("ref", ""))
+                        themed_outputs[output_id] = self._build_payload(
+                            payload.get("text", ""), ref,
+                            payload.get("translation", ""), output_id=output_id,
+                            slide_format=(data.get("slide_format") if is_slide else None),
+                            is_slide=is_slide,
+                            deck_id=deck_id,
+                        )
             else:
-                for oid in self._themes_by_output:
+                themed_outputs = {}
+                for output_id in self._themes_by_output:
                     # Slide title visibility is per-output (each output has its
                     # own slides theme); verses pass their ref through as-is.
                     # Theme namespace follows content type, not the tab.
-                    ref = (self._slide_display_ref(data, oid) if is_slide
+                    ref = (self._slide_display_ref(data, output_id) if is_slide
                            else payload.get("ref", ""))
-                    themed = self._build_payload(
+                    themed_outputs[output_id] = self._build_payload(
                         payload.get("text", ""), ref,
-                        payload.get("translation", ""), output_id=oid,
+                        payload.get("translation", ""), output_id=output_id,
                         slide_format=(data.get("slide_format") if is_slide else None),
                         is_slide=is_slide,
+                        deck_id=deck_id,
                     )
+                # Even a muted/behind-cloak push advances the model, so its
+                # per-output themes become the next restore's authority.
+                self._display.remember_live_output_payloads(themed_outputs)
+        if self._obs_gated(payload):
+            return False  # cloaked: OBS holds its blank, model advances.
+        try:
+            from core.websocket_server import broadcast_display, _server_loop
+            if _server_loop is None or _server_loop.is_closed():
+                return False
+            if payload.get("action") == "clear":
+                asyncio.run_coroutine_threadsafe(broadcast_display(payload), _server_loop)
+            else:
+                for output_id, themed in themed_outputs.items():
                     asyncio.run_coroutine_threadsafe(
-                        broadcast_display(themed, target=oid), _server_loop
+                        broadcast_display(themed, target=output_id), _server_loop
                     )
+            return True
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")
+            return False
 
     # ── Slide display core ──────────────────────────────────────────────────
 
@@ -327,8 +393,9 @@ class SlidesTab(QWidget):
         identity); the payload blanks it when the rendering theme opts out
         with {"slide": {"show_title": false}}.
         """
-        from core.theme_loader import get_theme, slide_title_visible
-        theme = get_theme(self._themes_by_output.get(output_id, "slides"))
+        from core.theme_loader import resolve_theme, slide_title_visible
+        _, theme = resolve_theme(
+            self._themes_by_output.get(output_id, "slides"), fallback="slides")
         if not slide_title_visible(theme):
             return ""
         if data.get("ref"):
@@ -360,8 +427,17 @@ class SlidesTab(QWidget):
             grid.set_deck(deck, select_index=index)
             grid.set_title(title)
 
+    def _set_cloak(self, on: bool):
+        """Single funnel for cloak transitions (toggle or double-click
+        push). State lives on the shared DisplayState; the button syncs
+        via the cloak_changed subscription. Muting rides along: while
+        muted, publishes advance the model with zero screen updates
+        (no flash possible)."""
+        self._display.set_cloaked(on)
+
     def _show_slide(self, deck: dict, index: int, live: bool,
-                    sched_data: dict | None = None, force_grid: bool = False):
+                    sched_data: dict | None = None, force_grid: bool = False,
+                    uncloak: bool = False):
         """Show one slide on preview or live (+broadcast when live)."""
         slides = deck.get("slides", []) if deck else []
         if not slides:
@@ -395,7 +471,8 @@ class SlidesTab(QWidget):
                 sched_data.get("_sched_uid") if isinstance(sched_data, dict) else None
             )
             self._live_from_schedule = sched_data is not None
-            self._is_cleared = False
+            if uncloak:
+                self._set_cloak(False)
             self._display.publish_live(payload, data,
                                        self._live_sched_uid, self._live_from_schedule)
             self._sync_grid(self.live_grid, deck, index, f"LIVE · {title}", force=force_grid)
@@ -408,7 +485,7 @@ class SlidesTab(QWidget):
             logger.info(f"Slide preview: {ref}")
 
     def _show_verse(self, ref: str, text: str, version: str, live: bool,
-                    sched_data: dict | None = None):
+                    sched_data: dict | None = None, uncloak: bool = False):
         """Show a schedule verse item on preview or live (scripture theme)."""
         data = {"item_type": "verse", "text": text, "ref": ref, "version": version}
         payload = self._build_payload(text, ref, version, is_slide=False)
@@ -420,7 +497,8 @@ class SlidesTab(QWidget):
                 sched_data.get("_sched_uid") if isinstance(sched_data, dict) else None
             )
             self._live_from_schedule = sched_data is not None
-            self._is_cleared = False
+            if uncloak:
+                self._set_cloak(False)
             self._display.publish_live(payload, data,
                                        self._live_sched_uid, self._live_from_schedule)
             self._broadcast_to_ws(payload)
@@ -458,10 +536,11 @@ class SlidesTab(QWidget):
         logger.info(f"Deck added to schedule: {item_data['ref']}")
 
     def _open_lite_designer(self, deck_id: int):
-        """Deck menu → Edit…: Lite Designer, Freeform tab first."""
+        """Deck menu → Edit…: the Lite Designer freeform editor."""
         from ui.widgets.lite_designer.lite_designer import LiteDesigner
         live = (self._current_display or {}).get("deck_id") == deck_id
         editor = LiteDesigner(parent=self.window(), deck_id=deck_id,
+                              theme_name=self._current_theme,
                               default_tab="freeform", freeform_enabled=True,
                               live=live)
         editor.deck_saved.connect(self._on_lite_designer_saved)
@@ -539,18 +618,21 @@ class SlidesTab(QWidget):
             return
         if not (0 <= index < len(deck["slides"])):
             return
-        state = self._current_preview
-        if not (state and state.get("item_type") == "slide"
-                and state.get("deck_id") == deck_id):
-            return
         fresh = deck["slides"]
-        state["slides"] = fresh
-        state["deck_title"] = deck.get("title") or "(untitled)"
+        # Strip first: it shows this deck regardless of what the preview
+        # SCREEN is showing (verse, another deck, nothing) — previously
+        # the screen gate below skipped the strip too, sticking it stale.
         grid = self.preview_grid
         if grid.deck is not None and grid.deck.get("id") == deck_id:
             grid.deck["slides"] = fresh
             grid.deck["title"] = deck.get("title")
             grid.update_slide_card(index, fresh[index]["text"])
+        state = self._current_preview
+        if not (state and state.get("item_type") == "slide"
+                and state.get("deck_id") == deck_id):
+            return
+        state["slides"] = fresh
+        state["deck_title"] = deck.get("title") or "(untitled)"
         if state.get("slide_index", 0) == index:
             self._show_slide(
                 {"id": deck_id, "title": deck.get("title") or "(untitled)",
@@ -571,12 +653,19 @@ class SlidesTab(QWidget):
             # Forced: live may hold a stale copy of this deck (same id, old
             # slides) — without it the live screen updates but its strip keeps
             # the old cards.
-            self._show_slide(deck, index, live=True, force_grid=True)
+            self._show_slide(deck, index, live=True, force_grid=True,
+                             uncloak=True)
 
     def _on_live_slide_clicked(self, index: int):
         deck = self.live_grid.deck
         if deck:
             self._show_slide(deck, index, live=True)
+
+    def _on_live_slide_double_clicked(self, index: int):
+        deck = self.live_grid.deck
+        if deck:
+            # Double-click push removes the cloak (one of its two exits).
+            self._show_slide(deck, index, live=True, uncloak=True)
 
     # ── Schedule handlers (mirror SCRIPTURE behavior) ───────────────────────
 
@@ -600,11 +689,12 @@ class SlidesTab(QWidget):
                 self._show_slide(
                     {"id": data.get("deck_id"), "title": data.get("name") or data.get("ref", ""),
                      "slides": slides, "format": data.get("format")},
-                    0, live=True, sched_data=data,
+                    0, live=True, sched_data=data, uncloak=True,
                 )
             return
         self._show_verse(data.get("ref", ""), data.get("text", ""),
-                         data.get("translation", ""), live=True, sched_data=data)
+                         data.get("translation", ""), live=True, sched_data=data,
+                         uncloak=True)
 
     def _on_schedule_loaded(self, file_path: str):
         from core.database import set_setting
@@ -652,6 +742,27 @@ class SlidesTab(QWidget):
 
     # ── Screens ─────────────────────────────────────────────────────────────
 
+    def resync_screens(self):
+        """Cover-gated silent re-push of shared payloads into this tab's
+        views (idempotent).
+
+        Hidden WebEngine views receive every publish but present their
+        last committed frame until a fresh one commits — without this,
+        arriving on a tab flashes whatever it last presented. Covers
+        hide that stale frame; the silent refresh replays no animation
+        and touches no transition memory; reveal fires after 2
+        presented frames carry the update (500ms timer as fallback).
+        Cloak respected: cloaked re-blanks instead of re-pushing."""
+        if self._display.cloaked:
+            live = "clear"
+        elif self._display.live_payload:
+            live = self._display.live_payload
+        else:
+            live = None
+        self.live_preview.refresh_views(live, self._display.preview_payload)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(500, self.live_preview.reveal_screens)
+
     def _on_preview_double_click(self):
         """Double-click preview screen → push preview to live."""
         if not self._current_preview:
@@ -661,41 +772,49 @@ class SlidesTab(QWidget):
             self._show_slide(
                 {"id": data.get("deck_id"), "title": data.get("deck_title", ""),
                  "slides": data.get("slides", []), "format": data.get("slide_format")},
-                data.get("slide_index", 0), live=True,
+                data.get("slide_index", 0), live=True, uncloak=True,
             )
         else:
             self._show_verse(data.get("ref", ""), data.get("text", ""),
-                             data.get("version", ""), live=True)
+                             data.get("version", ""), live=True, uncloak=True)
 
     def _on_clear_recall(self):
-        if not self._is_cleared and self._current_display:
-            self._last_cleared_display = self._current_display
-            self._current_display = None
-            self._is_cleared = True
-            self._display.publish_clear()
-            self._broadcast_to_ws({"action": "clear"}, self._last_cleared_display)
-            logger.info("Display cleared")
-        elif self._is_cleared and self._last_cleared_display:
-            data = self._last_cleared_display
-            self._current_display = data
-            self._is_cleared = False
-            self._song_nav_active = False
-            self._song_nav_index = None
-            payload = self._payload_for_display(data)
-            self._display.publish_live(payload, data,
-                                       self._display.live_sched_uid,
-                                       self._display.live_from_schedule)
-            self._broadcast_to_ws(payload, data)
-            if data.get("item_type") == "slide" and data.get("slides"):
-                from core.slide_service import get_deck
-                deck = None
-                if data.get("deck_id"):
-                    deck = get_deck(data["deck_id"])
-                recall_deck = deck or {"title": data.get("deck_title", ""), "slides": data["slides"]}
-                self._sync_grid(self.live_grid, recall_deck,
-                                data.get("slide_index", 0),
-                                f"LIVE · {recall_deck.get('title') or '(untitled)'}")
-            logger.info("Display recalled")
+        if not self._cloak:
+            # Cloak on: blank OBS + operator live views only. Model,
+            # operator preview and strips stay exactly as they are —
+            # everything keeps working underneath the cover. Uncloak
+            # shows whatever is current THEN (never a stale recall),
+            # so no recall memory is kept.
+            self._set_cloak(True)
+            # set_cloaked already emitted cleared (operator views blank);
+            # OBS takes its blank here (originating tab broadcasts).
+            self._broadcast_to_ws({"action": "clear"}, self._current_display)
+            logger.info("Display cloaked")
+        else:
+            # Cloak off: show whatever is underneath NOW (it may have
+            # advanced while covered — never stale recall).
+            self._set_cloak(False)
+            stored = self._display.matching_live_output_payload("1")
+            if stored is not None and self._current_display:
+                # Replaying beats rebuilding: the stored payload carries the
+                # originating output theme, so a verse cloaked in SCRIPTURE
+                # does not come back wearing this tab's slide/verse map.
+                payload = stored
+                self._display.publish_live(
+                    payload, self._current_display,
+                    self._display.live_sched_uid,
+                    self._display.live_from_schedule)
+                self._broadcast_to_ws(payload, self._current_display,
+                                      preserve_theme=True)
+            elif self._current_display:
+                payload = self._payload_for_display(self._current_display)
+                self._display.publish_live(
+                    payload, self._current_display,
+                    self._display.live_sched_uid,
+                    self._display.live_from_schedule)
+                self._broadcast_to_ws(payload, self._current_display)
+            if self._current_display:
+                logger.info("Display uncloaked")
 
     # ── Prev / Next ─────────────────────────────────────────────────────────
 
@@ -706,6 +825,12 @@ class SlidesTab(QWidget):
         self._step_live(1)
 
     def _step_live(self, delta: int):
+        """Step within the displayed deck only.
+
+        Never bleeds into the schedule: Alt+Left / Alt+Right own schedule
+        stepping, so an exhausted deck stays put instead of jumping to the
+        neighbouring item.
+        """
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
             idx = cur.get("slide_index", 0) + delta
@@ -717,12 +842,9 @@ class SlidesTab(QWidget):
                     sched_data={"_sched_uid": self._live_sched_uid}
                     if self._live_from_schedule else None,
                 )
-            if self._live_from_schedule and self._live_sched_uid:
-                return self._step_schedule(delta)
+            logger.info("deck boundary — staying on this slide")
             return
-        if self._live_from_schedule and self._live_sched_uid:
-            return self._step_schedule(delta)
-        logger.info("prev/next: nothing to step to")
+        logger.info("prev/next: no deck on live to step through")
 
     def _step_schedule(self, delta: int):
         items = self.schedule_panel.get_schedule()
@@ -765,12 +887,13 @@ class SlidesTab(QWidget):
         """
         from core.slide_service import section_run_starts
         cur = self._current_display
-        if not (cur and cur.get("item_type") == "slide" and cur.get("slides")):
+        if not (cur and cur.get("item_type") == "slide"
+                and cur.get("slides")):
             logger.info("Slide nav ignored: live is not showing a slide deck")
             return
         slides = cur["slides"]
-        runs = section_run_starts(slides)
         base = cur.get("slide_index", 0)
+        runs = section_run_starts(slides)
         if self._song_nav_active and self._song_nav_index is not None:
             base = max(0, min(self._song_nav_index, len(slides) - 1))
         if delta > 0:

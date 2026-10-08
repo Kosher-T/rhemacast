@@ -65,12 +65,15 @@ CREATE INDEX IF NOT EXISTS idx_verses_lookup
 CREATE INDEX IF NOT EXISTS idx_verses_version
     ON verses(version);
 
--- Full-text search virtual table for fast text matching
--- (used by BM25 and keyword search at runtime)
+-- Full-text search virtual table for fast text matching.
+-- porter stemming lives in the INDEX, so "running"/"runs"/"ran" share a
+-- term and a query for any inflection finds them all. remove_diacritics
+-- 2 folds accents so "Shalom" matches "ShalOm"-style ASCII queries.
 CREATE VIRTUAL TABLE IF NOT EXISTS verses_fts USING fts5(
     text,
     content='verses',
-    content_rowid='id'
+    content_rowid='id',
+    tokenize='porter unicode61 remove_diacritics 2'
 );
 """
 

@@ -38,6 +38,7 @@ import re
 import sqlite3
 
 from core.slide_service import create_deck_from_slides
+from core.database import get_connection, init_db
 
 _EW_SOURCE_PREFIX = "easyworship://song/"
 
@@ -370,21 +371,58 @@ def read_songs_from_csv(songs_csv: str, words_csv: str) -> list[dict]:
 
 # ── Importer ────────────────────────────────────────────────────────────────
 
+def _song_source_path(song: dict) -> str:
+    """Stable deck key for a song (mirrors the import loop)."""
+    return f"{_EW_SOURCE_PREFIX}{song.get('song_uid') or song['ew_rowid']}"
+
+
+def _existing_source_paths() -> set:
+    """Source paths already in slide_decks (one round trip)."""
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT source_path FROM slide_decks WHERE source_path LIKE ?",
+            (_EW_SOURCE_PREFIX + "%",),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r["source_path"] for r in rows if r["source_path"]}
+
+
+def count_existing_easyworship(data_dir: str) -> tuple:
+    """How many songs in `data_dir` are already in slide_decks.
+
+    Returns (existing_count, total_count). Read-only: for the import
+    dialog, so the operator decides skip-vs-overwrite informed.
+    """
+    songs = read_songs_from_db(data_dir)
+    existing = _existing_source_paths()
+    n = sum(1 for s in songs if _song_source_path(s) in existing)
+    return n, len(songs)
+
 def import_easyworship(
     data_dir: str | None = None,
     songs_csv: str | None = None,
     words_csv: str | None = None,
     skip_empty: bool = True,
+    on_existing: str = "overwrite",
 ) -> dict:
     """Import EasyWorship songs into slide_decks.
 
     Either provide `data_dir` (Songs.db/SongWords.db) or both CSV paths.
     Decks are keyed by source_path `easyworship://song/<song_uid>` (stable
-    across library versions), so re-import updates in place.
+    across library versions).
+
+    `on_existing`: "overwrite" (default, current behavior — re-import
+    updates in place) or "skip" (songs already in the library are left
+    untouched and counted as `skipped_existing`).
 
     Returns {"imported": n_new, "updated": n_updated, "skipped": n_skipped,
-             "failed": [(title, error), ...]}.
+             "skipped_existing": n, "failed": [(title, error), ...]}.
     """
+    if on_existing not in ("overwrite", "skip"):
+        raise ValueError("on_existing must be 'overwrite' or 'skip'")
     if data_dir:
         songs = read_songs_from_db(data_dir)
     elif songs_csv and words_csv:
@@ -392,12 +430,17 @@ def import_easyworship(
     else:
         raise ValueError("Provide either data_dir or both songs_csv and words_csv")
 
-    imported = updated = skipped = 0
+    imported = updated = skipped = skipped_existing = 0
     failed: list[tuple[str, str]] = []
+    known = _existing_source_paths() if on_existing == "skip" else set()
 
     for song in songs:
         title = song["title"].strip() or "(untitled)"
         try:
+            if on_existing == "skip" \
+                    and _song_source_path(song) in known:
+                skipped_existing += 1
+                continue
             if not song["rtf"]:
                 if skip_empty:
                     skipped += 1
@@ -434,5 +477,6 @@ def import_easyworship(
         "imported": imported,
         "updated": updated,
         "skipped": skipped,
+        "skipped_existing": skipped_existing,
         "failed": failed,
     }

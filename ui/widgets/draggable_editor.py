@@ -17,6 +17,9 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 from ui.styles import (
     SLATE_950, SLATE_900, SLATE_800, SLATE_700, SLATE_600,
     SLATE_500, SLATE_400, WHITE, BLUE_500,
+    TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, BG_APP,
+    ACCENT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER, CHROME_SOFT,
+    TEXT_SELECTION,
 )
 from ui.widgets.aspect_ratio import AspectRatioWidget
 
@@ -61,14 +64,14 @@ _INPUT_STYLE = (
     "border: 1px solid rgba(255,255,255,0.08);"
     "border-radius: 4px;"
     "padding: 2px 6px;"
-    "color: #f8fafc;"
+    "color: " + TEXT_PRIMARY + ";"
     "font-size: 10px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #64748b;"
+    "color: " + TEXT_FAINT + ";"
     "font-size: 10px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
@@ -80,7 +83,7 @@ _COMBO_STYLE = (
     "  border: 1px solid rgba(255,255,255,0.08);"
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
-    "  color: #f8fafc;"
+    "  color: " + TEXT_PRIMARY + ";"
     "  font-size: 10px;"
     "}"
     "QComboBox::drop-down {"
@@ -88,16 +91,16 @@ _COMBO_STYLE = (
     "  width: 14px;"
     "}"
     "QComboBox QAbstractItemView {"
-    "  background: #1e293b;"
-    "  color: #f8fafc;"
+    "  background: " + BG_RAISED + ";"
+    "  color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255,255,255,0.08);"
-    "  selection-background-color: rgba(59,130,246,0.3);"
+    "  selection-background-color: " + TEXT_SELECTION + ";"
     "}"
 )
 
 _PANEL_STYLE = (
     "QFrame {"
-    "  background: rgba(15, 23, 42, 0.6);"
+    "  background: " + CHROME_SOFT + ";"
     "  border-left: 1px solid rgba(255, 255, 255, 0.06);"
     "}"
 )
@@ -105,7 +108,7 @@ _PANEL_STYLE = (
 _SECTION_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: #475569;"
+    "color: " + SLATE_600 + ";"
     "font-size: 9px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
@@ -321,7 +324,7 @@ class DragHandle(QWidget):
         if self._selected:
             pen = QPen(QColor(BLUE_500), 2)
             painter.setPen(pen)
-            painter.setBrush(QBrush(QColor(59, 130, 246, 20)))
+            painter.setBrush(QBrush(QColor(SELECTION_BG)))
             painter.drawRect(0, 0, w - 1, h - 1)
 
             for cx, cy in [(0, 0), (w - CORNER_SIZE, 0),
@@ -706,7 +709,7 @@ class DraggableEditor(QWidget):
         self._prop_visible = QCheckBox("Visible")
         self._prop_visible.setStyleSheet(
             "QCheckBox {"
-            "  color: #94a3b8;"
+            "  color: " + TEXT_MUTED + ";"
             "  font-size: 10px;"
             "  font-weight: 600;"
             "  spacing: 6px;"
@@ -718,8 +721,8 @@ class DraggableEditor(QWidget):
             "  background: rgba(0,0,0,0.3);"
             "}"
             "QCheckBox::indicator:checked {"
-            "  background: #3b82f6;"
-            "  border: 1px solid #3b82f6;"
+            "  background: " + ACCENT + ";"
+            "  border: 1px solid " + ACCENT_BORDER + ";"
             "}"
         )
 
