@@ -273,6 +273,26 @@ def test_clicking_unfocused_card_places_caret_at_click(tmp_path):
     assert w._edit.hasFocus()
 
 
+def test_preview_white_toggle_sends_page_only_override(tmp_path):
+    """The White button next to Preview flips a page-level canvas override
+    (payloads and OBS output never see it)."""
+    w = _designer(tmp_path)
+    btn = w._preview_white_btn
+    assert btn.text() == "White" and btn.isCheckable()
+    sent = []
+    w._preview._run_js = lambda js, cb=None: sent.append(js)
+    btn.setChecked(True)
+    assert w._preview._screen_white is True
+    assert "setProperty" in sent[-1] and "#ffffff" in sent[-1]
+    assert "important" in sent[-1]
+    # both root and body: the stylesheet paints body black, which would
+    # otherwise cover a root-only override everywhere but a strip
+    assert "documentElement" in sent[-1] and "document.body" in sent[-1]
+    btn.setChecked(False)
+    assert w._preview._screen_white is False
+    assert "removeProperty" in sent[-1]
+
+
 def test_typing_collapses_tier(tmp_path):
     """Real text changes still collapse: typing replaces the highlight."""
     w = _designer(tmp_path)

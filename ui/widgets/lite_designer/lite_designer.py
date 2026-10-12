@@ -27,7 +27,7 @@ import logging
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QFrame, QTextEdit, QLineEdit,
                              QScrollArea, QMessageBox, QStackedWidget,
-                             QSizePolicy, QApplication)
+                             QSizePolicy, QApplication, QToolButton)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSizeF, QEvent
 from PyQt6.QtGui import QTextCursor, QKeySequence, QTextOption
 import time as _time
@@ -379,7 +379,29 @@ class LiteDesigner(QWidget):
         lbl = QLabel("Preview")
         lbl.setStyleSheet("color: " + TEXT_MUTED + "; font-size: 9px; font-weight: 700;"
                           "letter-spacing: 1px; background: transparent;")
-        rl.addWidget(lbl)
+        preview_head = QHBoxLayout()
+        preview_head.setContentsMargins(0, 0, 0, 0)
+        preview_head.setSpacing(6)
+        preview_head.addWidget(lbl)
+        preview_head.addStretch()
+        self._preview_white_btn = QToolButton()
+        self._preview_white_btn.setText("White")
+        self._preview_white_btn.setCheckable(True)
+        self._preview_white_btn.setChecked(False)
+        self._preview_white_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preview_white_btn.setToolTip(
+            "White preview screen (inspect outlines and shadows)")
+        self._preview_white_btn.setStyleSheet(
+            "QToolButton { color: " + TEXT_MUTED + "; font-size: 9px;"
+            "  font-weight: 700; background: transparent; border: none;"
+            "  padding: 2px 6px; }"
+            "QToolButton:checked { color: #111111; background: #e8e8e8;"
+            "  border-radius: 4px; }")
+        self._preview_white_btn.toggled.connect(self._on_preview_white_toggled)
+        preview_head.addWidget(self._preview_white_btn)
+        head_wrap = QWidget()
+        head_wrap.setLayout(preview_head)
+        rl.addWidget(head_wrap)
         frame = QFrame()
         frame.setStyleSheet("background: black;"
                             "border: 1px solid rgba(255,255,255,0.08);"
@@ -1932,6 +1954,15 @@ class LiteDesigner(QWidget):
     def _schedule_preview(self):
         if self._deck_id is not None and self._stack.currentIndex() == 0:
             self._preview_timer.start()
+
+    def _on_preview_white_toggled(self, on: bool):
+        """White-screen toggle next to the Preview label (inspect outlines
+        and shadows against white instead of black). Preview-only: the page
+        style survives re-renders and never reaches OBS."""
+        try:
+            self._preview.set_screen_white(on)
+        except RuntimeError:
+            pass
 
     def _refresh_preview(self):
         """Render the ACTIVE slide — nothing else is read.

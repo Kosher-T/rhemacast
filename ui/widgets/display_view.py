@@ -1276,12 +1276,17 @@ class DisplayView(QWebEngineView):
         sent anywhere, so OBS output is unaffected. Queued pre-load like any
         other JS injection."""
         self._screen_white = on
+        # Both root and body: the page stylesheet paints body black, which
+        # would otherwise cover a root-only override everywhere but a strip.
         if on:
             js = ("document.documentElement.style.setProperty("
+                  "'background', '#ffffff', 'important');"
+                  "document.body.style.setProperty("
                   "'background', '#ffffff', 'important');")
         else:
             js = ("document.documentElement.style.removeProperty("
-                  "'background');")
+                  "'background');"
+                  "document.body.style.removeProperty('background');")
         self._run_js(js)
 
     def apply_theme(self, theme_data: dict):
