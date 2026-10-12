@@ -1,0 +1,61 @@
+size=90, 50, 90; bold=true; case=upper
+
+
+# 2026 Declaration
+
+
+[2026 (color=#66ff00)]\n
+I have seen the God that sees me.\n
+El-Roi! El-Roi! El-Roi!
+
+
+[Nothing Goes wrong around me (color=#66ff00)]\n
+El-Roi Watches over me
+
+
+[I walk in daily victory (color=#66ff00)]\n
+El-Roi Watches over me
+
+
+[My enemies scatter before they gather (color=#66ff00)]\n
+El-Roi Watches over me
+
+
+[Before I ask, He answers (color=#66ff00)]\n
+El-Roi Watches over me
+
+
+[To the God that sees me (color=#66ff00)]\n
+This is my confidence:
+He sees to change,
+he sees to direct,
+He sees to lift,
+He sees to demonstrate His power,
+He sees to turn things around,
+
+
+He sees to show me mercy daily,
+He sees to make me a spectacle of His glory.\n
+Guess what – I am the apple of His eyes.
+
+
+[To the God that sees me (color=#66ff00)]\n
+I will live in the consciousness of Your presence, I will stnad as a true soldier of the Kingdom. I will give my all—my body, soul and spirit, my finance and my time, all for the Kingdom.
+
+
+[I love my El-Roi (color=#66ff00)]\n
+El-Roi my beautifier,
+El-Roi my lifter,
+El-Roi my advocate,
+El-Roi my helper,
+El-Roi the solid rock on which I stand.\n
+I am not alone. You are forever by my side. The world will see and know that I have finally seen the God that sees me.
+
+
+Hear me again, heaven and earth:
+My case is different. I have seen the God that sees me.
+
+El-Roi! El-Roi! El-Roi!
+
+
+[What God cannot do does not exist! (color=#66ff00; size = 80)]

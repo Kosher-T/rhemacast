@@ -642,8 +642,22 @@ class SlideCard(QFrame):
             self._display_box.show()
 
     def focus_editor(self):
-        """Focus the hosted live editor (after display-box clicks)."""
+        """Focus the hosted live editor (after display-box clicks).
+
+        The click landed on this card's display box (a copy): default click
+        handling already put that box's caret under the cursor, so carry the
+        position over — otherwise the live editor keeps its stale cursor
+        (usually 0) and the caret appears at the start instead of the click.
+        """
         if self._editor is not None and self._editor_hosted:
+            try:
+                pos = self._display_box.textCursor().position()
+                last = max(0, self._editor.document().characterCount() - 1)
+                cursor = self._editor.textCursor()
+                cursor.setPosition(min(pos, last))
+                self._editor.setTextCursor(cursor)
+            except RuntimeError:
+                pass
             self._editor.setFocus()
 
     def mousePressEvent(self, event):

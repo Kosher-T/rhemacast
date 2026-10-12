@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RhemaCast - Full Theme Designer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="global.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Nunito', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        /* ── Three-Column Layout ── */
+        .designer-root {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            gap: 1px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        /* ── Left Panel: Properties ── */
+        .props-panel {
+            width: 280px;
+            min-width: 240px;
+            background: rgba(15, 23, 42, 0.6);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-right: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .props-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .props-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        /* ── Center Panel: Previews ── */
+        .previews-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: rgba(2, 6, 23, 0.5);
+        }
+
+        .previews-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* ── Triangle Preview Layout ── */
+        .previews-grid {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            overflow: hidden;
+        }
+
+        .previews-row {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .preview-card {
+            display: flex;
+            flex-direction: column;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(15, 23, 42, 0.3);
+        }
+
+        .preview-card.card-top {
+            width: 100%;
+            max-width: 520px;
+        }
+
+        .preview-card.card-bottom {
+            flex: 1;
+            max-width: 420px;
+        }
+
+        .preview-card-header {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        /* Viewport — matches Live/Preview: black bg, 1px border, radius 8px, 16:9 */
+        .preview-viewport {
+            background: black;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+        }
+
+        .preview-viewport-content {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            transition: all 0.25s ease;
+        }
+
+        /* ── Right Panel: Animations + JSON ── */
+        .advanced-panel {
+            width: 300px;
+            min-width: 260px;
+            background: rgba(15, 23, 42, 0.6);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-left: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .advanced-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .advanced-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        /* ── Shared Components ── */
+        .panel-section {
+            padding: 8px 16px;
+        }
+
+        .section-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 6px 16px 4px;
+        }
+
+        .section-divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.06);
+            margin: 4px 16px;
+        }
+
+        .prop-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 16px;
+        }
+
+        .prop-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            min-width: 56px;
+        }
+
+        .prop-input {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 8px;
+            color: #f8fafc;
+            font-size: 11px;
+            font-family: 'Nunito', sans-serif;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .prop-input:focus {
+            border-color: rgba(59, 130, 246, 0.5);
+        }
+
+        .prop-input-sm {
+            width: 56px;
+            flex: none;
+        }
+
+        .color-swatch {
+            width: 24px;
+            height: 24px;
+            border-radius: 5px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .color-swatch:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .font-select {
+            appearance: none;
+            background: rgba(0, 0, 0, 0.3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 6px center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 24px 5px 8px;
+            color: #f8fafc;
+            font-size: 11px;
+            font-family: 'Nunito', sans-serif;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+
+        .font-select:focus {
+            border-color: rgba(59, 130, 246, 0.5);
+        }
+
+        .range-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 3px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+        }
+
+        .range-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* ── Element Tree ── */
+        .tree-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            cursor: pointer;
+            transition: background 0.1s ease;
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+        }
+
+        .tree-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .tree-item.active {
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+        }
+
+        .tree-item .tree-icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .tree-indent {
+            padding-left: 32px;
+        }
+
+        /* ── Toggle Switch ── */
+        .toggle-sm {
+            width: 30px;
+            height: 16px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .toggle-sm.active {
+            background: rgba(34, 211, 238, 0.4);
+        }
+
+        .toggle-sm::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #64748b;
+            transition: all 0.2s ease;
+        }
+
+        .toggle-sm.active::after {
+            left: 16px;
+            background: #22d3ee;
+        }
+
+        /* ── Animation Cards ── */
+        .anim-card {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .anim-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .anim-card-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #cbd5e1;
+        }
+
+        .anim-timeline {
+            height: 28px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .anim-keyframe {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #3b82f6;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            cursor: pointer;
+            z-index: 2;
+        }
+
+        .anim-track {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(59, 130, 246, 0.3);
+        }
+
+        /* ── JSON Editor ── */
+        .json-editor {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 8px;
+            margin: 8px 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .json-editor-header {
+            padding: 6px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .json-editor-body {
+            flex: 1;
+            overflow: auto;
+            padding: 10px;
+        }
+
+        .json-editor-body pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            color: #94a3b8;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .json-key { color: #7dd3fc; }
+        .json-string { color: #86efac; }
+        .json-number { color: #fbbf24; }
+        .json-bracket { color: #64748b; }
+        .json-bool { color: #c084fc; }
+
+        /* ── Buttons ── */
+        .btn-ghost {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #94a3b8;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-ghost:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: #f8fafc;
+        }
+
+        .btn-primary {
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            color: white;
+            background: #3b82f6;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.2);
+        }
+
+        /* ── Badge ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-cyan {
+            background: rgba(34, 211, 238, 0.15);
+            color: #22d3ee;
+        }
+
+        .badge-amber {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+        }
+
+        .badge-red {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        /* ── Custom Scrollbar ── */
+        .props-body::-webkit-scrollbar,
+        .advanced-body::-webkit-scrollbar,
+        .json-editor-body::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .props-body::-webkit-scrollbar-track,
+        .advanced-body::-webkit-scrollbar-track,
+        .json-editor-body::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .props-body::-webkit-scrollbar-thumb,
+        .advanced-body::-webkit-scrollbar-thumb,
+        .json-editor-body::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+        }
+
+        /* ── Tab Switcher ── */
+        .tab-switcher {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .tab-switcher-btn {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .tab-switcher-btn.active {
+            background: rgba(255, 255, 255, 0.08);
+            color: #f8fafc;
+        }
+
+        .tab-switcher-btn:hover:not(.active) {
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen font-sans overflow-hidden flex flex-col select-none">
+
+    <!-- Chrome-Style Top Bar -->
+    <div class="h-[42px] bg-[#1a1a1a] flex items-end justify-between px-2 shrink-0 border-b border-black/40">
+        <div class="flex items-end flex-1 overflow-hidden">
+            <div class="flex items-center self-center px-4 mr-2">
+                <span class="text-[13px] font-extrabold tracking-tighter text-blue-400 uppercase">RhemaCast</span>
+            </div>
+            <a href="presentation.html" class="chrome-tab inactive">PRESENTATION</a>
+            <a href="library.html" class="chrome-tab inactive">LIBRARY</a>
+            <a href="history.html" class="chrome-tab inactive">HISTORY</a>
+            <a href="settings.html" class="chrome-tab inactive">SETTINGS</a>
+            <a href="theme_designer_full.html" class="chrome-tab active">THEME DESIGNER</a>
+        </div>
+        <div class="flex h-full items-start pt-1">
+            <div class="w-11 h-8 flex items-center justify-center hover:bg-white/10 cursor-pointer transition-colors">
+                <div class="w-2.5 h-[1px] bg-white"></div>
+            </div>
+            <div class="w-11 h-8 flex items-center justify-center hover:bg-white/10 cursor-pointer transition-colors">
+                <div class="w-2.5 h-2.5 border border-white"></div>
+            </div>
+            <div class="w-12 h-8 flex items-center justify-center hover:bg-red-600 group cursor-pointer transition-colors">
+                <span class="text-lg font-light group-hover:text-white">×</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sub-Toolbar -->
+    <div class="sub-toolbar">
+        <div class="flex items-center gap-3">
+            <span class="text-white font-bold">Theme Designer</span>
+            <span class="text-slate-600">|</span>
+            <span class="text-slate-400 text-[10px]">Standard</span>
+            <span class="badge badge-cyan">Editing</span>
+        </div>
+        <div class="flex items-center gap-2 ml-auto">
+            <button class="btn-ghost">Import JSON</button>
+            <button class="btn-ghost">Export JSON</button>
+            <button class="btn-primary">Save Theme</button>
+        </div>
+    </div>
+
+    <!-- Three-Column Designer -->
+    <div class="designer-root">
+
+        <!-- ═══ LEFT: Properties Panel ═══ -->
+        <div class="props-panel">
+            <div class="props-header">
+                <span class="text-[11px] font-extrabold text-white">Properties</span>
+                <div class="tab-switcher">
+                    <div class="tab-switcher-btn active">Visual</div>
+                    <div class="tab-switcher-btn">Layout</div>
+                </div>
+            </div>
+
+            <div class="props-body">
+                <!-- Element Tree -->
+                <div class="section-label">Elements</div>
+
+                <div class="tree-item active">
+                    <div class="tree-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                    </div>
+                    <span>Container</span>
+                </div>
+
+                <div class="tree-item tree-indent">
+                    <div class="tree-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                    </div>
+                    <span>Scripture Text</span>
+                    <div class="toggle-sm active ml-auto" onclick="this.classList.toggle('active')"></div>
+                </div>
+
+                <div class="tree-item tree-indent">
+                    <div class="tree-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                    </div>
+                    <span>Reference</span>
+                    <div class="toggle-sm active ml-auto" onclick="this.classList.toggle('active')"></div>
+                </div>
+
+                <div class="tree-item tree-indent">
+                    <div class="tree-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+                    </div>
+                    <span>Translation</span>
+                    <div class="toggle-sm active ml-auto" onclick="this.classList.toggle('active')"></div>
+                </div>
+
+                <div class="tree-item tree-indent">
+                    <div class="tree-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+                    </div>
+                    <span>Verse Number</span>
+                    <div class="toggle-sm ml-auto" onclick="this.classList.toggle('active')"></div>
+                </div>
+
+                <div class="section-divider"></div>
+
+                <!-- Scripture Text Props -->
+                <div class="section-label">Scripture Text</div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Font</span>
+                    <select class="font-select flex-1">
+                        <option value="Nunito" selected>Nunito</option>
+                        <option value="DM Sans">DM Sans</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Color</span>
+                    <div class="color-swatch" style="background: #f8fafc;"></div>
+                    <input type="text" class="prop-input" value="#f8fafc">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Size</span>
+                    <input type="range" class="range-slider" min="12" max="72" value="44">
+                    <span class="text-[10px] text-slate-400 w-8 text-right">44px</span>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Weight</span>
+                    <select class="font-select flex-1">
+                        <option value="400">Regular</option>
+                        <option value="600">Semi Bold</option>
+                        <option value="700" selected>Bold</option>
+                        <option value="800">Extra Bold</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Line H</span>
+                    <input type="text" class="prop-input prop-input-sm" value="1.08">
+                    <span class="prop-label" style="min-width: 36px;">Spacing</span>
+                    <input type="text" class="prop-input prop-input-sm" value="-0.02em">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Shadow</span>
+                    <input type="text" class="prop-input" value="0 4px 12px rgba(0,0,0,0.4)">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Min Sz</span>
+                    <input type="text" class="prop-input prop-input-sm" value="38px">
+                    <span class="prop-label" style="min-width: 36px;">Max</span>
+                    <input type="text" class="prop-input prop-input-sm" value="58px">
+                </div>
+
+                <div class="section-divider"></div>
+
+                <!-- Reference Props -->
+                <div class="section-label">Reference</div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Font</span>
+                    <select class="font-select flex-1">
+                        <option value="DM Sans" selected>DM Sans</option>
+                        <option value="Nunito">Nunito</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Color</span>
+                    <div class="color-swatch" style="background: #cccccc;"></div>
+                    <input type="text" class="prop-input" value="#cccccc">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Size</span>
+                    <input type="range" class="range-slider" min="8" max="48" value="34">
+                    <span class="text-[10px] text-slate-400 w-8 text-right">34px</span>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Weight</span>
+                    <select class="font-select flex-1">
+                        <option value="400">Regular</option>
+                        <option value="500" selected>Medium</option>
+                        <option value="600">Semi Bold</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Transform</span>
+                    <select class="font-select flex-1">
+                        <option value="uppercase" selected>UPPERCASE</option>
+                        <option value="capitalize">Capitalize</option>
+                        <option value="none">None</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Letter Sp</span>
+                    <input type="text" class="prop-input" value="0.1em">
+                </div>
+
+                <div class="section-divider"></div>
+
+                <!-- Container Props -->
+                <div class="section-label">Container</div>
+
+                <div class="prop-row">
+                    <span class="prop-label">BG</span>
+                    <div class="color-swatch" style="background: rgba(15, 23, 42, 0.6);"></div>
+                    <input type="text" class="prop-input" value="rgba(15, 23, 42, 0.6)">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Border</span>
+                    <input type="text" class="prop-input" value="1px solid rgba(255,255,255,0.1)">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Radius</span>
+                    <input type="text" class="prop-input prop-input-sm" value="24px">
+                    <span class="prop-label" style="min-width: 36px;">Blur</span>
+                    <input type="text" class="prop-input prop-input-sm" value="16px">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Width</span>
+                    <input type="text" class="prop-input prop-input-sm" value="1840px">
+                    <span class="prop-label" style="min-width: 36px;">H</span>
+                    <input type="text" class="prop-input prop-input-sm" value="1080px">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Padding</span>
+                    <input type="text" class="prop-input" value="40px">
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Shadow</span>
+                    <input type="text" class="prop-input" value="0 25px 50px -12px rgba(0,0,0,0.5)">
+                </div>
+
+                <div class="section-divider"></div>
+
+                <!-- Body Props -->
+                <div class="section-label">Body</div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Align</span>
+                    <select class="font-select flex-1">
+                        <option value="center" selected>Center</option>
+                        <option value="flex-end">Bottom</option>
+                        <option value="flex-start">Top</option>
+                    </select>
+                </div>
+
+                <div class="prop-row">
+                    <span class="prop-label">Pad Bottom</span>
+                    <input type="text" class="prop-input" value="0">
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ CENTER: Three Preview Panes ═══ -->
+        <div class="previews-panel">
+            <div class="previews-header">
+                <div class="flex items-center gap-3">
+                    <span class="text-[11px] font-extrabold text-white">Live Previews</span>
+                    <span class="text-slate-600">|</span>
+                    <span class="text-[10px] text-slate-500">Hot-reload — all three update simultaneously</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="btn-ghost" onclick="toggleAllPreviews()">Toggle All</button>
+                </div>
+            </div>
+
+            <div class="previews-grid">
+                <!-- Top: Medium Verse (Matthew 3:11) -->
+                <div class="preview-card card-top">
+                    <div class="preview-card-header">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold text-slate-400">Medium Verse</span>
+                            <span class="badge badge-red">Matthew 3:11</span>
+                        </div>
+                        <span class="text-[9px] text-slate-600">KJV</span>
+                    </div>
+                    <div class="preview-viewport" id="preview3">
+                        <div class="preview-viewport-content">
+                            <div style="font-family: 'Nunito', sans-serif; font-size: 28px; font-weight: 700; color: #ffffff; text-align: center; line-height: 1.08; letter-spacing: -0.02em; text-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                                I indeed baptize you with water unto repentance: but he that cometh after me is mightier than I, whose shoes I am not worthy to bear: he shall baptize you with the Holy Ghost, and with fire:
+                            </div>
+                            <div style="font-family: 'DM Sans', sans-serif; font-size: 28px; font-weight: 500; color: #cccccc; text-align: center; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 16px;">
+                                MATTHEW 3:11 <span style="color: #999999; margin-left: 8px;">KJV</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Row -->
+                <div class="previews-row">
+                    <!-- Bottom Left: Shortest Verse (John 11:35) -->
+                    <div class="preview-card card-bottom">
+                        <div class="preview-card-header">
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] font-bold text-slate-400">Shortest Verse</span>
+                                <span class="badge badge-cyan">John 11:35</span>
+                            </div>
+                            <span class="text-[9px] text-slate-600">KJV</span>
+                        </div>
+                        <div class="preview-viewport" id="preview1">
+                            <div class="preview-viewport-content">
+                                <div style="font-family: 'Nunito', sans-serif; font-size: 44px; font-weight: 700; color: #ffffff; text-align: center; line-height: 1.08; letter-spacing: -0.02em; text-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                                    Jesus wept.
+                                </div>
+                                <div style="font-family: 'DM Sans', sans-serif; font-size: 34px; font-weight: 500; color: #cccccc; text-align: center; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 16px;">
+                                    JOHN 11:35 <span style="color: #999999; margin-left: 8px;">KJV</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Right: Longest Verse (Esther 8:9) -->
+                    <div class="preview-card card-bottom">
+                        <div class="preview-card-header">
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] font-bold text-slate-400">Longest Verse</span>
+                                <span class="badge badge-amber">Esther 8:9</span>
+                            </div>
+                            <span class="text-[9px] text-slate-600">KJV</span>
+                        </div>
+                        <div class="preview-viewport" id="preview2">
+                            <div class="preview-viewport-content">
+                                <div style="font-family: 'Nunito', sans-serif; font-size: 18px; font-weight: 700; color: #ffffff; text-align: center; line-height: 1.08; letter-spacing: -0.02em; text-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                                    So the king called Haman the son of Hammedatha the Agagite, the Jew, and said: "The law has given Esther the house of Haman, and they have hanged him on the gallows, because he sought to lay a hand on the Jews. You yourself may write concerning the Jews, as you please, in the king's name, and seal it with the king's signet ring; for whatever is written in the king's name and sealed with the king's signet ring no one can revoke."
+                                </div>
+                                <div style="font-family: 'DM Sans', sans-serif; font-size: 24px; font-weight: 500; color: #cccccc; text-align: center; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 16px;">
+                                    ESTHER 8:9 <span style="color: #999999; margin-left: 8px;">KJV</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ RIGHT: Animations + JSON Editor ═══ -->
+        <div class="advanced-panel">
+            <div class="advanced-header">
+                <div class="tab-switcher">
+                    <div class="tab-switcher-btn active" onclick="showAdvancedTab('animations')">Animations</div>
+                    <div class="tab-switcher-btn" onclick="showAdvancedTab('json')">JSON</div>
+                </div>
+            </div>
+
+            <div class="advanced-body" id="animationsTab">
+                <!-- Display Start Animation -->
+                <div class="anim-card">
+                    <div class="anim-card-header">
+                        <div class="flex items-center gap-2">
+                            <span class="anim-card-title">Display Enter</span>
+                            <span class="badge badge-cyan">In</span>
+                        </div>
+                        <div class="toggle-sm active" onclick="this.classList.toggle('active')"></div>
+                    </div>
+                    <div class="anim-timeline">
+                        <div class="anim-track" style="left: 0; width: 60%;"></div>
+                        <div class="anim-keyframe" style="left: 0%;" title="Start"></div>
+                        <div class="anim-keyframe" style="left: 30%;" title="Mid"></div>
+                        <div class="anim-keyframe" style="left: 60%;" title="End"></div>
+                    </div>
+                    <div class="mt-2 flex gap-2">
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 40px;">Type</span>
+                            <select class="font-select flex-1" style="font-size: 10px;">
+                                <option>Fade Up</option>
+                                <option>Fade In</option>
+                                <option>Scale Up</option>
+                                <option>Slide Up</option>
+                                <option>Typewriter</option>
+                            </select>
+                        </div>
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 32px;">Ms</span>
+                            <input type="text" class="prop-input" value="600" style="font-size: 10px; padding: 4px 6px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Between Slides Animation -->
+                <div class="anim-card">
+                    <div class="anim-card-header">
+                        <div class="flex items-center gap-2">
+                            <span class="anim-card-title">Between Slides</span>
+                            <span class="badge badge-amber">Cycle</span>
+                        </div>
+                        <div class="toggle-sm active" onclick="this.classList.toggle('active')"></div>
+                    </div>
+                    <div class="anim-timeline">
+                        <div class="anim-track" style="left: 10%; width: 40%;"></div>
+                        <div class="anim-keyframe" style="left: 10%;" title="Out Start"></div>
+                        <div class="anim-keyframe" style="left: 30%;" title="Out End"></div>
+                        <div class="anim-keyframe" style="left: 50%;" title="In Start"></div>
+                        <div class="anim-keyframe" style="left: 70%;" title="In End"></div>
+                    </div>
+                    <div class="mt-2 flex gap-2">
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 40px;">Out</span>
+                            <select class="font-select flex-1" style="font-size: 10px;">
+                                <option>Fade Down</option>
+                                <option>Fade Out</option>
+                                <option>Scale Down</option>
+                                <option>Slide Down</option>
+                            </select>
+                        </div>
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 40px;">In</span>
+                            <select class="font-select flex-1" style="font-size: 10px;">
+                                <option>Fade Up</option>
+                                <option>Fade In</option>
+                                <option>Scale Up</option>
+                                <option>Slide Up</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Display End Animation -->
+                <div class="anim-card">
+                    <div class="anim-card-header">
+                        <div class="flex items-center gap-2">
+                            <span class="anim-card-title">Display Exit</span>
+                            <span class="badge badge-red">Out</span>
+                        </div>
+                        <div class="toggle-sm active" onclick="this.classList.toggle('active')"></div>
+                    </div>
+                    <div class="anim-timeline">
+                        <div class="anim-track" style="left: 20%; width: 50%;"></div>
+                        <div class="anim-keyframe" style="left: 20%;" title="Start"></div>
+                        <div class="anim-keyframe" style="left: 50%;" title="Mid"></div>
+                        <div class="anim-keyframe" style="left: 70%;" title="End"></div>
+                    </div>
+                    <div class="mt-2 flex gap-2">
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 40px;">Type</span>
+                            <select class="font-select flex-1" style="font-size: 10px;">
+                                <option>Fade Down</option>
+                                <option>Fade Out</option>
+                                <option>Scale Down</option>
+                                <option>Slide Down</option>
+                            </select>
+                        </div>
+                        <div class="prop-row" style="padding: 0;">
+                            <span class="prop-label" style="min-width: 32px;">Ms</span>
+                            <input type="text" class="prop-input" value="400" style="font-size: 10px; padding: 4px 6px;">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-divider" style="margin: 8px 16px;"></div>
+
+                <!-- Easing Reference -->
+                <div class="section-label">Easing Reference</div>
+                <div class="px-4 pb-3">
+                    <div class="text-[10px] text-slate-500 font-mono leading-relaxed">
+                        <div class="flex justify-between py-1 border-b border-white/5">
+                            <span class="text-slate-400">ease-out</span>
+                            <span class="text-slate-600">cubic-bezier(0.16, 1, 0.3, 1)</span>
+                        </div>
+                        <div class="flex justify-between py-1 border-b border-white/5">
+                            <span class="text-slate-400">ease-in-out</span>
+                            <span class="text-slate-600">cubic-bezier(0.65, 0, 0.35, 1)</span>
+                        </div>
+                        <div class="flex justify-between py-1 border-b border-white/5">
+                            <span class="text-slate-400">spring</span>
+                            <span class="text-slate-600">cubic-bezier(0.34, 1.56, 0.64, 1)</span>
+                        </div>
+                        <div class="flex justify-between py-1">
+                            <span class="text-slate-400">smooth</span>
+                            <span class="text-slate-600">cubic-bezier(0.25, 0.1, 0.25, 1)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON Editor (hidden by default) -->
+            <div class="advanced-body" id="jsonTab" style="display: none; padding: 0; flex-direction: column;">
+                <div class="json-editor" style="margin: 8px 12px; flex: 1;">
+                    <div class="json-editor-header">
+                        <span class="text-[10px] font-bold text-slate-400">theme.json</span>
+                        <div class="flex gap-1">
+                            <button class="btn-ghost" style="font-size: 9px; padding: 3px 6px;">Format</button>
+                            <button class="btn-ghost" style="font-size: 9px; padding: 3px 6px;">Copy</button>
+                        </div>
+                    </div>
+                    <div class="json-editor-body custom-scrollbar">
+<pre><span class="json-bracket">{</span>
+  <span class="json-key">"name"</span>: <span class="json-string">"standard"</span>,
+  <span class="json-key">"label"</span>: <span class="json-string">"Standard"</span>,
+  <span class="json-key">"author"</span>: <span class="json-string">"RhemaCast"</span>,
+
+  <span class="json-key">"container"</span>: <span class="json-bracket">{</span>
+    <span class="json-key">"background"</span>: <span class="json-string">"transparent"</span>,
+    <span class="json-key">"border"</span>: <span class="json-string">"none"</span>,
+    <span class="json-key">"border_radius"</span>: <span class="json-string">"0"</span>,
+    <span class="json-key">"box_shadow"</span>: <span class="json-string">"none"</span>,
+    <span class="json-key">"backdrop_filter"</span>: <span class="json-string">"none"</span>,
+    <span class="json-key">"padding"</span>: <span class="json-string">"0"</span>,
+    <span class="json-key">"width"</span>: <span class="json-string">"1840px"</span>,
+    <span class="json-key">"height"</span>: <span class="json-string">"1080px"</span>,
+    <span class="json-key">"display"</span>: <span class="json-string">"flex"</span>,
+    <span class="json-key">"justify_content"</span>: <span class="json-string">"center"</span>,
+    <span class="json-key">"align_items"</span>: <span class="json-string">"center"</span>
+  <span class="json-bracket">}</span>,
+
+  <span class="json-key">"text"</span>: <span class="json-bracket">{</span>
+    <span class="json-key">"color"</span>: <span class="json-string">"#ffffff"</span>,
+    <span class="json-key">"font_family"</span>: <span class="json-string">"'Nunito', sans-serif"</span>,
+    <span class="json-key">"size"</span>: <span class="json-string">"44px"</span>,
+    <span class="json-key">"min_size"</span>: <span class="json-string">"38px"</span>,
+    <span class="json-key">"max_size"</span>: <span class="json-string">"58px"</span>,
+    <span class="json-key">"weight"</span>: <span class="json-number">700</span>,
+    <span class="json-key">"line_height"</span>: <span class="json-string">"1.08"</span>,
+    <span class="json-key">"text_shadow"</span>: <span class="json-string">"0 4px 12px rgba(0,0,0,0.4)"</span>,
+    <span class="json-key">"letter_spacing"</span>: <span class="json-string">"-0.02em"</span>,
+    <span class="json-key">"margin_bottom"</span>: <span class="json-string">"20px"</span>
+  <span class="json-bracket">}</span>,
+
+  <span class="json-key">"reference"</span>: <span class="json-bracket">{</span>
+    <span class="json-key">"color"</span>: <span class="json-string">"#cccccc"</span>,
+    <span class="json-key">"font_family"</span>: <span class="json-string">"'DM Sans', sans-serif"</span>,
+    <span class="json-key">"size"</span>: <span class="json-string">"34px"</span>,
+    <span class="json-key">"weight"</span>: <span class="json-number">500</span>,
+    <span class="json-key">"text_transform"</span>: <span class="json-string">"uppercase"</span>,
+    <span class="json-key">"letter_spacing"</span>: <span class="json-string">"0.1em"</span>
+  <span class="json-bracket">}</span>,
+
+  <span class="json-key">"translation"</span>: <span class="json-bracket">{</span>
+    <span class="json-key">"color"</span>: <span class="json-string">"#999999"</span>,
+    <span class="json-key">"margin_left"</span>: <span class="json-string">"8px"</span>
+  <span class="json-bracket">}</span>
+<span class="json-bracket">}</span></pre>
+                    </div>
+                </div>
+
+                <div class="px-4 pb-3">
+                    <div class="text-[9px] text-slate-600 leading-relaxed">
+                        Edit the JSON directly. Changes apply to all three previews in real-time.
+                        Use <span class="text-slate-400 font-mono">Ctrl+S</span> to save.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showAdvancedTab(tab) {
+            const tabs = document.querySelectorAll('.advanced-header .tab-switcher-btn');
+            tabs.forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.getElementById('animationsTab').style.display = tab === 'animations' ? '' : 'none';
+            document.getElementById('jsonTab').style.display = tab === 'json' ? '' : 'none';
+
+            if (tab === 'json') {
+                document.getElementById('jsonTab').style.display = 'flex';
+            }
+        }
+
+        function toggleAllPreviews() {
+            const previews = ['preview1', 'preview2', 'preview3'];
+            previews.forEach(id => {
+                const el = document.getElementById(id);
+                el.style.opacity = el.style.opacity === '0' ? '1' : '0';
+            });
+        }
+    </script>
+
+</body>
+
+</html>

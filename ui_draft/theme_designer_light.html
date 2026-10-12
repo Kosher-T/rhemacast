@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RhemaCast - Light Theme Designer (Popup)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="global.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Nunito', 'sans-serif'],
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        body { background: #020617; }
+
+        /* ── Popup Backdrop ── */
+        .popup-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ── Popup Panel: 1280x720 (720p) ── */
+        .popup-panel {
+            width: 1280px;
+            height: 720px;
+            background: rgba(15, 23, 42, 0.97);
+            backdrop-filter: blur(32px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            box-shadow:
+                0 50px 100px -20px rgba(0, 0, 0, 0.7),
+                0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Popup Title Bar ── */
+        .popup-titlebar {
+            height: 44px;
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            cursor: grab;
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+        .popup-titlebar:active { cursor: grabbing; }
+
+        /* ── Popup Body: two-column ── */
+        .popup-body {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* ── Left: Controls ── */
+        .controls-col {
+            width: 380px;
+            min-width: 340px;
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .controls-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .controls-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+
+        .controls-body::-webkit-scrollbar { width: 4px; }
+        .controls-body::-webkit-scrollbar-track { background: transparent; }
+        .controls-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 4px; }
+
+        /* ── Right: Preview ── */
+        .preview-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .preview-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .preview-viewport {
+            flex: 1;
+            background: black;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .preview-content {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            transition: all 0.25s ease;
+        }
+
+        /* ── Shared Components ── */
+        .section-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 8px 16px 4px;
+        }
+
+        .section-divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.06);
+            margin: 4px 16px;
+        }
+
+        .element-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 16px;
+            cursor: pointer;
+            transition: background 0.1s ease;
+        }
+
+        .element-toggle:hover { background: rgba(255, 255, 255, 0.03); }
+
+        .element-toggle.focused {
+            background: rgba(59, 130, 246, 0.08);
+            border-left: 2px solid #3b82f6;
+        }
+
+        .element-toggle.dimmed { opacity: 0.35; }
+
+        .toggle-switch {
+            width: 32px;
+            height: 18px;
+            border-radius: 9px;
+            background: rgba(255, 255, 255, 0.1);
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch.active { background: rgba(34, 211, 238, 0.4); }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #64748b;
+            transition: all 0.2s ease;
+        }
+
+        .toggle-switch.active::after { left: 16px; background: #22d3ee; }
+
+        .prop-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 16px;
+        }
+
+        .prop-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            min-width: 56px;
+        }
+
+        .prop-input {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 8px;
+            color: #f8fafc;
+            font-size: 11px;
+            font-family: 'Nunito', sans-serif;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .prop-input:focus { border-color: rgba(59, 130, 246, 0.5); }
+        .prop-input-sm { width: 56px; flex: none; }
+
+        .color-swatch {
+            width: 24px;
+            height: 24px;
+            border-radius: 5px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: border-color 0.15s ease;
+        }
+
+        .color-swatch:hover { border-color: rgba(255, 255, 255, 0.2); }
+
+        .font-select {
+            appearance: none;
+            background: rgba(0, 0, 0, 0.3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 6px center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 24px 5px 8px;
+            color: #f8fafc;
+            font-size: 11px;
+            font-family: 'Nunito', sans-serif;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .font-select:focus { border-color: rgba(59, 130, 246, 0.5); }
+
+        .range-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 3px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+        }
+
+        .range-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* ── Buttons ── */
+        .btn-ghost {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #94a3b8;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-ghost:hover { background: rgba(255, 255, 255, 0.05); color: #f8fafc; }
+
+        .btn-primary {
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            color: white;
+            background: #3b82f6;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary:hover { background: #2563eb; }
+
+        .btn-expand {
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #22d3ee;
+            background: rgba(34, 211, 238, 0.1);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .btn-expand:hover { background: rgba(34, 211, 238, 0.2); }
+
+        /* ── Badge ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-cyan { background: rgba(34, 211, 238, 0.15); color: #22d3ee; }
+
+        /* ── Drag Handle ── */
+        .drag-handle {
+            cursor: grab;
+            color: #334155;
+            transition: color 0.15s ease;
+        }
+
+        .drag-handle:hover { color: #94a3b8; }
+        .drag-handle:active { cursor: grabbing; }
+
+        /* ── Section Tabs ── */
+        .section-tabs {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .section-tab {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .section-tab.active { background: rgba(255, 255, 255, 0.08); color: #f8fafc; }
+        .section-tab:hover:not(.active) { color: #94a3b8; }
+
+        /* ── Container Transform Controls (visual reference) ── */
+        .transform-demo {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 6px;
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+            margin: 8px 16px;
+        }
+
+        .transform-handle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 1.5px solid rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+
+        .transform-handle.corner { width: 10px; height: 10px; border-radius: 2px; }
+        .transform-handle.edge { border-radius: 50%; }
+        .transform-handle.center {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #22d3ee;
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen font-sans overflow-hidden flex flex-col select-none">
+
+    <!-- Simulated Presentation Tab Background -->
+    <div class="h-[42px] bg-[#1a1a1a] flex items-end justify-between px-2 shrink-0 border-b border-black/40">
+        <div class="flex items-end flex-1 overflow-hidden">
+            <div class="flex items-center self-center px-4 mr-2">
+                <span class="text-[13px] font-extrabold tracking-tighter text-blue-400 uppercase">RhemaCast</span>
+            </div>
+            <a href="presentation.html" class="chrome-tab active">PRESENTATION</a>
+            <a href="library.html" class="chrome-tab inactive">LIBRARY</a>
+            <a href="history.html" class="chrome-tab inactive">HISTORY</a>
+            <a href="settings.html" class="chrome-tab inactive">SETTINGS</a>
+        </div>
+        <div class="flex h-full items-start pt-1">
+            <div class="w-11 h-8 flex items-center justify-center hover:bg-white/10 cursor-pointer transition-colors">
+                <div class="w-2.5 h-[1px] bg-white"></div>
+            </div>
+            <div class="w-11 h-8 flex items-center justify-center hover:bg-white/10 cursor-pointer transition-colors">
+                <div class="w-2.5 h-2.5 border border-white"></div>
+            </div>
+            <div class="w-12 h-8 flex items-center justify-center hover:bg-red-600 group cursor-pointer transition-colors">
+                <span class="text-lg font-light group-hover:text-white">×</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simulated Presentation Content (dimmed behind popup) -->
+    <div class="flex-1 bg-slate-950 p-4 flex gap-4 opacity-40">
+        <div class="w-[25vw] bg-slate-900/40 border border-white/5 rounded-lg"></div>
+        <div class="flex-1 bg-slate-900/40 border border-white/5 rounded-lg flex gap-4 p-4">
+            <div class="flex-1 bg-black border border-blue-500/20 rounded-lg"></div>
+            <div class="flex-1 bg-black border border-red-500/30 rounded-lg"></div>
+        </div>
+        <div class="w-[25vw] bg-slate-900/40 border border-white/5 rounded-lg"></div>
+    </div>
+
+    <!-- ═══ POPUP BACKDROP ═══ -->
+    <div class="popup-backdrop" id="popupBackdrop">
+        <div class="popup-panel" id="popupPanel">
+
+            <!-- Title Bar -->
+            <div class="popup-titlebar">
+                <div class="flex items-center gap-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+                        <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                    </svg>
+                    <span class="text-sm font-extrabold text-white">Quick Theme Editor</span>
+                    <span class="badge badge-cyan">Standard</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="btn-expand" onclick="alert('Opens Full Theme Designer tab')">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                        </svg>
+                        Edit in Full Designer
+                    </button>
+                    <button class="btn-ghost" onclick="alert('Reset to theme defaults')">Reset</button>
+                    <button class="btn-primary" onclick="alert('Save theme JSON')">Save</button>
+                    <button class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-colors" onclick="alert('Close popup')">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6 6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Body -->
+            <div class="popup-body">
+
+                <!-- ── Left: Controls ── -->
+                <div class="controls-col">
+                    <div class="controls-header">
+                        <span class="text-[11px] font-extrabold text-white">Properties</span>
+                        <div class="section-tabs">
+                            <div class="section-tab active">Elements</div>
+                            <div class="section-tab">Container</div>
+                        </div>
+                    </div>
+
+                    <div class="controls-body">
+
+                        <!-- Element List (click to focus) -->
+                        <div class="section-label">Elements</div>
+
+                        <div class="element-toggle focused" onclick="focusElement(this, 'text')">
+                            <div class="flex items-center gap-2">
+                                <svg class="drag-handle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>
+                                    <circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>
+                                    <circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>
+                                </svg>
+                                <span class="text-[11px] font-bold text-white">Scripture Text</span>
+                            </div>
+                            <div class="toggle-switch active" onclick="event.stopPropagation(); this.classList.toggle('active')"></div>
+                        </div>
+
+                        <div class="element-toggle" onclick="focusElement(this, 'ref')">
+                            <div class="flex items-center gap-2">
+                                <svg class="drag-handle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>
+                                    <circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>
+                                    <circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>
+                                </svg>
+                                <span class="text-[11px] font-bold text-slate-300">Reference</span>
+                            </div>
+                            <div class="toggle-switch active" onclick="event.stopPropagation(); this.classList.toggle('active')"></div>
+                        </div>
+
+                        <div class="element-toggle" onclick="focusElement(this, 'trans')">
+                            <div class="flex items-center gap-2">
+                                <svg class="drag-handle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>
+                                    <circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>
+                                    <circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>
+                                </svg>
+                                <span class="text-[11px] font-bold text-slate-300">Translation</span>
+                            </div>
+                            <div class="toggle-switch active" onclick="event.stopPropagation(); this.classList.toggle('active')"></div>
+                        </div>
+
+                        <div class="element-toggle" onclick="focusElement(this, 'num')">
+                            <div class="flex items-center gap-2">
+                                <svg class="drag-handle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>
+                                    <circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>
+                                    <circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>
+                                </svg>
+                                <span class="text-[11px] font-bold text-slate-300">Verse Number</span>
+                            </div>
+                            <div class="toggle-switch" onclick="event.stopPropagation(); this.classList.toggle('active')"></div>
+                        </div>
+
+                        <div class="section-divider"></div>
+
+                        <!-- Properties for focused element (Scripture Text) -->
+                        <div id="props-text">
+                            <div class="section-label">Scripture Text</div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Font</span>
+                                <select class="font-select flex-1" onchange="updatePreviewFont(this.value)">
+                                    <option value="'Nunito', sans-serif" selected>Nunito</option>
+                                    <option value="'DM Sans', sans-serif">DM Sans</option>
+                                    <option value="'Georgia', serif">Georgia</option>
+                                    <option value="'Times New Roman', serif">Times New Roman</option>
+                                </select>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Color</span>
+                                <div class="color-swatch" style="background: #ffffff;"></div>
+                                <input type="text" class="prop-input" value="#ffffff" oninput="updatePreviewColor(this.value)">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Size</span>
+                                <input type="range" class="range-slider" min="12" max="72" value="44" oninput="updatePreviewSize(this.value)">
+                                <span class="text-[10px] text-slate-400 w-8 text-right" id="sizeLabel">44px</span>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Weight</span>
+                                <select class="font-select flex-1">
+                                    <option value="400">Regular</option>
+                                    <option value="600">Semi Bold</option>
+                                    <option value="700" selected>Bold</option>
+                                    <option value="800">Extra Bold</option>
+                                </select>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Line H</span>
+                                <input type="text" class="prop-input prop-input-sm" value="1.08">
+                                <span class="prop-label" style="min-width: 40px;">Spacing</span>
+                                <input type="text" class="prop-input prop-input-sm" value="-0.02em">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Shadow</span>
+                                <input type="text" class="prop-input" value="0 4px 12px rgba(0,0,0,0.4)">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Min Sz</span>
+                                <input type="text" class="prop-input prop-input-sm" value="38px">
+                                <span class="prop-label" style="min-width: 40px;">Max</span>
+                                <input type="text" class="prop-input prop-input-sm" value="58px">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Auto Fit</span>
+                                <div class="toggle-switch active" onclick="this.classList.toggle('active')"></div>
+                                <span class="text-[9px] text-slate-600 ml-1">Resize text to container</span>
+                            </div>
+
+                            <div class="section-divider"></div>
+                        </div>
+
+                        <!-- Reference Properties (hidden when not focused) -->
+                        <div id="props-ref" style="display: none;">
+                            <div class="section-label">Reference</div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Font</span>
+                                <select class="font-select flex-1">
+                                    <option value="DM Sans" selected>DM Sans</option>
+                                    <option value="Nunito">Nunito</option>
+                                </select>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Color</span>
+                                <div class="color-swatch" style="background: #cccccc;"></div>
+                                <input type="text" class="prop-input" value="#cccccc">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Size</span>
+                                <input type="range" class="range-slider" min="8" max="48" value="34">
+                                <span class="text-[10px] text-slate-400 w-8 text-right">34px</span>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Transform</span>
+                                <select class="font-select flex-1">
+                                    <option value="uppercase" selected>UPPERCASE</option>
+                                    <option value="capitalize">Capitalize</option>
+                                    <option value="none">None</option>
+                                </select>
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Letter Sp</span>
+                                <input type="text" class="prop-input" value="0.1em">
+                            </div>
+
+                            <div class="section-divider"></div>
+                        </div>
+
+                        <!-- Translation Properties (hidden when not focused) -->
+                        <div id="props-trans" style="display: none;">
+                            <div class="section-label">Translation</div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Color</span>
+                                <div class="color-swatch" style="background: #999999;"></div>
+                                <input type="text" class="prop-input" value="#999999">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Margin L</span>
+                                <input type="text" class="prop-input" value="8px">
+                            </div>
+
+                            <div class="section-divider"></div>
+                        </div>
+
+                        <!-- Verse Number Properties (hidden when not focused) -->
+                        <div id="props-num" style="display: none;">
+                            <div class="section-label">Verse Number</div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Color</span>
+                                <div class="color-swatch" style="background: #cccccc;"></div>
+                                <input type="text" class="prop-input" value="#cccccc">
+                            </div>
+
+                            <div class="prop-row">
+                                <span class="prop-label">Font</span>
+                                <select class="font-select flex-1">
+                                    <option value="inherit" selected>Inherit</option>
+                                    <option value="Nunito">Nunito</option>
+                                </select>
+                            </div>
+
+                            <div class="section-divider"></div>
+                        </div>
+
+                        <!-- Container Properties (always visible) -->
+                        <div class="section-label">Container</div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">BG</span>
+                            <div class="color-swatch" style="background: rgba(15, 23, 42, 0.6);"></div>
+                            <input type="text" class="prop-input" value="rgba(15, 23, 42, 0.6)">
+                        </div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">Border</span>
+                            <input type="text" class="prop-input" value="1px solid rgba(255,255,255,0.1)">
+                        </div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">Radius</span>
+                            <input type="text" class="prop-input prop-input-sm" value="24px">
+                            <span class="prop-label" style="min-width: 40px;">Blur</span>
+                            <input type="text" class="prop-input prop-input-sm" value="16px">
+                        </div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">Width</span>
+                            <input type="text" class="prop-input prop-input-sm" value="1840px">
+                            <span class="prop-label" style="min-width: 40px;">H</span>
+                            <input type="text" class="prop-input prop-input-sm" value="1080px">
+                        </div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">Padding</span>
+                            <input type="text" class="prop-input" value="40px">
+                        </div>
+
+                        <div class="prop-row">
+                            <span class="prop-label">Align</span>
+                            <select class="font-select flex-1">
+                                <option value="center" selected>Center</option>
+                                <option value="flex-end">Bottom</option>
+                                <option value="flex-start">Top</option>
+                            </select>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- ── Right: Preview ── -->
+                <div class="preview-col">
+                    <div class="preview-header">
+                        <div class="flex items-center gap-3">
+                            <span class="text-[11px] font-extrabold text-white">Preview</span>
+                            <span class="text-slate-600">|</span>
+                            <span class="text-[10px] text-slate-500">Psalm 100:4 KJV</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[9px] text-slate-600">Changes apply live</span>
+                        </div>
+                    </div>
+
+                    <div class="preview-viewport" id="previewViewport">
+                        <div class="preview-content" id="previewContent">
+                            <div id="previewVerse" style="font-family: 'Nunito', sans-serif; font-size: 44px; font-weight: 700; color: #ffffff; text-align: center; line-height: 1.08; letter-spacing: -0.02em; text-shadow: 0 4px 12px rgba(0,0,0,0.4); margin-bottom: 20px;">
+                                Enter his gates with thanksgiving,<br>
+                                and into his courts with praise.
+                            </div>
+                            <div id="previewRef" style="font-family: 'DM Sans', sans-serif; font-size: 34px; font-weight: 500; color: #cccccc; text-align: center; text-transform: uppercase; letter-spacing: 0.1em;">
+                                PSALM 100:4 <span id="previewTrans" style="color: #999999; margin-left: 8px;">KJV</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function focusElement(el, element) {
+            // Dim all, highlight focused
+            document.querySelectorAll('.element-toggle').forEach(e => {
+                e.classList.remove('focused');
+                e.classList.add('dimmed');
+            });
+            el.classList.remove('dimmed');
+            el.classList.add('focused');
+
+            // Show/hide property sections
+            ['text', 'ref', 'trans', 'num'].forEach(id => {
+                const section = document.getElementById('props-' + id);
+                if (section) section.style.display = id === element ? '' : 'none';
+            });
+        }
+
+        function updatePreviewSize(val) {
+            document.getElementById('previewVerse').style.fontSize = val + 'px';
+            document.getElementById('sizeLabel').textContent = val + 'px';
+        }
+
+        function updatePreviewColor(val) {
+            document.getElementById('previewVerse').style.color = val;
+        }
+
+        function updatePreviewFont(val) {
+            document.getElementById('previewVerse').style.fontFamily = val;
+        }
+    </script>
+
+</body>
+
+</html>

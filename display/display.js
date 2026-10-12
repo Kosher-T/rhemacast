@@ -120,13 +120,7 @@ function applyTheme(theme, slideFormat) {
     if (tShadow) root.style.setProperty("--rc-text-shadow", tShadow);
     // A theme-only change carries no fresh text: restore pristine markup so
     // the new metrics reconvert below instead of persisting stale SVGs.
-    try {
-        if (verseText && verseText.dataset.rcOcSrc !== undefined) {
-            verseText.innerHTML = verseText.dataset.rcOcSrc;
-            delete verseText.dataset.rcOcSrc;
-            delete verseText.dataset.rcOcDone;
-        }
-    } catch (e) {}
+    try { invalidateOutlines(); } catch (e) {}
     if (typeof applyOutlineLayers === "function") applyOutlineLayers();
     if (t.letter_spacing) root.style.setProperty("--rc-text-letter-spacing", t.letter_spacing);
     if (t.margin_bottom) root.style.setProperty("--rc-text-margin-bottom", t.margin_bottom);
@@ -196,10 +190,35 @@ function extractVerseNumber(reference) {
     return null;
 }
 
+// Post-conversion fit: outline/shadow padding grows the content after
+// auto-fit measured pristine text. Without this loop the padded content can
+// exceed the container and clip (tops first under bottom-anchored flex).
+// Shrinks geometrically to the theme min size, then stops: deterministic,
+// at most 8 extra passes, and a no-op when everything already fits.
+function fitOutlineLayers(containerH, minFontSize) {
+    for (let i = 0; i < 8; i++) {
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const refH = (typeof verseRef !== "undefined" && verseRef)
+            ? verseRef.offsetHeight : 0;
+        const totalH = verseText.offsetHeight + margin + refH;
+        if (totalH <= containerH) return;
+        const cur = parseFloat(verseText.style.fontSize) || minFontSize;
+        const next = Math.max(minFontSize, Math.floor(cur * 0.9));
+        if (next >= cur) return;
+        verseText.style.fontSize = next + 'px';
+        invalidateOutlines();
+        applyOutlineLayers();
+    }
+}
+
 function autoFitText() {
     const rootStyle = getComputedStyle(document.documentElement);
     const containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
 
+    // Measure pristine text: converted SVGs carry outline padding that would
+    // otherwise make auto-fit over-shrink (and stale scopes could not
+    // rebuild). Conversion re-runs at the end, once, at the fitted size.
+    invalidateOutlines();
     if (!containerH || isNaN(containerH)) {
         verseText.style.fontSize = '';
         // No fitting to do, but the outline still needs (re)building: layout
@@ -227,6 +246,7 @@ function autoFitText() {
 
     verseText.style.fontSize = Math.floor(lo) + 'px';
     applyOutlineLayers();   // the outline copy must track the fitted size
+    fitOutlineLayers(containerH, minFontSize);
 }
 
 // ─── Container (absolute positioning) support ───────────────────────────────
@@ -548,6 +568,24 @@ function _ocApplyTransform(text, transform) {
     return text;
 }
 
+// The preview scales its whole DOM to fit the panel (body scale()),
+// so getBoundingClientRect returns *scaled* px while canvas and computed
+// styles speak unscaled px. Mixing them mis-measures everything (and trips
+// the fidelity guard permanently). Normalize rects by the measured scale;
+// 1.0 when nothing is transformed (the OBS display).
+function _ocScale() {
+    try {
+        if (typeof verseText === "undefined" || !verseText) return 0;
+        const r = verseText.getBoundingClientRect();
+        const w = verseText.offsetWidth || 0;
+        if (r && r.width > 0 && w > 0) {
+            const s = r.width / w;
+            if (isFinite(s) && s > 0.05 && s < 20) return s;
+        }
+    } catch (e) {}
+    return 0;
+}
+
 function convertOutlineScope(el, width, color) {
     // Rebuild one outlined scope (.rc-oc run, or #verse-text for a block
     // outline) as per-line inline SVGs. True when converted OR when the
@@ -564,6 +602,8 @@ function convertOutlineScope(el, width, color) {
     // allow re-conversion (theme-only changes carry no fresh HTML).
     if (el.dataset.rcOcSrc === undefined) {
         el.dataset.rcOcSrc = el.innerHTML;
+        el.dataset.rcOcW0 = el.getAttribute("data-rc-oc-w") || "";
+        el.dataset.rcOcC0 = el.getAttribute("data-rc-oc-c") || "";
     }
     if (el.querySelector("sup, sub")) return false;   // flattening would drop the raise
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -616,6 +656,18 @@ function convertOutlineScope(el, width, color) {
     // Whitespace-only lines are collapsed gaps: no ink, no SVG.
     const ink = lines.filter((l) => l.chars.some((c) => c.rect && /\S/.test(c.ch || "")));
     if (!ink.length) return false;
+    // Unscale rects to CSS px (see _ocScale): everything downstream meets
+    // canvas metrics and computed styles in the same coordinate space.
+    const scale = _ocScale();
+    if (!scale) return false;
+    if (scale !== 1) {
+        for (const c of chars) {
+            if (!c.rect) continue;
+            c.rect = { left: c.rect.left / scale, right: c.rect.right / scale,
+                       top: c.rect.top / scale, bottom: c.rect.bottom / scale,
+                       width: c.rect.width / scale, height: c.rect.height / scale };
+        }
+    }
 
     // Plan every line first, validate, then build: conversion must never
     // render worse than plain text, so a line whose rebuilt advance wildly
@@ -695,32 +747,57 @@ function convertOutlineScope(el, width, color) {
         const svg = document.createElementNS(_OC_SVG_NS, "svg");
         svg.setAttribute("width", String(Math.max(1, Math.ceil(totalW + 2 * pad))));
         svg.setAttribute("height", String(boxH + 2 * pad));
+        // Belt and braces: the viewport sizes layout, but must never clip
+        // paint. A few px of raster reality (hinting, rounding, font-metric
+        // gaps) can exceed the measured ink box; with overflow visible the
+        // outline simply paints instead of slicing glyph tops.
+        svg.style.overflow = "visible";
         svg.style.verticalAlign = String(-(descent + pad)) + "px";
-        const textEl = document.createElementNS(_OC_SVG_NS, "text");
-        textEl.setAttribute("y", (boxH - descent + pad).toFixed(2));
-        textEl.setAttribute("font-size", String(runs[0].style.size));
-        textEl.setAttribute("stroke", color);
-        textEl.setAttribute("stroke-width", String(2 * width));
-        textEl.setAttribute("paint-order", "stroke fill");
-        textEl.setAttribute("stroke-linejoin", "round");
-        textEl.setAttribute("stroke-linecap", "round");
+        // Two <text> layers: ALL strokes first, then ALL fills. Chromium
+        // applies paint-order per tspan, so a single text element would let
+        // each later word's stroke bury earlier words' fills wherever the
+        // stroke reaches (at 200px: everything). Document order here gives
+        // true stroke-then-fill semantics at any width or word count.
+        const mkText = function (forStroke) {
+            const t = document.createElementNS(_OC_SVG_NS, "text");
+            t.setAttribute("y", (boxH - descent + pad).toFixed(2));
+            t.setAttribute("font-size", String(runs[0].style.size));
+            if (forStroke) {
+                t.setAttribute("fill", "none");
+                t.setAttribute("stroke", color);
+                t.setAttribute("stroke-width", String(2 * width));
+                t.setAttribute("stroke-linejoin", "round");
+                t.setAttribute("stroke-linecap", "round");
+            } else {
+                t.setAttribute("stroke", "none");
+            }
+            return t;
+        };
+        // The stroke layer is pure paint: hide it from assistive tech so
+        // the words are read once, not twice (textContent still sees both;
+        // that duplication is inherent to the two-layer technique).
+        const strokeEl = mkText(true), fillEl = mkText(false);
+        strokeEl.setAttribute("aria-hidden", "true");
         let x = pad;
         for (const m of measured) {
             for (const k of m.tokens) {
                 if (k.text) {
-                    const ts = document.createElementNS(_OC_SVG_NS, "tspan");
-                    ts.setAttribute("x", x.toFixed(2));
-                    ts.setAttribute("fill", m.style.color);
-                    ts.setAttribute("font-family", m.style.family);
-                    ts.setAttribute("font-weight", m.style.weight);
-                    ts.setAttribute("font-style", m.style.fontStyle);
-                    ts.textContent = k.text;
-                    textEl.appendChild(ts);
+                    for (const pair of [[strokeEl, "none"], [fillEl, m.style.color]]) {
+                        const ts = document.createElementNS(_OC_SVG_NS, "tspan");
+                        ts.setAttribute("x", x.toFixed(2));
+                        ts.setAttribute("fill", pair[1]);
+                        ts.setAttribute("font-family", m.style.family);
+                        ts.setAttribute("font-weight", m.style.weight);
+                        ts.setAttribute("font-style", m.style.fontStyle);
+                        ts.textContent = k.text;
+                        pair[0].appendChild(ts);
+                    }
                 }
                 x += k.advance;
             }
         }
-        svg.appendChild(textEl);
+        svg.appendChild(strokeEl);
+        svg.appendChild(fillEl);
         frag.appendChild(svg);
         if (li < plan.length - 1) frag.appendChild(document.createElement("br"));
     }
@@ -728,6 +805,31 @@ function convertOutlineScope(el, width, color) {
     el.appendChild(frag);
     el.dataset.rcOcDone = key;
     return true;
+}
+
+// Restore pre-conversion markup so measuring and (re)conversion always
+// start from pristine text. Per-payload innerHTML replacement already drops
+// converted nodes, but auto-fit, theme-only changes and font arrival all
+// re-enter conversion on the SAME nodes: without this they would measure
+// padded SVGs (auto-fit over-shrinks) or find no markers left to convert.
+function invalidateOutlines() {
+    if (typeof verseText === "undefined" || !verseText) return;
+    const restore = function (el) {
+        el.innerHTML = el.dataset.rcOcSrc;
+        if (el.dataset.rcOcW0) {
+            el.classList.add("rc-oc");
+            el.setAttribute("data-rc-oc-w", el.dataset.rcOcW0);
+            el.setAttribute("data-rc-oc-c", el.dataset.rcOcC0 || "#000");
+        }
+        delete el.dataset.rcOcDone;
+    };
+    if (verseText.dataset.rcOcSrc !== undefined) {
+        restore(verseText);
+        return;
+    }
+    verseText.querySelectorAll("span").forEach(function (el) {
+        if (el.dataset.rcOcSrc !== undefined) restore(el);
+    });
 }
 
 function applyOutlineLayers() {
@@ -742,11 +844,9 @@ function applyOutlineLayers() {
     verseText.removeAttribute("data-rc-oc");
     verseText.style.removeProperty("--rc-oc-stroke");
     if (block && block !== "none") {
-        // Outermost wins: one conversion keeps every nested color; nested
-        // run outlines defer to the block value.
-        verseText.querySelectorAll(".rc-oc").forEach(function (n) {
-            n.classList.remove("rc-oc");
-        });
+        // Outermost wins: one conversion keeps every nested color, and the
+        // verseText stash keeps nested run markers so a later invalidate
+        // can still restore them. Nested run outlines defer to the block.
         convertOutlineScope(verseText, block.width, block.color);
         return;
     }
@@ -774,7 +874,8 @@ function _outlineParts(value) {
     const hex = (c) => { let d = String(c || "").replace("#", "");
                          if (d.length === 3) d = d.split("").map(x => x + x).join("");
                          return "#" + d.toLowerCase(); };
-    if (m) return { width: Math.max(1, Math.min(25, Math.round(parseFloat(m[1])))), color: hex(m[2]) };
+    // Bounds are OUTLINE_MIN_PX..OUTLINE_MAX_PX from core/constants.py (pinned by test_outline_width_bounds_match_core_constants).
+    if (m) return { width: Math.max(1, Math.min(12, Math.round(parseFloat(m[1])))), color: hex(m[2]) };
     const c = _parseInlineColor(raw);
     return c ? { width: 1, color: c } : null;
 }
@@ -829,9 +930,9 @@ function _parseShadow(value) {
     if (!color || (size === null && opacity === 100 && distance === 0)) return null;
     if (size === null) size = 8;
     return {
-        size: Math.max(1, Math.min(25, size)),
+        size: Math.max(1, Math.min(12, size)),
         opacity: Math.max(0, Math.min(100, opacity)),
-        distance: Math.max(0, Math.min(60, distance)),
+        distance: Math.max(0, Math.min(12, distance)),
         color: color,
         angle: angle,
     };
@@ -841,23 +942,17 @@ function _parseShadow(value) {
 // direction (degrees, 0 = east, 90 = south). distance 0 hugs the glyphs
 // (an outline drawn in shadow).
 function _shadowRing(sh) {
-    const steps = Math.min(48, Math.max(12, Math.round(sh.size * 1.9)));
+    // One blurred, offset shadow (classic text-shadow look). The old ring
+    // stamped filled glyph copies, so stacked letter shapes showed instead
+    // of a shadow. `size` is the blur radius here; distance/angle displace
+    // the single copy (distance 0 reads as an outer glow).
     const alpha = Math.round(Math.max(0, Math.min(100, sh.opacity)) / 100 * 1000) / 1000;
-    const rad = (sh.angle || 45) * Math.PI / 180;
-    const ox = Math.round(sh.distance * Math.cos(rad));
-    const oy = Math.round(sh.distance * Math.sin(rad));
+    const rad = ((sh.angle === undefined ? 45 : sh.angle)) * Math.PI / 180;
+    const dx = Math.round(sh.distance * Math.cos(rad));
+    const dy = Math.round(sh.distance * Math.sin(rad));
+    const blur = Math.max(0, sh.size);
     const paint = alpha >= 1 ? sh.color : _colorA(sh.color, alpha);
-    const parts = [], seen = {};
-    for (let i = 0; i < steps; i++) {
-        const a = (Math.PI * 2 * i) / steps;
-        const dx = Math.round(Math.cos(a) * sh.size) + ox;
-        const dy = Math.round(Math.sin(a) * sh.size) + oy;
-        const key = dx + "," + dy;
-        if (seen[key]) continue;
-        seen[key] = true;
-        parts.push(dx + "px " + dy + "px 0 " + paint);
-    }
-    return parts.join(",");
+    return dx + "px " + dy + "px " + blur + "px " + paint;
 }
 
 function _shadowCss(value) {
@@ -905,7 +1000,7 @@ function _themeOutline(t) {
     // back to the corner magnitude when there are no axis offsets.
     const thickness = axis || diagonal;
     if (!(thickness > 0)) return "";
-    return Math.min(25, Math.max(1, Math.round(thickness))) + "px " + keys[0];
+    return Math.min(12, Math.max(1, Math.round(thickness))) + "px " + keys[0];
 }
 
 function _outlineRing(value) {
@@ -927,7 +1022,7 @@ function _outlineRing(value) {
     if (m) { px = parseFloat(m[1]); color = hex(m[2]); }
     else { color = _parseInlineColor(raw); }
     if (!color) return "";
-    const r = Math.max(1, Math.min(25, Math.round(px)));
+    const r = Math.max(1, Math.min(12, Math.round(px)));
     const STEPS = Math.min(48, Math.max(12, Math.round(r * 1.9)));
     const parts = [], seen = {};
     for (let i = 0; i < STEPS; i++) {
@@ -1144,6 +1239,12 @@ function handlePayload(data, silent) {
                 verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
             }
             verseText.innerHTML = verseTextContent;
+            // Fresh nodes: drop the previous payload's stash. dataset lives
+            // on the element, not the replaced children, so without this a
+            // later invalidate() would resurrect stale markup over this
+            // payload's own inline formatting.
+            delete verseText.dataset.rcOcSrc;
+            delete verseText.dataset.rcOcDone;
             // No conversion here: the theme is not applied yet (and the
             // container may still be hidden), so metrics would be stale and
             // the markers consumed. Conversion runs post-theme at the end of
@@ -1249,5 +1350,7 @@ connect();
 // Webfonts change glyph metrics after first paint; reconvert once they land
 // so the outline keeps tracing the real shapes.
 if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => { try { applyOutlineLayers(); } catch (e) {} });
+    document.fonts.ready.then(() => {
+    try { invalidateOutlines(); applyOutlineLayers(); } catch (e) {}
+});
 }

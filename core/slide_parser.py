@@ -126,7 +126,10 @@ def _outline_ring(value: str) -> str:
         color = _parse_hex_color(v)
     if color is None:
         return ""
-    radius = max(1, min(25, radius))
+    # Same bound as OUTLINE_MAX_PX (kept in sync with the JS renderers by
+    # test_outline_ring_agrees_across_renderers).
+    from core.constants import OUTLINE_MIN_PX, OUTLINE_MAX_PX
+    radius = max(OUTLINE_MIN_PX, min(OUTLINE_MAX_PX, radius))
     steps = min(48, max(12, round(radius * 1.9)))
     ring = []
     seen = set()
@@ -232,8 +235,12 @@ def _parse_shadow(value: str):
         return None
     if size is None:
         size = 8
-    return (f"{max(1, min(25, size))}px {max(0, min(100, opacity))}% "
-            f"{max(0, min(60, distance))}px {color} {angle}")
+    from core.constants import (SHADOW_SIZE_MIN_PX, SHADOW_SIZE_MAX_PX,
+                                SHADOW_DISTANCE_MIN_PX, SHADOW_DISTANCE_MAX_PX)
+    return (f"{max(SHADOW_SIZE_MIN_PX, min(SHADOW_SIZE_MAX_PX, size))}px "
+            f"{max(0, min(100, opacity))}% "
+            f"{max(SHADOW_DISTANCE_MIN_PX, min(SHADOW_DISTANCE_MAX_PX, distance))}px "
+            f"{color} {angle}")
 
 
 def _px_int(token: str, default=None):
@@ -249,29 +256,26 @@ def _px_int(token: str, default=None):
 
 def _shadow_ring(size: int, opacity: int, distance: int, color: str,
                  angle: int = 45) -> str:
-    """A hard text-shadow ring: the shadow look, at a given thickness,
-    opacity, distance and direction (degrees, 0 = east, 90 = south). At
-    distance 0 the ring hugs the glyphs (an outline drawn in shadow)."""
-    steps = min(48, max(12, round(size * 1.9)))
+    """One blurred, offset shadow (classic `text-shadow` look).
+
+    The old ring stamped filled glyph copies around the text, so you could
+    see the stacked letter shapes instead of a shadow. A real shadow is a
+    single blurred copy displaced from the glyphs: `size` is the blur radius,
+    `distance`/`angle` the offset (degrees, 0 = east, 90 = south). At
+    distance 0 it reads as an outer glow. (Kept the historical name so the
+    parser/renderer contract and tests keep referring to one builder.)
+    """
     alpha = max(0, min(100, opacity)) / 100.0
     rad = math.radians(angle % 360)
-    ox = int(round(distance * math.cos(rad)))
-    oy = int(round(distance * math.sin(rad)))
-    ring = []
-    seen = set()
-    for i in range(steps):
-        angle = 2 * math.pi * i / steps
-        dx = int(round(math.cos(angle) * size)) + ox
-        dy = int(round(math.sin(angle) * size)) + oy
-        if (dx, dy) in seen:
-            continue
-        seen.add((dx, dy))
-        a = round(alpha, 3)
-        if a >= 1:
-            ring.append(f"{dx}px {dy}px 0 {color}")
-        else:
-            ring.append(f"{dx}px {dy}px 0 {color_a(color, a)}")
-    return ",".join(ring)
+    dx = int(round(distance * math.cos(rad)))
+    dy = int(round(distance * math.sin(rad)))
+    blur = max(0, size)
+    a = round(alpha, 3)
+    if a >= 1:
+        paint = color
+    else:
+        paint = color_a(color, a)
+    return f"{dx}px {dy}px {blur}px {paint}"
 
 
 def color_a(color: str, alpha: float) -> str:

@@ -1,0 +1,27 @@
+#Three songs in one file example
+#Songs are separated by a run of 5+ newlines followed by a title line
+
+*Verse 1
+This is the first song's first slide
+
+
+*Chorus
+First song chorus
+
+
+
+
+#Second Song Title
+*Verse 1
+Second song content here
+
+
+
+
+%Third Song (percent also works)
+No section yet, just a line
+And another line on the same slide
+
+
+*Bridge
+third song bridge slide

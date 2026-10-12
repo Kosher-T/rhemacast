@@ -365,6 +365,7 @@ class LiteDesigner(QWidget):
         self._edit.setSizePolicy(QSizePolicy.Policy.Expanding,
                                  QSizePolicy.Policy.Fixed)
         self._edit.textChanged.connect(self._on_editor_text)
+        self._edit.document().contentsChange.connect(self._on_contents_change)
         self._edit.installEventFilter(self)
         self._edit.viewport().installEventFilter(self)
         self._word_triple = TripleTracker()
@@ -487,6 +488,12 @@ class LiteDesigner(QWidget):
                 apply_spacing_to_doc(doc, self._format["spacing"])
             # The layout tells US when it is done (fresh size, no forcing).
             self._track_doc(doc)
+            # Tier collapse listens here too (see _on_contents_change): the
+            # docs are cached, so one connection per created doc is enough.
+            try:
+                doc.contentsChange.connect(self._on_contents_change)
+            except (RuntimeError, TypeError):
+                pass
             self._docs[index] = doc
         return doc
 
@@ -941,8 +948,10 @@ class LiteDesigner(QWidget):
     # ─── editing events ─────────────────────────────────────────────
 
     def _on_content_edited(self):
-        if self._sel_tier:
-            self._clear_tier()  # typing collapses to the focused box
+        # Ribbon formats never collapse the tier: the operator may chain
+        # Bold-then-Italic or click a spinbox repeatedly on one highlight.
+        # Typing collapse lives in the keypress filter (_drop_ladder_for_typing)
+        # and in _on_contents_change (real text changes only).
         self._dirty = True
         self._fit_editor_height()
         self._schedule_preview()
@@ -961,8 +970,15 @@ class LiteDesigner(QWidget):
         # Qt can deliver one last event as the editor is torn down, and
         # asking a deleted widget for its viewport raises. Skip it rather
         # than let a RuntimeWarning-turned-error escape at teardown.
+        # getattr (not just RuntimeError): during interpreter teardown or
+        # after a dropped Python reference, _edit itself may be gone while
+        # Qt still routes viewport events here — throwing out of an event
+        # filter poisons the loop for every test/widget after us.
+        edit = getattr(self, "_edit", None)
+        if edit is None:
+            return False
         try:
-            mine = obj is self._edit.viewport()
+            mine = obj is edit.viewport()
         except RuntimeError:
             return False
         if mine:
@@ -1305,6 +1321,10 @@ class LiteDesigner(QWidget):
         self._store_active()
         self._dirty = True
         self._refresh_card_states()
+        if self._sel_tier in (3, 4):
+            # Same rebuild-eats-selection as _apply_format_to_scope above:
+            # repaint so repeated clicks keep working.
+            self._visualize_tier()
         self._schedule_preview()
 
     def _scope_indices(self) -> list:
@@ -1638,6 +1658,11 @@ class LiteDesigner(QWidget):
         self._store_active()
         self._dirty = True
         self._refresh_card_states()
+        if self._sel_tier in (3, 4):
+            # The refresh above rebuilt card documents (fresh QTextDocuments
+            # drop the scope painting): repaint the tier so the next ribbon
+            # click still lands on a visible, working selection.
+            self._visualize_tier()
         self._schedule_preview()
 
     def _handle_paste(self) -> bool:
@@ -1761,12 +1786,26 @@ class LiteDesigner(QWidget):
         self._activate(0)
         self._schedule_preview()
 
+    def _on_contents_change(self, _pos, removed, added):
+        """Collapse tier selections on REAL text changes only.
+
+        Qt fires contentsChange for ribbon formats too (a merge reports the
+        selection length as both counts), so the counts alone cannot tell
+        formatting from typing: ribbon merges set _in_ribbon_merge and never
+        collapse (this is what lets repeated spinbox clicks keep working).
+        Typing/paste/delete/undo/loads change char counts for real — even
+        typing exactly as many chars as selected — and collapse as before.
+        """
+        if getattr(self._ribbon, "_in_ribbon_merge", False):
+            return
+        if (removed or 0) > 0 or (added or 0) > 0:
+            if self._sel_tier and not self._applying_scope_format:
+                self._clear_tier()
+
     def _on_editor_text(self):
         self._fit_editor_height()
         if self._splitting:
             return
-        if self._sel_tier and not self._applying_scope_format:
-            self._clear_tier()  # typing collapses to the focused box
         self._dirty = True
         self._maybe_split()
         self._note_editor_burst()

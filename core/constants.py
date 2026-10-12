@@ -37,6 +37,23 @@ GPU_CRITICAL_TEMP = 82
 GPU_SAFE_TEMP = 70
 
 
+# ─── Outline / Shadow Ranges ───────────────────────────────────────────────
+
+# Outline thickness bounds (px) shared by the ribbon spin box, the deck
+# format parser, and both display renderers. Over-max stored values clamp to
+# the max (old decks keep rendering) while the GUI cannot enter more.
+OUTLINE_MIN_PX = 1
+OUTLINE_MAX_PX = 12
+
+# Shadow size/distance bounds (px). Same contract as outline: GUI caps here,
+# stored over-max values clamp. Opacity (0-100%) and angle (0-359deg) are
+# unit ranges, not lengths, and stay as they are.
+SHADOW_SIZE_MIN_PX = 1
+SHADOW_SIZE_MAX_PX = 12
+SHADOW_DISTANCE_MIN_PX = 0
+SHADOW_DISTANCE_MAX_PX = 12
+
+
 # ─── Search Index Translation Sets ─────────────────────────────────────────────
 
 # FTS lane: WHICH translations to search, and the hard ceiling on how many.
