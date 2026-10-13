@@ -11,6 +11,9 @@
 # --- Application Configuration & State (regenerates; may hold keys) ---
 config.json
 
+# --- Operator Schedules (live service plans; personal working data) ---
+/data/schedules/
+
 # --- Database & SQLite Temporary Files (local state, rebuildable) ---
 *.db
 *.db-journal
@@ -76,11 +79,8 @@ opencode.json
 # --- TRACKED BELOW (commented out): project sources, docs, tests, user decks ---
 # tests/
 # /docs/
-# data/schedules/
 # data/slides/
 # AGENTS.md
-# PRODUCT.md
-# system_prompt.md
 # checklist_audit.md
 # /temp/
 # /local/

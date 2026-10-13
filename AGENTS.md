@@ -116,4 +116,4 @@ Shutdown cascade: poison pills pushed through Queue A → B → DB queue.
 - `config.json` is gitignored — it self-generates from `DEFAULT_CONFIG` in `config_schema.py`
 - Queue A backpressure: never drop audio; failover triggers if depth > 400
 - GPU thermal limits: critical at 82°C, safe at 70°C — defined in `core/constants.py`
-- `system_prompt.md` is a prompt template for planning, not runtime code
+- `data/schedules/` is gitignored — it holds the operator's live service plans, not source
