@@ -76,15 +76,43 @@ function resetTheme() {
     if (typeof applyOutlineLayers === "function") applyOutlineLayers();
 }
 
+// Nested containers: `containers: {name: {x, y, ...styling, body, text,
+// ...}}`. Single-container themes resolve without a name; the geometry
+// (stage px, 1920x1080) places the container absolutely, absent geometry
+// keeps legacy flow. Legacy absolute text/reference boxes
+// (`{text: {x, y, ...}}`, no nested blocks) keep their own path below.
+function _isNewContainers(ct) {
+    if (!ct || typeof ct !== "object") return false;
+    return Object.values(ct).some(v => v && typeof v === "object" &&
+        (typeof v.text === "object" || typeof v.body === "object"));
+}
+
+function themeContainer(theme, name) {
+    const ct = theme && theme.containers;
+    if (!_isNewContainers(ct)) return {};
+    const keys = Object.keys(ct);
+    if (name && ct[name] && typeof ct[name] === "object") return ct[name];
+    if (name) console.warn("Container '" + name + "' not found — using first.");
+    return (keys.length && typeof ct[keys[0]] === "object") ? ct[keys[0]] : {};
+}
+
 function applyTheme(theme, slideFormat) {
     if (!theme) return;
     resetTheme();
     const root = document.documentElement;
-    const c = theme.container || {};
-    const t = theme.text || {};
-    const r = theme.reference || {};
-    const tr = theme.translation || {};
-    const b = theme.body || {};
+    // Content blocks live inside the active container; the flat top
+    // level stays as a fallback so hand-written themes keep working.
+    const cont = themeContainer(theme);
+    const hasNested = cont && (typeof cont.text === "object" || typeof cont.body === "object");
+    const c = hasNested ? cont : (theme.container || {});
+    const t = (hasNested && typeof cont.text === "object" && cont.text)
+        || theme.text || {};
+    const r = (hasNested && typeof cont.reference === "object" && cont.reference)
+        || theme.reference || {};
+    const tr = (hasNested && typeof cont.translation === "object" && cont.translation)
+        || theme.translation || {};
+    const b = (hasNested && typeof cont.body === "object" && cont.body)
+        || theme.body || {};
 
     // Container
     if (c.background)        root.style.setProperty("--rc-container-bg", c.background);
@@ -101,6 +129,18 @@ function applyTheme(theme, slideFormat) {
     if (c.flex_direction)    root.style.setProperty("--rc-container-flex-direction", c.flex_direction);
     if (c.justify_content)   root.style.setProperty("--rc-container-justify-content", c.justify_content);
     if (c.align_items)       root.style.setProperty("--rc-container-align-items", c.align_items);
+    // Geometry: explicit x/y places the container absolutely on the stage
+    // (1920x1080 px). Absent geometry keeps legacy flow untouched.
+    // Position resets every theme so a placed theme never leaks into a
+    // flow one.
+    container.style.position = "";
+    container.style.left = "";
+    container.style.top = "";
+    if (typeof c.x === "number" && typeof c.y === "number") {
+        container.style.position = "absolute";
+        container.style.left = c.x + "px";
+        container.style.top = c.y + "px";
+    }
 
     // Body
     if (b.vertical_align) root.style.setProperty("--rc-vertical-align", b.vertical_align);
@@ -172,7 +212,8 @@ function applyTheme(theme, slideFormat) {
     if (tr.margin_left) root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
 
     // Verse number
-    const vn = theme.verse_num || {};
+    const vn = (hasNested && typeof cont.verse_num === "object" && cont.verse_num)
+        || theme.verse_num || {};
     if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
     if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
 
@@ -253,7 +294,18 @@ function autoFitText() {
 let _activeContainers = null;
 
 function _applyContainers(theme) {
+    // Legacy absolute text/reference boxes only (`{text: {x, y, ...}}`).
+    // New-style named containers (`{main: {...blocks...}}`) are handled by
+    // applyTheme above; running both would fight over #container.
     const ct = theme.containers;
+    if (ct && typeof ct === "object" && (function () {
+        for (const k of Object.keys(ct)) {
+            const v = ct[k];
+            if (v && typeof v === "object"
+                && (typeof v.text === "object" || typeof v.body === "object")) return true;
+        }
+        return false;
+    })()) return;
     const verseContent = document.getElementById("verse-content");
     const ctText = document.getElementById("ct-text");
     const ctRef = document.getElementById("ct-reference");

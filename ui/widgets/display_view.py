@@ -952,15 +952,43 @@ function _outlineCss(value) {
         + ",var(--rc-text-shadow,0 4px 12px rgba(0,0,0,0.4))";
 }
 
+// Nested containers: `containers: {name: {x, y, ...styling, body, text,
+// ...}}`. Single-container themes resolve without a name; the geometry
+// (stage px, 1920x1080) places the container absolutely, absent geometry
+// keeps legacy flow. Legacy absolute text/reference boxes
+// (`{text: {x, y, ...}}`, no nested blocks) keep their own path below.
+function _isNewContainers(ct) {
+    if (!ct || typeof ct !== "object") return false;
+    return Object.values(ct).some(v => v && typeof v === "object" &&
+        (typeof v.text === "object" || typeof v.body === "object"));
+}
+
+function themeContainer(theme, name) {
+    const ct = theme && theme.containers;
+    if (!_isNewContainers(ct)) return {};
+    const keys = Object.keys(ct);
+    if (name && ct[name] && typeof ct[name] === "object") return ct[name];
+    if (name) console.warn("Container '" + name + "' not found — using first.");
+    return (keys.length && typeof ct[keys[0]] === "object") ? ct[keys[0]] : {};
+}
+
 function applyTheme(theme, slideFormat) {
     if (!theme) return;
     resetTheme();
     const root = document.documentElement;
-    const c = theme.container || {};
-    const t = theme.text || {};
-    const r = theme.reference || {};
-    const tr = theme.translation || {};
-    const b = theme.body || {};
+    // Content blocks live inside the active container; the flat top
+    // level stays as a fallback so hand-written themes keep working.
+    const cont = themeContainer(theme);
+    const hasNested = cont && (typeof cont.text === "object" || typeof cont.body === "object");
+    const c = hasNested ? cont : (theme.container || {});
+    const t = (hasNested && typeof cont.text === "object" && cont.text)
+        || theme.text || {};
+    const r = (hasNested && typeof cont.reference === "object" && cont.reference)
+        || theme.reference || {};
+    const tr = (hasNested && typeof cont.translation === "object" && cont.translation)
+        || theme.translation || {};
+    const b = (hasNested && typeof cont.body === "object" && cont.body)
+        || theme.body || {};
 
     if (c.background)    root.style.setProperty("--rc-container-bg", c.background);
     if (c.border)        root.style.setProperty("--rc-container-border", c.border);
@@ -1042,7 +1070,8 @@ function applyTheme(theme, slideFormat) {
     if (tr.color)        root.style.setProperty("--rc-translation-color", tr.color);
     if (tr.margin_left)  root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
 
-    const vn = theme.verse_num || {};
+    const vn = (hasNested && typeof cont.verse_num === "object" && cont.verse_num)
+        || theme.verse_num || {};
     if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
     if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
 

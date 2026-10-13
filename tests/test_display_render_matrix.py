@@ -73,9 +73,20 @@ async function __drive(cases) {
     const base = window.__realTheme || {};
     const theme = Object.assign({}, base,
       {text: Object.assign({}, base.text)});
-    delete theme.text.text_outline;
-    delete theme.text.text_shadow;
-    if (c.themeOutline) theme.text.text_outline = c.themeOutline;
+    // Content blocks live in the active container; the flat top level is
+    // only a fallback for hand-written themes.
+    let textBlock = theme.text;
+    const cnames = theme.containers && Object.keys(theme.containers);
+    if (cnames && cnames.length) {
+      const cont = Object.assign({}, theme.containers[cnames[0]]);
+      theme.containers = Object.assign({}, theme.containers);
+      theme.containers[cnames[0]] = cont;
+      cont.text = Object.assign({}, cont.text);
+      textBlock = cont.text;
+    }
+    delete textBlock.text_outline;
+    delete textBlock.text_shadow;
+    if (c.themeOutline) textBlock.text_outline = c.themeOutline;
     const vt = document.getElementById("verse-text");
     try {
       handlePayload({action: "display", text: c.text, reference: "Ps 133",

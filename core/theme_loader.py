@@ -126,6 +126,47 @@ def _check_for_changes():
             logger.error(f"Failed to reload theme {path.name}: {e}")
 
 
+STAGE_W = 1920
+STAGE_H = 1080
+
+
+def _is_new_containers(containers) -> bool:
+    """New-style `containers: {name: {...blocks...}}` vs the legacy absolute
+    text/reference boxes (`{text: {x, y, ...}, ...}`). A new-style container
+    always nests at least one content block (body/text/reference/...)."""
+    if not isinstance(containers, dict):
+        return False
+    return any(isinstance(v, dict) and any(
+        isinstance(v.get(k), dict) for k in
+        ("body", "text", "reference", "translation", "verse_num"))
+        for v in containers.values())
+
+
+def theme_container(theme_data: Optional[dict], name: Optional[str] = None) -> dict:
+    """The active container block: geometry (x/y/width/height, stage px) plus
+    its own styling keys plus nested content blocks (body, text, ...).
+
+    Single-container themes resolve without a name; a named lookup misses
+    with a warning and falls back to the first container. Missing/legacy
+    shapes yield {} (callers treat absent blocks as "no opinion").
+    """
+    if not isinstance(theme_data, dict):
+        return {}
+    containers = theme_data.get("containers")
+    if not isinstance(containers, dict) or not containers:
+        return {}
+    if not _is_new_containers(containers):
+        return {}
+    if name is not None:
+        if name in containers and isinstance(containers[name], dict):
+            return containers[name]
+        logger.warning(f"Container '{name}' not found — using first container.")
+    for value in containers.values():
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
 def get_theme(name: str) -> Optional[dict]:
     """Get a theme by name. Returns None if not found. Checks for file changes."""
     _load_all()
@@ -298,7 +339,12 @@ def display_format_defaults(theme_data: Optional[dict]) -> dict:
     import re as _re
     if not isinstance(theme_data, dict):
         return {}
-    t = theme_data.get("text")
+    # Content blocks live inside the active container; fall back to the
+    # legacy flat layout so hand-written themes keep working.
+    container = theme_container(theme_data)
+    t = container.get("text")
+    if not isinstance(t, dict):
+        t = theme_data.get("text")
     if not isinstance(t, dict):
         return {}
     out: dict = {}

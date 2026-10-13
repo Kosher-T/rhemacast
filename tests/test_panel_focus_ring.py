@@ -11,11 +11,22 @@ import os
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+from PyQt6.QtCore import QCoreApplication, Qt
+
+# Tab-wiring tests import presentation_tab (transitively QtWebEngine),
+# which raises unless this is set BEFORE any QApplication is constructed.
+# Done at import time so test order within the module cannot change the
+# outcome. WebEngine itself is pre-imported for the same reason.
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+
+import ui.widgets.display_view  # noqa: F401
+
+from ui.tabs.presentation_tab import PresentationTab
+
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QSplitter
 )
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt
 import pytest
 
 import core.database as db
@@ -226,6 +237,14 @@ class _StubState:
         self.item_type = item_type
 
 
+class _FakeDisplayForRing:
+    live_sched_uid = None
+    live_from_schedule = False
+
+    def publish_live(self, *a):
+        pass
+
+
 def _ring_fixture():
     """Build the two ring regions with a controllable 'what is on live'.
 
@@ -275,6 +294,127 @@ def _ring_on(widget) -> bool:
     return not widget._focus_ring_overlay.isHidden()
 
 
+class _StubRing:
+    """Records arm/disarm calls for tab-level wiring tests."""
+
+    def __init__(self):
+        self.calls = []
+
+    def arm_schedule(self):
+        self.calls.append("arm")
+
+    def disarm_schedule(self):
+        self.calls.append("disarm")
+
+
+def _bare_tab(**overrides):
+    tab = PresentationTab.__new__(PresentationTab)
+    tab._ring_state = _StubRing()
+    # _current_display is a property writing through _display: the stub must
+    # exist before any override touches it.
+    tab._display = _FakeDisplayForRing()
+    for key, value in overrides.items():
+        setattr(tab, key, value)
+    return tab
+
+
+def test_verse_step_disarms_schedule_ring():
+    """Left/Right (hotkey or buttons — same handlers) ends the Alt+arrows
+    context even when there is nowhere to step."""
+    tab = _bare_tab(_current_display=None)
+    tab._neighbour = lambda *a: None
+    PresentationTab._on_prev_verse(tab)
+    PresentationTab._on_next_verse(tab)
+    assert tab._ring_state.calls == ["disarm", "disarm"]
+
+
+def test_schedule_double_click_arms_ring_verse_item():
+    """Pushing a schedule verse live arms Alt+arrows from it."""
+    tab = _bare_tab(_current_theme="default", _themes_by_output={},
+                    _is_cleared=True, _cloaked=False)
+    tab._display = _FakeDisplayForRing()
+    tab._broadcast_to_ws = lambda payload: None
+    tab._set_cloak = lambda on: None
+
+    class _Browser:
+        def navigate_to_reference(self, *a, **k):
+            pass
+
+    tab.browser_panel = _Browser()
+    data = {"ref": "GEN 1:1", "book": "Genesis", "chapter": "1", "verse": "1",
+            "text": "In the beginning", "translation": "KJV",
+            "_sched_uid": "sched-1"}
+    PresentationTab._on_schedule_double_click(tab, data)
+    assert tab._ring_state.calls == ["arm"]
+    assert tab._current_sched_data == {"_sched_uid": "sched-1"}
+
+
+def test_schedule_double_click_arms_ring_slide_item():
+    """Slide decks pushed from the schedule arm too (empty decks push
+    nothing and must not arm)."""
+    tab = _bare_tab()
+    applied = []
+    tab._apply_slide_display = lambda *a, **k: applied.append((a, k))
+    empty = {"item_type": "slide", "slides": []}
+    PresentationTab._on_schedule_double_click(tab, empty)
+    assert tab._ring_state.calls == []
+    full = {"item_type": "slide", "ref": "Deck", "name": "Deck",
+            "slides": [{"text": "x"}]}
+    PresentationTab._on_schedule_double_click(tab, full)
+    assert tab._ring_state.calls == ["arm"]
+    assert applied, "slide push must still happen"
+
+
+def test_verse_list_focus_keeps_schedule_armed():
+    """Single-clicking a verse is preview navigation inside the armed
+    workflow: focus moving to the verse list must not disarm."""
+    from ui.focus_ring import FocusRingStateMachine
+    fx = _ring_fixture()
+    try:
+        verse_like = QLineEdit()
+        fx["work"].layout().addWidget(verse_like)
+        fx["machine"].dispose()
+        fx["machine"] = FocusRingStateMachine(
+            fx["work"], fx["schedule"],
+            work_area_of_schedule=lambda: True,
+            arm_keep=(verse_like,),
+        )
+        fx["sched_edit"].setFocus()
+        _qt().processEvents()
+        fx["machine"].arm_schedule()
+        assert _ring_on(fx["schedule"]) is True
+        verse_like.setFocus()
+        _qt().processEvents()
+        assert fx["machine"].state()["schedule_armed"] is True
+        assert _ring_on(fx["schedule"]) is True
+        # ...while any other outside focus still disarms.
+        fx["outside"].setFocus()
+        _qt().processEvents()
+        assert _ring_on(fx["schedule"]) is False
+    finally:
+        fx["machine"].dispose()
+        fx["host"].close()
+
+
+def test_navigator_subclass_input_suppresses_work_ring():
+    """Book/chapter/verse inputs subclass QLineEdit: the work ring must
+    treat subclasses as text boxes, not as panel focus worth lighting."""
+
+    class BookishInput(QLineEdit):
+        pass
+
+    fx = _ring_fixture()
+    try:
+        nav = BookishInput()
+        fx["work"].layout().addWidget(nav)
+        nav.setFocus()
+        _qt().processEvents()
+        assert _ring_on(fx["work"]) is False
+    finally:
+        fx["machine"].dispose()
+        fx["host"].close()
+
+
 def test_work_ring_lights_on_resting_scripture_state():
     """Scripture on live is the resting state: the work area is lit."""
     fx = _ring_fixture()
@@ -286,14 +426,69 @@ def test_work_ring_lights_on_resting_scripture_state():
         fx["host"].close()
 
 
-def test_schedule_focus_lights_both_regions_as_one_context():
-    """Schedule focus lights schedule AND work area — the composite."""
+def test_schedule_ring_stays_dark_on_mere_focus():
+    """Focus alone never arms the schedule ring: Alt+arrows are only
+    meaningful after a schedule item has been pushed live."""
     fx = _ring_fixture()
     try:
         fx["sched_edit"].setFocus()
         _qt().processEvents()
-        assert _ring_on(fx["schedule"]) is True
+        assert _ring_on(fx["schedule"]) is False
         assert _ring_on(fx["work"]) is True
+    finally:
+        fx["machine"].dispose()
+        fx["host"].close()
+
+
+def test_schedule_ring_arms_on_push_and_only_then():
+    """Arming lights the schedule ring; focus moves elsewhere do not."""
+    fx = _ring_fixture()
+    try:
+        fx["sched_edit"].setFocus()
+        _qt().processEvents()
+        fx["machine"].arm_schedule()
+        assert _ring_on(fx["schedule"]) is True
+        # Work ring is independent: arming the schedule changes nothing there.
+        assert _ring_on(fx["work"]) is True
+    finally:
+        fx["machine"].dispose()
+        fx["host"].close()
+
+
+def test_schedule_ring_disarms_on_focus_leave():
+    """Clicks outside the schedule end the Alt+arrows context."""
+    fx = _ring_fixture()
+    try:
+        # Focus starts parked outside; move inside first so leaving it is a
+        # real focus change (re-focusing the same widget fires no event).
+        fx["sched_edit"].setFocus()
+        _qt().processEvents()
+        fx["machine"].arm_schedule()
+        assert _ring_on(fx["schedule"]) is True
+        fx["outside"].setFocus()
+        _qt().processEvents()
+        assert _ring_on(fx["schedule"]) is False
+        # ...and stays out: refocusing does not re-arm without a push.
+        fx["sched_edit"].setFocus()
+        _qt().processEvents()
+        assert _ring_on(fx["schedule"]) is False
+        assert fx["machine"].state()["schedule_armed"] is False
+    finally:
+        fx["machine"].dispose()
+        fx["host"].close()
+
+
+def test_schedule_ring_disarms_explicitly():
+    """Verse stepping (Left/Right hotkey or buttons) disarms via disarm()."""
+    fx = _ring_fixture()
+    try:
+        fx["machine"].arm_schedule()
+        assert _ring_on(fx["schedule"]) is True
+        fx["machine"].disarm_schedule()
+        assert _ring_on(fx["schedule"]) is False
+        # Disarming twice is a safe no-op.
+        fx["machine"].disarm_schedule()
+        assert _ring_on(fx["schedule"]) is False
     finally:
         fx["machine"].dispose()
         fx["host"].close()

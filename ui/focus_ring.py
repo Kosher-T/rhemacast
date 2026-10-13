@@ -20,7 +20,7 @@ two reasons:
 from PyQt6.QtCore import Qt, QEvent, QRectF, QObject
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QApplication, QFrame, QWidget
-
+from PyQt6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
 RING_WIDTH = 1
 RING_RADIUS = 8
 # Opaque accent reads as a heavy band on dark panels; a softened stroke
@@ -259,22 +259,29 @@ class FocusRingStateMachine:
       * Work-area ring — on while scripture is displayed (the default
         browsing state). Off when a slide deck is on live (the operator is
         working slides) and while the caret is inside a search textbox.
-      * Schedule ring — on only while the schedule holds focus.
+      * Schedule ring — on only while schedule Alt+Left/Right navigation is
+        armed: double-clicking a schedule item into live arms it (Alt+arrows
+        continue from that item). Verse stepping (Left/Right hotkey or
+        buttons) and focus leaving the schedule disarm it. Mere focus or a
+        single click never arms it.
 
-    Schedule focus lights BOTH: schedule + work area read as one composite
-    "schedule navigation" context, which is why the schedule ring exists as
-    a separate region rather than reusing the work-area ring. Typing in a
-    search box suppresses the work-area ring so the box reads as the target.
+    Typing in a search box suppresses the work-area ring so the box reads
+    as the target.
 
     Call `update()` whenever anything that feeds a predicate changes (live
     payload, focus, tab switch); it is cheap and idempotent.
     """
 
     def __init__(self, work_area: QWidget, schedule: QWidget | None = None,
-                 work_area_of_schedule=None):
+                 work_area_of_schedule=None, arm_keep: tuple = ()):
         self.work_area = work_area
         self.schedule = schedule
         self.work_area_of_schedule = work_area_of_schedule
+        # Widgets where focus does NOT disarm the schedule ring (e.g. the
+        # Bible verse list: single-clicking a verse is preview navigation
+        # inside the armed Alt+arrows workflow, not leaving it).
+        self.arm_keep = tuple(arm_keep) if arm_keep else ()
+        self._schedule_armed = False
         install_focus_ring(work_area, manual=True)
         if schedule is not None:
             install_focus_ring(schedule, manual=True)
@@ -287,28 +294,49 @@ class FocusRingStateMachine:
 
     # ── predicates ────────────────────────────────────────────────────────
 
-    def _schedule_focused(self) -> bool:
-        if self.schedule is None or self._app is None:
-            return False
-        return _within(self._app.focusWidget(), self.schedule)
-
     def _search_box_focused(self) -> bool:
-        """True when the caret is inside a work-area search textbox."""
+        """True when the caret is inside a work-area search textbox.
+
+        Matched by type, not exact class name: navigator inputs subclass
+        QLineEdit (BookInput, NumericInput), and an exact-name check goes
+        blind the moment anyone subclasses. The name set stays as a net
+        for exotic inputs that are not Qt text widgets.
+        """
         if self._app is None:
             return False
         focused = self._app.focusWidget()
         if focused is None or not _within(focused, self.work_area):
             return False
-        return focused.metaObject().className() in _SEARCH_INPUT_CLASSES
+        if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return True
+        try:
+            return focused.metaObject().className() in _SEARCH_INPUT_CLASSES
+        except RuntimeError:
+            return False
 
     def _scripture_displayed(self) -> bool:
         return bool(self.work_area_of_schedule()) if self.work_area_of_schedule else True
+
+    # ── arm / disarm (schedule Alt+Left/Right context) ───────────────────
+
+    def arm_schedule(self) -> None:
+        """Double-click pushed a schedule item live: Alt+arrows continue
+        from it, so the schedule ring lights (focus is inside already)."""
+        self._schedule_armed = True
+        self.update()
+
+    def disarm_schedule(self) -> None:
+        """Verse stepping or focus leaving the schedule ends the Alt+arrows
+        context: the ring goes out and stays out until the next push."""
+        if self._schedule_armed:
+            self._schedule_armed = False
+            self.update()
 
     # ── state ─────────────────────────────────────────────────────────────
 
     def state(self) -> dict:
         return {
-            "schedule_focused": self._schedule_focused(),
+            "schedule_armed": self._schedule_armed,
             "search_box_focused": self._search_box_focused(),
             "scripture_displayed": self._scripture_displayed(),
         }
@@ -318,10 +346,18 @@ class FocusRingStateMachine:
         set_focus_ring_visible(self.work_area, st["scripture_displayed"]
                                and not st["search_box_focused"])
         if self.schedule is not None:
-            set_focus_ring_visible(self.schedule, st["schedule_focused"])
+            set_focus_ring_visible(self.schedule, st["schedule_armed"])
 
     def _handle_focus(self, _old, _new) -> None:
         try:
+            # Clicks (or keys) outside the schedule end the Alt+arrows
+            # context along with the focus — except moves into arm_keep
+            # widgets (verse list), which belong to the workflow.
+            # Focus moving inside changes nothing: only a double-click
+            # push re-arms.
+            if self.schedule is not None and not _within(_new, self.schedule):
+                if not any(_within(_new, w) for w in self.arm_keep):
+                    self._schedule_armed = False
             self.update()
         except RuntimeError:
             pass

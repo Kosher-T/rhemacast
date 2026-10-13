@@ -3,40 +3,44 @@
   "label": "Slides",
   "description": "Song slides: no title line, all-caps centered lyrics (25-35px autosize) with black outline, no drop shadow",
   "author": "RhemaCast",
-  "container": {
-    "background": "transparent",
-    "border": "none",
-    "border_radius": "0",
-    "box_shadow": "none",
-    "backdrop_filter": "none",
-    "padding": "0",
-    "max_width": "1843px",
-    "min_width": "1843px",
-    "width": "1843px",
-    "height": "1080px",
-    "display": "flex",
-    "flex_direction": "column",
-    "justify_content": "center",
-    "align_items": "center"
-  },
-  "body": {
-    "vertical_align": "center",
-    "padding_bottom": "0"
-  },
-  "text": {
-    "color": "#ffffff",
-    "font_family": "'Nunito', sans-serif",
-    "size": "62px",
-    "min_size": "40px",
-    "max_size": "62px",
-    "weight": 800,
-    "text_outline": "none",
-    "text_shadow": "0 4px 12px rgba(0, 0, 0, 0.4)",
-    "line_height": "1.08",
-    "text_transform": "uppercase",
-    "text_align": "center",
-    "letter_spacing": "0.02em",
-    "margin_bottom": "20px"
+  "containers": {
+    "main": {
+      "x": 38.5,
+      "y": 0.0,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": "0",
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "padding": "0",
+      "max_width": "1843px",
+      "min_width": "1843px",
+      "width": "1843px",
+      "height": "1080px",
+      "display": "flex",
+      "flex_direction": "column",
+      "justify_content": "center",
+      "align_items": "center",
+      "body": {
+        "vertical_align": "center",
+        "padding_bottom": "0"
+      },
+      "text": {
+        "color": "#ffffff",
+        "font_family": "'Nunito', sans-serif",
+        "size": "62px",
+        "min_size": "40px",
+        "max_size": "62px",
+        "weight": 800,
+        "text_outline": "none",
+        "text_shadow": "0 4px 12px rgba(0, 0, 0, 0.4)",
+        "line_height": "1.08",
+        "text_transform": "uppercase",
+        "text_align": "center",
+        "letter_spacing": "0.02em",
+        "margin_bottom": "20px"
+      }
+    }
   },
   "slide": {
     "show_title": false

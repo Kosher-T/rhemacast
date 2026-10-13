@@ -227,15 +227,19 @@ class PresentationTab(QWidget):
 
         # ── Focus rings ──
         # One state machine owns both regions: the work area (browser +
-        # themes/FTS/fuzzy queue) and the schedule. Schedule focus lights
-        # both so they read as one composite navigation context; the
-        # work-area ring hides when a deck is live or the caret is in a
-        # search box. See ui.focus_ring.FocusRingStateMachine.
+        # themes/FTS/fuzzy queue) lights on scripture; the schedule ring
+        # lights only while Alt+Left/Right navigation is armed — i.e. after
+        # a schedule double-click into live, until a verse step or focus
+        # leaving the schedule disarms it. Mere focus never arms. See
+        # ui.focus_ring.FocusRingStateMachine.
         from ui.focus_ring import FocusRingStateMachine
         self._ring_state = FocusRingStateMachine(
             work_area=self._work_wrap,
             schedule=self._schedule_wrap,
             work_area_of_schedule=self._scripture_displayed,
+            # Single-clicking a verse is preview navigation inside the
+            # armed workflow: it must not disarm the schedule ring.
+            arm_keep=(self.browser_panel.verse_list,),
         )
         # Re-evaluate whenever what is on live changes (deck vs scripture).
         self._display.nav_changed.connect(self._ring_state.update)
@@ -354,6 +358,9 @@ class PresentationTab(QWidget):
         
         # Browser panel: double-click → update live + preview
         self.browser_panel.broadcast_in_version.connect(self._on_browser_broadcast)
+
+        # Browser panel: translation double-click → push LIVE verse in it
+        self.browser_panel.broadcast_live_translation.connect(self._on_translation_broadcast)
 
         # Browser panel: Enter in navigator → push to live
         self.browser_panel.navigator_push.connect(self._on_navigator_push)
@@ -605,6 +612,44 @@ class PresentationTab(QWidget):
         self._broadcast_to_ws(payload)
 
         logger.info(f"Browser broadcast: {ref}")
+
+    def _on_translation_broadcast(self, version: str):
+        """Translation double-click: push the LIVE reference in `version`.
+
+        Single-click works the preview (highlighted) verse; double-click
+        re-renders whatever is already live. Falls back to the highlighted
+        verse when nothing is live yet (or the live ref is missing here).
+        """
+        live = self._current_display or {}
+        book = live.get("book", "")
+        chapter = live.get("chapter", "")
+        verse = live.get("verse_num", "")
+        if book and chapter and verse:
+            from core.bible_service import get_verse
+            try:
+                verse_data = get_verse(version, book, int(chapter), int(verse))
+            except (TypeError, ValueError):
+                verse_data = None
+            if verse_data:
+                text = verse_data.get("text", "")
+                ref = f"[{get_display_name(version)}] {book} {chapter}:{verse}"
+                verse_dict = {
+                    "text": text,
+                    "book": book,
+                    "chapter": chapter,
+                    "verse_num": verse,
+                    "version": version
+                }
+                self._current_display = verse_dict
+                self._is_cleared = False
+                self._set_cloak(False)
+
+                payload = self._build_payload(text, ref, version, book, chapter, verse)
+                self._display.publish_live(payload, verse_dict, None, False)
+                self._broadcast_to_ws(payload)
+                logger.info(f"Translation broadcast (live ref): {ref}")
+                return
+        self._on_browser_broadcast(version)
 
     def _on_navigator_push(self, book: str, chapter: str, verse: str):
         """Enter in navigator → fetch verse and push to live."""
@@ -979,6 +1024,20 @@ class PresentationTab(QWidget):
             return None
         return getattr(self, attr, None)
 
+    def _arm_schedule_ring(self) -> None:
+        """Light the schedule ring: Alt+arrows continue from the pushed item."""
+        try:
+            self._ring_state.arm_schedule()
+        except (AttributeError, RuntimeError):
+            pass  # bare-namespace test tabs have no ring state machine
+
+    def _disarm_schedule_ring(self) -> None:
+        """Verse stepping ends the schedule Alt+arrows context."""
+        try:
+            self._ring_state.disarm_schedule()
+        except (AttributeError, RuntimeError):
+            pass
+
     def _on_prev_verse(self):
         """Previous VERSE (scripture) or previous SLIDE (deck).
 
@@ -987,6 +1046,7 @@ class PresentationTab(QWidget):
         is displayed (the neighbouring verses, or the deck's own slides).
         Schedule-item stepping is its own hotkey (Alt+Left / Alt+Right).
         """
+        self._disarm_schedule_ring()
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
             idx = cur.get("slide_index", 0) - 1
@@ -1005,6 +1065,7 @@ class PresentationTab(QWidget):
 
     def _on_next_verse(self):
         """Next VERSE (scripture) or next SLIDE (deck). See _on_prev_verse."""
+        self._disarm_schedule_ring()
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
             idx = cur.get("slide_index", 0) + 1
@@ -1234,6 +1295,7 @@ class PresentationTab(QWidget):
                 data, data.get("name") or data.get("ref", ""), slides, 0,
                 uncloak=True,
             )
+            self._arm_schedule_ring()
             logger.info(f"Schedule live (slide deck): {data.get('ref', '')} (theme: {theme})")
             return
 
@@ -1271,6 +1333,7 @@ class PresentationTab(QWidget):
                                    self._display.live_sched_uid,
                                    self._display.live_from_schedule)
         self._broadcast_to_ws(payload)
+        self._arm_schedule_ring()
         logger.info(f"Schedule live: {ref} (theme: {theme})")
 
     def _on_start_transcription(self):

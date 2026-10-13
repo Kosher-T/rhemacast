@@ -8,7 +8,8 @@ values, and slide_title_visible() must default to visible.
 import json
 from pathlib import Path
 
-from core.theme_loader import get_theme, slide_title_visible, get_theme_kind
+from core.theme_loader import (get_theme, slide_title_visible, get_theme_kind,
+                                   theme_container)
 
 THEMES_DIR = Path(__file__).resolve().parent.parent / "themes"
 
@@ -37,8 +38,28 @@ def _px(value: str) -> int:
     return int(value.removesuffix("px"))
 
 
+def _text_of(name: str) -> dict:
+    """The active container's text block (all themes nest content now)."""
+    return theme_container(_load(name)).get("text", {})
+
+
+def test_single_container_holds_everything():
+    """Every shipped theme nests all content blocks in exactly one container
+    with explicit stage geometry (x/y/width/height in px)."""
+    import glob
+    for f in sorted(glob.glob(str(THEMES_DIR / "*" / "*.json"))):
+        d = json.loads(Path(f).read_text(encoding="utf-8"))
+        containers = d.get("containers")
+        assert isinstance(containers, dict) and len(containers) == 1, f
+        name, cont = next(iter(containers.items()))
+        for key in ("x", "y", "width", "height"):
+            assert key in cont, (f, key)
+        assert 0 <= cont["x"] <= 1920 and 0 <= cont["y"] <= 1080, (f, cont)
+        assert theme_container(d) == cont, f
+
+
 def test_slides_lyric_params():
-    t = _load("slides")["text"]
+    t = _text_of("slides")
     # Sizes are the operator's call — assert coherence, not exact values
     assert _px(t["min_size"]) <= _px(t["size"]) <= _px(t["max_size"])
     assert t["text_transform"] == "uppercase"
@@ -50,9 +71,9 @@ def test_slides_lyric_params():
 
 
 def test_slides_has_no_translation_or_verse_num():
-    theme = _load("slides")
-    assert "translation" not in theme
-    assert "verse_num" not in theme
+    cont = theme_container(_load("slides"))
+    assert "translation" not in cont
+    assert "verse_num" not in cont
 
 
 def test_slides_hides_title():
@@ -62,7 +83,7 @@ def test_slides_hides_title():
 
 def test_scripture_themes_declare_new_keys_neutral():
     for name in ("default", "fullscreen", "fullscreen_2", "reference", "reference_2"):
-        t = _load(name)["text"]
+        t = _text_of(name)
         assert t["text_transform"] == "none", name
         assert t["text_align"] == "center", name
         assert slide_title_visible(_load(name)) is True, name

@@ -1,29 +1,31 @@
 {
-    "name": "fullscreen_2",
-    "label": "Shadowed Full Screen",
-    "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
-    "author": "RhemaCast",
-    "container": {
-        "background": "transparent",
-        "border": "none",
-        "border_radius": "0",
-        "box_shadow": "none",
-        "backdrop_filter": "none",
-        "padding": "0",
-        "max_width": "1800px",
-        "min_width": "1800px",
-        "width": "1800px",
-        "height": "1080px",
-        "display": "flex",
-        "flex_direction": "column",
-        "justify_content": "center",
-        "align_items": "center"
-    },
-    "body": {
+  "name": "fullscreen_2",
+  "label": "Shadowed Full Screen",
+  "description": "Full 1920x1080 screen display with auto-resizing text (40-55px) and verse number",
+  "author": "RhemaCast",
+  "containers": {
+    "main": {
+      "x": 60.0,
+      "y": 0.0,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": "0",
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "padding": "0",
+      "max_width": "1800px",
+      "min_width": "1800px",
+      "width": "1800px",
+      "height": "1080px",
+      "display": "flex",
+      "flex_direction": "column",
+      "justify_content": "center",
+      "align_items": "center",
+      "body": {
         "vertical_align": "center",
         "padding_bottom": "0"
-    },
-    "text": {
+      },
+      "text": {
         "color": "#ffffff",
         "font_family": "'Nunito', sans-serif",
         "size": "46px",
@@ -36,20 +38,22 @@
         "text_align": "center",
         "letter_spacing": "-0.02em",
         "margin_bottom": "20px"
-    },
-    "reference": {
+      },
+      "reference": {
         "color": "#cccccc",
         "size": "38px",
         "weight": 500,
         "text_transform": "uppercase",
         "letter_spacing": "0.1em"
-    },
-    "translation": {
+      },
+      "translation": {
         "color": "#999999",
         "margin_left": "8px"
-    },
-    "verse_num": {
+      },
+      "verse_num": {
         "color": "#cccccc",
         "font_family": "'Nunito', sans-serif"
+      }
     }
+  }
 }

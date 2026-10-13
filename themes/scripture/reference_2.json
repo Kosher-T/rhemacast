@@ -1,29 +1,31 @@
 {
-    "name": "reference_2",
-    "label": "Projection Reference",
-    "description": "Fixed 1920x360 reference display, no flex, centered, premium serif typography",
-    "author": "RhemaCast",
-    "container": {
-        "background": "transparent",
-        "border": "none",
-        "border_radius": "0",
-        "box_shadow": "none",
-        "backdrop_filter": "none",
-        "padding": "0",
-        "max_width": "1920px",
-        "min_width": "1920px",
-        "width": "1920px",
-        "height": "360px",
-        "display": "flex",
-        "flex_direction": "column",
-        "justify_content": "center",
-        "align_items": "center"
-    },
-    "body": {
+  "name": "reference_2",
+  "label": "Projection Reference",
+  "description": "Fixed 1920x360 reference display, no flex, centered, premium serif typography",
+  "author": "RhemaCast",
+  "containers": {
+    "main": {
+      "x": 0.0,
+      "y": 360.0,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": "0",
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "padding": "0",
+      "max_width": "1920px",
+      "min_width": "1920px",
+      "width": "1920px",
+      "height": "360px",
+      "display": "flex",
+      "flex_direction": "column",
+      "justify_content": "center",
+      "align_items": "center",
+      "body": {
         "vertical_align": "center",
         "padding_bottom": "0"
-    },
-    "text": {
+      },
+      "text": {
         "color": "#ffffff",
         "font_family": "'Nunito', sans-serif",
         "min_size": "42px",
@@ -36,21 +38,23 @@
         "text_align": "center",
         "letter_spacing": "-0.005em",
         "margin_bottom": "0px"
-    },
-    "reference": {
+      },
+      "reference": {
         "color": "#D4AF37",
         "font_family": "'DM Sans', sans-serif",
         "size": "34px",
         "weight": 500,
         "text_transform": "uppercase",
         "letter_spacing": "0.12em"
-    },
-    "translation": {
+      },
+      "translation": {
         "color": "#AAFF00",
         "margin_left": "10px"
-    },
-    "verse_num": {
+      },
+      "verse_num": {
         "color": "#D4AF37",
         "font_family": "'Nunito', sans-serif"
+      }
     }
+  }
 }

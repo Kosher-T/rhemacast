@@ -495,6 +495,8 @@ class ThemePropertiesPanel(QWidget):
         self._active_element = "text"
         self._theme_name = "default"
         self._theme_label = "Default"
+        self._source_theme: dict = {}
+        self._active_container = "main"
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -714,6 +716,13 @@ class ThemePropertiesPanel(QWidget):
         c_layout.addWidget(SectionLabel("Container"))
         c_layout.addWidget(Divider())
 
+        for key, display in (("x", "X"), ("y", "Y"),
+                               ("width", "W"), ("height", "H")):
+            row = TextRow(display)
+            row.value_changed.connect(lambda _: self._on_edit())
+            self._container_rows[key] = row
+            c_layout.addWidget(row)
+
         for key, display in self.CONTAINER_PROPS:
             row = TextRow(display)
             row.value_changed.connect(lambda _: self._on_edit())
@@ -732,37 +741,49 @@ class ThemePropertiesPanel(QWidget):
         self.theme_changed.emit(theme)
 
     def _collect_theme(self) -> dict:
-        """Read all widget values into a theme dict matching default.json structure."""
-        theme: dict = {
-            "name": self._theme_name,
-            "label": self._theme_label,
-            "container": {},
-            "body": {
-                "vertical_align": "center",
-                "padding_bottom": "0",
-            },
-            "text": {},
-            "reference": {},
-            "translation": {},
-            "verse_num": {},
-        }
+        """Read all widget values into a theme dict (nested containers).
 
-        # ── Container ──
+        Starts from the loaded source so sibling containers, top-level keys
+        and unknown entries survive a round trip; only the active container
+        and managed top-level keys are overwritten.
+        """
+        import copy as _copy
+        theme: dict = _copy.deepcopy(self._source_theme)
+        theme["name"] = self._theme_name
+        theme["label"] = self._theme_label
+        containers = theme.get("containers")
+        if not isinstance(containers, dict) or not containers:
+            containers = {}
+            theme["containers"] = containers
+        cont = containers.get(self._active_container)
+        if not isinstance(cont, dict):
+            cont = {}
+            containers[self._active_container] = cont
+
+        # ── Container (own props incl. geometry) ──
         for key in self._container_rows:
-            theme["container"][key] = self._container_rows[key].get_value()
+            value = self._container_rows[key].get_value()
+            if key in ("x", "y", "width", "height"):
+                try:
+                    number = float(str(value).rstrip("px").strip())
+                    cont[key] = int(number) if number.is_integer() else number
+                    continue
+                except (TypeError, ValueError):
+                    continue
+            cont[key] = value
 
         # Ensure display/flex properties always present
-        theme["container"]["display"] = "flex"
-        if "flex_direction" not in theme["container"] or not theme["container"]["flex_direction"]:
-            theme["container"]["flex_direction"] = "column"
-        if "justify_content" not in theme["container"] or not theme["container"]["justify_content"]:
-            theme["container"]["justify_content"] = "center"
-        if "align_items" not in theme["container"] or not theme["container"]["align_items"]:
-            theme["container"]["align_items"] = "center"
+        cont["display"] = "flex"
+        if "flex_direction" not in cont or not cont["flex_direction"]:
+            cont["flex_direction"] = "column"
+        if "justify_content" not in cont or not cont["justify_content"]:
+            cont["justify_content"] = "center"
+        if "align_items" not in cont or not cont["align_items"]:
+            cont["align_items"] = "center"
 
         # ── Text ──
         if self._element_toggles["text"].is_enabled():
-            theme["text"] = {
+            cont["text"] = {
                 "color": self._text_color.get_value(),
                 "font_family": self._text_font.get_value(),
                 "size": self._text_size.get_value(),
@@ -776,7 +797,7 @@ class ThemePropertiesPanel(QWidget):
 
         # ── Reference ──
         if self._element_toggles["reference"].is_enabled():
-            theme["reference"] = {
+            cont["reference"] = {
                 "color": self._ref_color.get_value(),
                 "font_family": self._ref_font.get_value(),
                 "size": self._ref_size.get_value(),
@@ -787,14 +808,14 @@ class ThemePropertiesPanel(QWidget):
 
         # ── Translation ──
         if self._element_toggles["translation"].is_enabled():
-            theme["translation"] = {
+            cont["translation"] = {
                 "color": self._trans_color.get_value(),
                 "margin_left": self._trans_margin.get_value(),
             }
 
         # ── Verse number ──
         if self._element_toggles["verse_num"].is_enabled():
-            theme["verse_num"] = {
+            cont["verse_num"] = {
                 "color": self._vn_color.get_value(),
                 "font_family": self._vn_font.get_value(),
             }
@@ -805,16 +826,28 @@ class ThemePropertiesPanel(QWidget):
         """Populate all widgets from a theme dict."""
         self._loading = True
         theme = copy.deepcopy(theme_dict)
+        self._source_theme = copy.deepcopy(theme_dict)
         self._theme_name = theme.get("name", "default")
         self._theme_label = theme.get("label", theme.get("name", "Default"))
-
-        # ── Container ──
-        container = theme.get("container", {})
+        containers = theme.get("containers")
+        if isinstance(containers, dict) and containers:
+            self._active_container = next(iter(containers))
+        else:
+            self._active_container = "main"
+            # Legacy flat theme: treat top-level blocks as the container.
+            containers = {"main": {
+                k: theme.get(k, {}) for k in
+                ("container", "body", "text", "reference", "translation",
+                 "verse_num") if isinstance(theme.get(k), dict)}}
+        container = containers[self._active_container]
+        # Geometry rows show blank (auto) when the container does not place
+        # itself; styling rows fall back like the other tabs.
         for key, row in self._container_rows.items():
-            row.set_value(container.get(key, ""))
+            value = container.get(key, "")
+            row.set_value("" if value == "" else str(value))
 
         # ── Text ──
-        text = theme.get("text", {})
+        text = container.get("text", {})
         self._text_color.set_value(text.get("color", "#ffffff"))
         self._text_font.set_value(text.get("font_family", "'Nunito', sans-serif"))
         self._text_size.set_value(text.get("size", "44px"))
@@ -826,7 +859,7 @@ class ThemePropertiesPanel(QWidget):
         self._text_max_size.set_value(text.get("max_size", "58px"))
 
         # ── Reference ──
-        ref = theme.get("reference", {})
+        ref = container.get("reference", {})
         self._ref_color.set_value(ref.get("color", "#cccccc"))
         self._ref_font.set_value(ref.get("font_family", "'Nunito', sans-serif"))
         self._ref_size.set_value(ref.get("size", "34px"))
@@ -835,18 +868,18 @@ class ThemePropertiesPanel(QWidget):
         self._ref_letter_spacing.set_value(ref.get("letter_spacing", "0.1em"))
 
         # ── Translation ──
-        trans = theme.get("translation", {})
+        trans = container.get("translation", {})
         self._trans_color.set_value(trans.get("color", "#999999"))
         self._trans_margin.set_value(trans.get("margin_left", "8px"))
 
         # ── Verse number ──
-        vn = theme.get("verse_num", {})
+        vn = container.get("verse_num", {})
         self._vn_color.set_value(vn.get("color", "#cccccc"))
         self._vn_font.set_value(vn.get("font_family", "'Nunito', sans-serif"))
 
         # ── Element toggles (all enabled if present) ──
         for key, toggle in self._element_toggles.items():
-            section = theme.get(key, {})
+            section = container.get(key, {})
             toggle._toggle.setChecked(bool(section))
             toggle._enabled = bool(section)
             toggle._toggle.setStyleSheet(toggle._toggle_style(bool(section)))

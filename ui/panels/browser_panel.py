@@ -448,8 +448,10 @@ class _DropQWidget(QWidget):
 class BrowserPanel(QWidget):
     """Manual Bible navigation panel with translation bar."""
 
-    # Emitted when operator double-clicks a translation
+    # Emitted when operator double-clicks a verse (push highlighted verse)
     broadcast_in_version = pyqtSignal(str)
+    # Emitted when operator double-clicks a translation (push LIVE verse)
+    broadcast_live_translation = pyqtSignal(str)
     # Emitted when operator single-clicks a verse (for preview update)
     verse_clicked = pyqtSignal(str)
     # Emitted when Enter is pressed in the navigator → push to live
@@ -878,7 +880,7 @@ class BrowserPanel(QWidget):
         self.translation_changed.emit(self._current_translation)
 
     def _on_translation_double_click(self, abbrev: str):
-        """Double-click: switch translation, navigate to highlighted verse, push to live."""
+        """Double-click: switch translation, push the LIVE verse to live."""
         for name, btn in self._translation_buttons.items():
             btn.set_active(name == abbrev)
         self._current_translation = abbrev
@@ -889,8 +891,8 @@ class BrowserPanel(QWidget):
         # Reload bible in new translation, preserving highlighted verse
         self._load_bible()
 
-        # Push the highlighted verse to live display
-        self.broadcast_in_version.emit(self._current_translation)
+        # Push the live-displayed verse (not the highlight) in this version
+        self.broadcast_live_translation.emit(self._current_translation)
 
         # Notify FTS search panel
         self.translation_changed.emit(self._current_translation)
