@@ -25,16 +25,17 @@ logger = logging.getLogger(__name__)
 # Server event loop — set when start_servers() runs; used by broadcast_display
 _server_loop: Optional[asyncio.AbstractEventLoop] = None
 
-# Per-output state: {"1": {websocket, ...}, "2": {websocket, ...}, ...}
+# Per-output state: {oid: {websocket, ...}} — built from the output
+# registry (core/outputs.py), so new display tabs only extend the map.
+from core.outputs import ALL_OUTPUTS, is_valid_output
+
 connected_clients: Dict[str, Set[WebSocketServerProtocol]] = {
-    "1": set(), "2": set(), "3": set(),
+    oid: set() for oid in ALL_OUTPUTS
 }
 
 # Per-output last display state (for hydrating new clients)
 current_display_state: Dict[str, Dict[str, Any]] = {
-    "1": {"action": "clear"},
-    "2": {"action": "clear"},
-    "3": {"action": "clear"},
+    oid: {"action": "clear"} for oid in ALL_OUTPUTS
 }
 
 # Display directory path
@@ -68,7 +69,7 @@ async def broadcast_display(payload: Dict[str, Any], target: Optional[str] = Non
 
     Args:
         payload: The display payload dict.
-        target: Output ID ("1", "2", "3") to send to. If None, broadcasts to ALL outputs.
+        target: Output ID to send to. If None, broadcasts to ALL outputs.
     """
     sanitized = sanitize_payload(payload)
 
@@ -105,8 +106,8 @@ async def ws_handler(websocket):
     except Exception:
         pass
 
-    # Clamp to valid range
-    if output_id not in ("1", "2", "3"):
+    # Clamp to a registered output (unknown ids fall back to 1).
+    if not is_valid_output(output_id):
         output_id = "1"
 
     connected_clients[output_id].add(websocket)

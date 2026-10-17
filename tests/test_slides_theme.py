@@ -64,10 +64,11 @@ def test_slides_lyric_params():
     assert _px(t["min_size"]) <= _px(t["size"]) <= _px(t["max_size"])
     assert t["text_transform"] == "uppercase"
     assert t["text_align"] == "center"
-    # Outline is its own explicit key (off here), and the soft shadow is a
-    # separate deliberate setting — never a hand-rolled 8-direction shadow.
-    assert t["text_outline"] == "none"
-    assert t["text_shadow"] == "0 4px 12px rgba(0, 0, 0, 0.4)"
+    # Outline is its own explicit key (6px black here), and shadow is
+    # explicitly none — never a hand-rolled 8-direction shadow, and
+    # never a soft shadow riding along with the outline.
+    assert t["text_outline"] == "6px #000000"
+    assert t["text_shadow"] == "none"
 
 
 def test_slides_has_no_translation_or_verse_num():

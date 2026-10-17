@@ -100,7 +100,7 @@ def test_resolve_known_theme_returns_isolated_copy(tmp_path):
 
 def _slides_tab(qapp, tmp_path, slides_theme="bogus-theme", verse_theme="bogus-theme"):
     db = _init_db(tmp_path)
-    db.set_setting("display.slides_output_1_theme", slides_theme)
+    db.set_setting("display.slides_output_4_theme", slides_theme)
     db.set_setting("display.output_1_theme", verse_theme)
     from core.schedule_model import ScheduleModel
     from core.slide_service import create_deck, get_deck
@@ -182,11 +182,18 @@ def test_presentation_rebroadcast_preserves_slide_identity(qapp, tmp_path, monke
                                   slide_format={"case": "upper"}, deck_id=7)
     tab._broadcast_to_ws(original)
     assert sent, "expected per-output rebroadcasts"
-    for themed, _oid in sent:
-        assert themed["content"] == "slide"
-        assert themed["deck_id"] == 7
-        assert themed["slide_format"] == {"case": "upper"}
-        assert isinstance(themed["theme_data"], dict) and themed["theme_data"]
+    clears = sorted(oid for payload, oid in sent
+                    if payload.get("action") == "clear")
+    themed = [(payload, oid) for payload, oid in sent
+              if payload.get("action") != "clear"]
+    # Prioritized default: the other sets cloak first, own set follows.
+    assert clears == ["10", "4", "5", "6", "7", "8", "9"], clears
+    assert sorted(oid for _, oid in themed) == ["1", "2", "3"]
+    for payload, _oid in themed:
+        assert payload["content"] == "slide"
+        assert payload["deck_id"] == 7
+        assert payload["slide_format"] == {"case": "upper"}
+        assert isinstance(payload["theme_data"], dict) and payload["theme_data"]
 
 
 def test_presentation_rebroadcast_verse_stays_clean(qapp, tmp_path, monkeypatch):
@@ -204,10 +211,16 @@ def test_presentation_rebroadcast_verse_stays_clean(qapp, tmp_path, monkeypatch)
     # Verse shown right after a deck: no deck overrides may hitchhike.
     tab._broadcast_to_ws(verse)
     assert sent
-    for themed, _oid in sent:
-        assert themed["content"] == "verse"
-        assert "slide_format" not in themed
-        assert isinstance(themed["theme_data"], dict) and themed["theme_data"]
+    clears = sorted(oid for payload, oid in sent
+                    if payload.get("action") == "clear")
+    themed = [(payload, oid) for payload, oid in sent
+              if payload.get("action") != "clear"]
+    assert clears == ["10", "4", "5", "6", "7", "8", "9"], clears
+    assert sorted(oid for _, oid in themed) == ["1", "2", "3"]
+    for payload, _oid in themed:
+        assert payload["content"] == "verse"
+        assert "slide_format" not in payload
+        assert isinstance(payload["theme_data"], dict) and payload["theme_data"]
 
 
 # ── renderer reset coverage (both copies) ─────────────────────────────
@@ -247,7 +260,7 @@ def test_cross_tab_uncloak_keeps_originating_verse_theme(qapp, tmp_path, monkeyp
     map. Stored payloads are tab-agnostic; local maps are not.
     """
     db = _init_db(tmp_path)
-    db.set_setting("display.slides_output_1_theme", "slides")
+    db.set_setting("display.slides_output_4_theme", "slides")
     db.set_setting("display.output_1_theme", "fullscreen")
 
     from core.display_state import DisplayState
@@ -300,7 +313,10 @@ def test_cross_tab_uncloak_keeps_originating_verse_theme(qapp, tmp_path, monkeyp
     assert renders[-1]["theme"] == "fullscreen"
     assert restored["theme"] == "fullscreen"
     assert sent, "uncloak must rebroadcast live"
-    assert all(payload["theme"] == "fullscreen" for payload, _target in sent)
+    themed = [payload for payload, _target in sent
+              if payload.get("action") != "clear"]
+    assert themed, "expected content rebroadcasts alongside cloaks"
+    assert all(payload["theme"] == "fullscreen" for payload in themed)
 
 
 def test_cross_tab_uncloak_keeps_originating_slide_theme(qapp, tmp_path, monkeypatch):
@@ -313,7 +329,7 @@ def test_cross_tab_uncloak_keeps_originating_slide_theme(qapp, tmp_path, monkeyp
     so uncloak must reuse it rather than rebuild from the active tab.
     """
     db = _init_db(tmp_path)
-    db.set_setting("display.slides_output_1_theme", "slides")
+    db.set_setting("display.slides_output_4_theme", "slides")
     db.set_setting("display.output_1_theme", "fullscreen")
 
     from core.display_state import DisplayState
@@ -352,8 +368,14 @@ def test_cross_tab_uncloak_keeps_originating_slide_theme(qapp, tmp_path, monkeyp
 
     sent = _capture_broadcasts(monkeypatch)
     slides._broadcast_to_ws(original, live_data)
-    assert len(sent) == 2
-    assert all(payload["theme"] == "slides" for payload, _target in sent)
+    themed = [(payload, target) for payload, target in sent
+              if payload.get("action") != "clear"]
+    assert sorted(target for _, target in themed) == ["1", "2"]
+    assert all(payload["theme"] == "slides" for payload, _target in themed)
+    # Prioritized default: the other sets cloak alongside the broadcast.
+    assert sorted(target for payload, target in sent
+                  if payload.get("action") == "clear") == [
+        "1", "10", "2", "3", "7", "8", "9"]
     assert set(state.live_output_payloads) == {"1", "2"}
     assert set(state.matching_live_output_payloads()) == {"1", "2"}
     sent.clear()
@@ -385,7 +407,9 @@ def test_cross_tab_uncloak_keeps_originating_slide_theme(qapp, tmp_path, monkeyp
     assert restored["theme"] == "slides"
     assert restored["theme_data"]["slide"]["show_title"] is False
     assert sent, "uncloak must rebroadcast live"
-    assert [(payload["theme"], target) for payload, target in sent] == [
+    themed = [(payload, target) for payload, target in sent
+              if payload.get("action") != "clear"]
+    assert [(payload["theme"], target) for payload, target in themed] == [
         ("slides", "1"), ("slides", "2")
     ]
-    assert all(payload.get("deck_id") == 1 for payload, _target in sent)
+    assert all(payload.get("deck_id") == 1 for payload, _target in themed)

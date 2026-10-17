@@ -39,28 +39,41 @@ class SlidesTab(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background: {SLATE_950};")
 
-        # Shared display state (see core/display_state.py) — same contract
-        # as the SCRIPTURE tab. Never plain attrs here: constructing this
-        # lazy tab must not wipe the other tab's screens.
-        from core.display_state import display_state
-        self._display = display_state
+        # Display state (see core/display_state.py) — same contract
+        # as the SCRIPTURE tab: shared singleton in prioritized mode,
+        # this tab's own scoped state in simultaneous mode. Never plain
+        # attrs here: constructing this lazy tab must not wipe the other
+        # tab's screens.
+        from core.display_state import display_state_for
+        self._display = display_state_for("SLIDES")
 
         from core.database import get_setting
-        output_count = int(get_setting("display.output_count", 1))
-        # Slides use their OWN per-output theme namespace, independent of the
-        # scripture output themes — changing a theme in one tab never affects
-        # the other. Defaults to the "slides" theme (no title line).
+        from core.outputs import (DECK_OUTPUTS, SCRIPTURE_OUTPUTS,
+                                  active_outputs, main_output_for_tab)
+        # Slides use their OWN per-output theme namespace on the deck set,
+        # independent of the scripture output themes — changing a theme in
+        # one tab never affects the other. Defaults to the "slides" theme
+        # (no title line). Only the operator's ACTIVE outputs appear here;
+        # deleted outputs stop broadcasting entirely.
         self._themes_by_output: dict[str, str] = {}
-        for i in range(1, output_count + 1):
-            oid = str(i)
+        for oid in active_outputs("SLIDES"):
             self._themes_by_output[oid] = get_setting(f"display.slides_output_{oid}_theme", "slides")
-        self._current_theme = self._themes_by_output.get("1", "slides")
+        # The main output is this set's first active id — it follows the
+        # Outputs page when the operator deletes/adds outputs.
+        self._main_output = main_output_for_tab("SLIDES") or "4"
+        self._current_theme = self._themes_by_output.get(self._main_output, "slides")
         # Verses shown here (schedule items, recall) render with the SCRIPTURE
-        # output themes — theme follows content type, not the tab.
+        # output themes — theme follows content type, not the tab. Mapped
+        # positionally by POOL position (4<-1, 5<-2, 6<-3) so a deck output
+        # keeps its scripture theme even when the operator removes another.
         self._verse_themes_by_output: dict[str, str] = {}
-        for i in range(1, output_count + 1):
-            oid = str(i)
-            self._verse_themes_by_output[oid] = get_setting(f"display.output_{oid}_theme", "default")
+        scripture_pool = {oid: theme_oid for oid, theme_oid
+                          in zip(DECK_OUTPUTS, SCRIPTURE_OUTPUTS)}
+        for deck_oid in self._themes_by_output:
+            verse_oid = scripture_pool.get(deck_oid)
+            if verse_oid:
+                self._verse_themes_by_output[deck_oid] = get_setting(
+                    f"display.output_{verse_oid}_theme", "default")
 
         # Slide section-hop navigation (Ctrl+Left/Right) transient state:
         # highlight position decoupled from the displayed slide while held.
@@ -130,9 +143,9 @@ class SlidesTab(QWidget):
         # until a fresh one commits — re-push shared state so the tab
         # never shows a stale frame on arrival.
         self.resync_screens()
-        # Pick up font-size changes made in Settings while away
-        self.preview_grid.refresh_strip_size()
-        self.live_grid.refresh_strip_size()
+        # Pick up font changes made in Settings while away
+        self.preview_grid.refresh_strip_fonts()
+        self.live_grid.refresh_strip_fonts()
         self.deck_panel.refresh_card_size()
         # Re-apply saved splitter layouts once real sizes exist
         from core.panel_layout import restore_splitter
@@ -218,6 +231,11 @@ class SlidesTab(QWidget):
         self.deck_panel.deck_deleted.connect(self._on_deck_deleted)
         self.deck_panel.deck_text_updated.connect(self._on_deck_text_updated)
         self.deck_panel.deck_edit_requested.connect(self._open_lite_designer)
+        self.deck_panel.output_theme_changed.connect(
+            self._on_output_theme_changed)
+        self.deck_panel.outputs_changed.connect(self._on_outputs_changed)
+        self.deck_panel.output_theme_double_clicked.connect(
+            self._on_output_theme_double_click)
         # Single-slide edits refresh the preview side only (live rule kept).
         # Only the preview strip offers slide editing — never the live one.
         self.preview_grid.slide_edit_requested.connect(self.deck_panel.open_slide_editor)
@@ -261,9 +279,10 @@ class SlidesTab(QWidget):
     # ── Payloads + broadcast ────────────────────────────────────────────────
 
     def _build_payload(self, text: str, ref: str, version: str = "",
-                       output_id: str = "1", slide_format: dict | None = None,
+                       output_id: str | None = None, slide_format: dict | None = None,
                        is_slide: bool = True, deck_id: int | None = None) -> dict:
         from core.theme_loader import resolve_theme
+        output_id = output_id or self._main_output_id()
         if is_slide:
             theme_name = self._themes_by_output.get(output_id, "slides")
             # Slides fall back to the freeform "slides" theme — never the
@@ -291,7 +310,8 @@ class SlidesTab(QWidget):
             payload["deck_id"] = deck_id
         return payload
 
-    def _payload_for_display(self, data: dict, output_id: str = "1") -> dict:
+    def _payload_for_display(self, data: dict, output_id: str | None = None) -> dict:
+        output_id = output_id or self._main_output_id()
         if data.get("item_type") == "slide":
             return self._build_payload(data.get("text", ""),
                                        self._slide_display_ref(data, output_id),
@@ -308,6 +328,77 @@ class SlidesTab(QWidget):
             data.get("text", ""), ref, data.get("version", ""), output_id,
             is_slide=False,
         )
+
+    def _main_output_id(self) -> str:
+        """This set's main output, tolerating test harnesses that build the
+        tab without __init__ (Qt raises on any attribute then)."""
+        try:
+            return self._main_output or "4"
+        except (AttributeError, RuntimeError):
+            return "4"
+
+    def _on_outputs_changed(self, output_ids: list):
+        """Outputs page add/remove: adopt the new active set.
+
+        Added outputs pick up their stored theme; removed ones stop
+        broadcasting and stop being restored. When the main output itself
+        was removed, the next surviving output becomes main.
+        """
+        from core.database import get_setting
+        from core.outputs import active_outputs, main_output_for_tab
+        active = list(output_ids or active_outputs("SLIDES"))
+        themes: dict[str, str] = {}
+        verse_themes: dict[str, str] = {}
+        from core.outputs import DECK_OUTPUTS, SCRIPTURE_OUTPUTS
+        scripture_pool = dict(zip(DECK_OUTPUTS, SCRIPTURE_OUTPUTS))
+        for oid in active:
+            themes[oid] = self._themes_by_output.get(oid) or get_setting(
+                f"display.slides_output_{oid}_theme", "slides")
+            verse_oid = scripture_pool.get(oid)
+            if verse_oid:
+                verse_themes[oid] = self._verse_themes_by_output.get(oid) or \
+                    get_setting(f"display.output_{verse_oid}_theme", "default")
+        self._themes_by_output = themes
+        self._verse_themes_by_output = verse_themes
+        self._main_output = main_output_for_tab("SLIDES") or (active[0] if active else "4")
+        self._current_theme = themes.get(self._main_output, "slides")
+        # The operator screens follow the main output's theme immediately.
+        if self._current_preview is not None:
+            self._display.publish_preview(
+                self._payload_for_display(self._current_preview),
+                self._current_preview)
+        logger.info(f"Deck outputs now: {active} (main {self._main_output})")
+
+    def _on_output_theme_changed(self, output_id: str, theme_name: str):
+        """Single-click theme (Outputs page): update that output's theme +
+        re-render preview. The main output is this set's first active id."""
+        self._themes_by_output[output_id] = theme_name
+        if output_id == self._main_output_id():
+            self._current_theme = theme_name
+        if output_id == self._main_output and self._current_preview is not None:
+            data = self._current_preview
+            payload = self._payload_for_display(data, output_id=self._main_output)
+            self._display.publish_preview(payload, data)
+        logger.info(f"Output {output_id} theme changed to: {theme_name}")
+
+    def _on_output_theme_double_click(self, output_id: str, theme_name: str):
+        """Double-click theme: update that output's theme + re-render live
+        + broadcast."""
+        self._themes_by_output[output_id] = theme_name
+        if output_id == self._main_output_id():
+            self._current_theme = theme_name
+        if self._current_display is not None:
+            payload = self._payload_for_display(
+                self._current_display, output_id=output_id)
+            if output_id == self._main_output_id():
+                self._display.publish_live(
+                    payload, self._current_display,
+                    self._display.live_sched_uid,
+                    self._display.live_from_schedule)
+            self._broadcast_to_ws(payload)
+            logger.info(f"Output {output_id} theme double-clicked: {theme_name}")
+        else:
+            logger.info(f"Output {output_id} theme double-clicked: {theme_name} (nothing live)")
 
     def _obs_gated(self, payload: dict) -> bool:
         """True when this payload must not reach OBS: cloaked covers
@@ -361,19 +452,18 @@ class SlidesTab(QWidget):
                 # Even a muted/behind-cloak push advances the model, so its
                 # per-output themes become the next restore's authority.
                 self._display.remember_live_output_payloads(themed_outputs)
-        if self._obs_gated(payload):
-            return False  # cloaked: OBS holds its blank, model advances.
+        # OBS fan-out goes through the output router: this tab's own set
+        # only (never the other tab's), plus cross-set cloaking in
+        # prioritized mode. Gated pushes still advance only the model.
         try:
-            from core.websocket_server import broadcast_display, _server_loop
-            if _server_loop is None or _server_loop.is_closed():
-                return False
+            from core.output_router import (
+                broadcast_tab_payload, clear_tab_outputs)
+            if self._obs_gated(payload):
+                return False  # cloaked: OBS holds its blank, model advances.
             if payload.get("action") == "clear":
-                asyncio.run_coroutine_threadsafe(broadcast_display(payload), _server_loop)
+                clear_tab_outputs("SLIDES")
             else:
-                for output_id, themed in themed_outputs.items():
-                    asyncio.run_coroutine_threadsafe(
-                        broadcast_display(themed, target=output_id), _server_loop
-                    )
+                broadcast_tab_payload("SLIDES", themed_outputs)
             return True
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")
@@ -386,7 +476,8 @@ class SlidesTab(QWidget):
         title = title or "(untitled)"
         return f"{title} · {section}" if section else title
 
-    def _slide_display_ref(self, data: dict, output_id: str = "1") -> str:
+    def _slide_display_ref(self, data: dict, output_id: str | None = None) -> str:
+        output_id = output_id or self._main_output_id()
         """Reference line for a slide payload, honoring the theme's show_title.
 
         The stored display dict keeps the full "Title · Section" ref (logs,
@@ -794,7 +885,7 @@ class SlidesTab(QWidget):
             # Cloak off: show whatever is underneath NOW (it may have
             # advanced while covered — never stale recall).
             self._set_cloak(False)
-            stored = self._display.matching_live_output_payload("1")
+            stored = self._display.matching_live_output_payload()
             if stored is not None and self._current_display:
                 # Replaying beats rebuilding: the stored payload carries the
                 # originating output theme, so a verse cloaked in SCRIPTURE

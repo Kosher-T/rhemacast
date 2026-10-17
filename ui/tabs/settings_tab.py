@@ -8,7 +8,7 @@ Matches the design from ui_draft/settings.html
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QComboBox, QSlider, QFrame, QSizePolicy, QSpinBox,
-    QCheckBox, QTextEdit
+    QCheckBox, QTextEdit, QFontComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from ui.widgets.hotkey_editor import HotkeyEditor
@@ -116,6 +116,29 @@ COMBO_STYLE = f"""
     }}
 """
 
+SPIN_STYLE = f"""
+    QSpinBox {{
+        background: rgba(0, 0, 0, 0.4);
+        color: {SLATE_300};
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        min-width: 80px;
+    }}
+    QSpinBox:focus {{ border-color: {BLUE_500}; }}
+    QSpinBox::up-button, QSpinBox::down-button {{
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        width: 20px;
+    }}
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+        background: rgba(255, 255, 255, 0.2);
+    }}
+    QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
+    QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
+"""
+
 SLIDER_STYLE = f"""
     QSlider::groove:horizontal {{
         border: none;
@@ -213,6 +236,7 @@ class SettingsTab(QWidget):
     """Settings tab with sidebar navigation and content sections."""
     
     font_size_changed = pyqtSignal(int, int)  # verse_text_size, verse_ref_size
+    bible_font_changed = pyqtSignal()  # family/weight (sizes ride along)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -236,6 +260,7 @@ class SettingsTab(QWidget):
             "Recording",
             "AI Models",
             "Display & Broadcast",
+            "Interface",
             "Database",
             "GPU & Hardware",
             "Hotkeys",
@@ -291,9 +316,11 @@ class SettingsTab(QWidget):
         
         # Create section widgets
         self._sections = {}
+        self._font_groups = {}
         self._create_audio_ingestion_section()
         self._create_ai_models_section()
         self._create_display_broadcast_section()
+        self._create_interface_section()
         self._create_database_section()
         self._create_recording_section()
         self._create_gpu_hardware_section()
@@ -609,6 +636,7 @@ class SettingsTab(QWidget):
     
     def _create_display_broadcast_section(self):
         """Create the Display & Broadcast section."""
+        from core.database import get_setting
         section = QWidget()
         section.setVisible(False)
         layout = QVBoxLayout(section)
@@ -658,178 +686,73 @@ class SettingsTab(QWidget):
         
         layout.addWidget(theme_card)
 
-        # Verse Display Font Sizes
+        # Display Output sets + broadcast mode
+        output_card = GlassCard()
+        output_layout = QVBoxLayout(output_card)
+        output_layout.setContentsMargins(12, 8, 12, 8)
+        output_layout.setSpacing(8)
+
+        output_title = QLabel("Display Output")
+        output_title.setStyleSheet(SECTION_LABEL_STYLE)
+        output_layout.addWidget(output_title)
+
+        output_sub = QLabel(
+            "Each display tab owns its output set; add or remove outputs in "
+            "the tab's Outputs page. Mode changes apply immediately.")
+        output_sub.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        output_sub.setWordWrap(True)
+        output_layout.addWidget(output_sub)
+
+        from core.outputs import (
+            get_output_mode, set_output_mode, shared_display_enabled,
+            MODE_SIMULTANEOUS, MODE_PRIORITIZED, TAB_OUTPUTS,
+        )
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(12)
+        mode_label = QLabel("Broadcast Mode")
+        mode_label.setStyleSheet(
+            f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        mode_label.setToolTip(
+            "Simultaneous: every tab broadcasts through its own set at the "
+            "same time (each tab keeps its own Preview/Live). Prioritized: "
+            "one set on air at a time — pushing from a tab cloaks the "
+            "other sets (tabs share one Preview/Live).")
+        mode_row.addWidget(mode_label)
+        self._output_mode_combo = QComboBox()
+        self._output_mode_combo.setStyleSheet(COMBO_STYLE)
+        self._output_mode_combo.addItem("Simultaneous", MODE_SIMULTANEOUS)
+        self._output_mode_combo.addItem("Prioritized", MODE_PRIORITIZED)
+        current_mode = get_output_mode()
+        self._output_mode_combo.setCurrentIndex(
+            max(0, self._output_mode_combo.findData(current_mode)))
+        self._output_mode_combo.currentIndexChanged.connect(
+            self._on_output_mode_changed)
+        mode_row.addWidget(self._output_mode_combo)
+        mode_row.addStretch()
+        output_layout.addLayout(mode_row)
+
+        self._shared_display_label = QLabel()
+        self._shared_display_label.setStyleSheet(
+            f"color: {SLATE_500}; font-size: 10px;")
+        output_layout.addWidget(self._shared_display_label)
+        self._refresh_shared_display_label()
+
+        self._output_roster = QLabel()
+        self._output_roster.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        output_layout.addWidget(self._output_roster)
+        self._refresh_output_roster()
+
+        layout.addWidget(output_card)
+
+        # Slides & history behavior (font sizes moved to Interface)
         font_card = GlassCard()
         font_layout = QVBoxLayout(font_card)
         font_layout.setContentsMargins(12, 8, 12, 8)
         font_layout.setSpacing(8)
 
-        font_title = QLabel("Verse Display")
+        font_title = QLabel("Behavior")
         font_title.setStyleSheet(SECTION_LABEL_STYLE)
         font_layout.addWidget(font_title)
-
-        from core.database import get_setting
-
-        # Verse Text Size
-        row1 = QHBoxLayout()
-        row1.setSpacing(12)
-
-        vt_label = QLabel("Verse Text Size")
-        vt_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
-        row1.addWidget(vt_label)
-
-        self._verse_text_spin = QSpinBox()
-        self._verse_text_spin.setRange(8, 16)
-        self._verse_text_spin.setValue(int(get_setting("bible.verse_text_size", "12")))
-        self._verse_text_spin.setSuffix("px")
-        self._verse_text_spin.setStyleSheet(f"""
-            QSpinBox {{
-                background: rgba(0, 0, 0, 0.4);
-                color: {SLATE_300};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 12px;
-                min-width: 80px;
-            }}
-            QSpinBox:focus {{ border-color: {BLUE_500}; }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                background: rgba(255, 255, 255, 0.1);
-                border: none;
-                width: 20px;
-            }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: rgba(255, 255, 255, 0.2);
-            }}
-            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
-            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
-        """)
-        self._verse_text_spin.valueChanged.connect(self._on_font_size_changed)
-        row1.addWidget(self._verse_text_spin)
-
-        row1.addStretch()
-        font_layout.addLayout(row1)
-
-        # Reference Text Size
-        row2 = QHBoxLayout()
-        row2.setSpacing(12)
-
-        vr_label = QLabel("Reference Text Size")
-        vr_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
-        row2.addWidget(vr_label)
-
-        self._verse_ref_spin = QSpinBox()
-        self._verse_ref_spin.setRange(7, 14)
-        self._verse_ref_spin.setValue(int(get_setting("bible.verse_ref_size", "11")))
-        self._verse_ref_spin.setSuffix("px")
-        self._verse_ref_spin.setStyleSheet(f"""
-            QSpinBox {{
-                background: rgba(0, 0, 0, 0.4);
-                color: {SLATE_300};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 12px;
-                min-width: 80px;
-            }}
-            QSpinBox:focus {{ border-color: {BLUE_500}; }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                background: rgba(255, 255, 255, 0.1);
-                border: none;
-                width: 20px;
-            }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: rgba(255, 255, 255, 0.2);
-            }}
-            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
-            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
-        """)
-        self._verse_ref_spin.valueChanged.connect(self._on_font_size_changed)
-        row2.addWidget(self._verse_ref_spin)
-
-        row2.addStretch()
-        font_layout.addLayout(row2)
-
-        # Slide Strip Text Size
-        row3 = QHBoxLayout()
-        row3.setSpacing(12)
-
-        ss_label = QLabel("Slide Strip Text Size")
-        ss_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
-        row3.addWidget(ss_label)
-
-        self._strip_text_spin = QSpinBox()
-        self._strip_text_spin.setRange(9, 20)
-        self._strip_text_spin.setValue(int(get_setting("slides.strip_font_size", "13")))
-        self._strip_text_spin.setSuffix("px")
-        self._strip_text_spin.setStyleSheet(f"""
-            QSpinBox {{
-                background: rgba(0, 0, 0, 0.4);
-                color: {SLATE_300};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 12px;
-                min-width: 80px;
-            }}
-            QSpinBox:focus {{ border-color: {BLUE_500}; }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                background: rgba(255, 255, 255, 0.1);
-                border: none;
-                width: 20px;
-            }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: rgba(255, 255, 255, 0.2);
-            }}
-            QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
-            QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
-        """)
-        self._strip_text_spin.valueChanged.connect(self._on_strip_font_size_changed)
-        row3.addWidget(self._strip_text_spin)
-
-        row3.addStretch()
-        font_layout.addLayout(row3)
-
-        # Deck List Text Size
-        row4 = QHBoxLayout()
-        row4.setSpacing(12)
-
-        dl_label = QLabel("Deck List Text Size")
-        dl_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
-        row4.addWidget(dl_label)
-
-        self._deck_text_spin = QSpinBox()
-        self._deck_text_spin.setRange(9, 18)
-        self._deck_text_spin.setValue(int(get_setting("slides.deck_font_size", "12")))
-        self._deck_text_spin.setSuffix("px")
-        self._deck_text_spin.setStyleSheet(self._strip_text_spin.styleSheet())
-        self._deck_text_spin.valueChanged.connect(self._on_deck_font_size_changed)
-        row4.addWidget(self._deck_text_spin)
-
-        row4.addStretch()
-        font_layout.addLayout(row4)
-
-        # Designer Display Text Size (Lite Designer edit pane: fixed size,
-        # size params render on preview only; picked up when the designer
-        # is next opened)
-        row4b = QHBoxLayout()
-        row4b.setSpacing(12)
-
-        dt_label = QLabel("Designer Text Size")
-        dt_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
-        dt_label.setToolTip("Fixed text size inside the Lite Designer (lyric size params still apply on display)")
-        row4b.addWidget(dt_label)
-
-        self._designer_text_spin = QSpinBox()
-        self._designer_text_spin.setRange(9, 24)
-        self._designer_text_spin.setValue(int(get_setting("slides.editor_font_size", "13")))
-        self._designer_text_spin.setSuffix("px")
-        self._designer_text_spin.setStyleSheet(self._strip_text_spin.styleSheet())
-        self._designer_text_spin.valueChanged.connect(self._on_designer_font_size_changed)
-        row4b.addWidget(self._designer_text_spin)
-
-        row4b.addStretch()
-        font_layout.addLayout(row4b)
 
         # Slide Navigation Behavior (Ctrl+Left/Right section-hop)
         row5 = QHBoxLayout()
@@ -887,7 +810,7 @@ class SettingsTab(QWidget):
         self._history_context_spin.setRange(0, 10)
         self._history_context_spin.setValue(int(get_setting("history.context_verses", "3")))
         self._history_context_spin.setSuffix(" verses")
-        self._history_context_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._history_context_spin.setStyleSheet(SPIN_STYLE)
         self._history_context_spin.valueChanged.connect(self._on_history_context_changed)
         row7.addWidget(self._history_context_spin)
 
@@ -926,7 +849,7 @@ class SettingsTab(QWidget):
                                             min(QUICK_VERSE_TIMEOUT_MS_MAX,
                                                 saved_timeout)))
         self._quick_verse_spin.setSuffix(" ms")
-        self._quick_verse_spin.setStyleSheet(self._strip_text_spin.styleSheet())
+        self._quick_verse_spin.setStyleSheet(SPIN_STYLE)
         self._quick_verse_spin.valueChanged.connect(self._on_quick_verse_timeout_changed)
         qv_row.addWidget(self._quick_verse_spin)
 
@@ -939,29 +862,226 @@ class SettingsTab(QWidget):
         self._sections["Display & Broadcast"] = section
         self._content_layout.addWidget(section)
 
-    def _on_font_size_changed(self):
-        """Persist font sizes and emit signal for live preview."""
-        from core.database import set_setting
-        text_size = self._verse_text_spin.value()
-        ref_size = self._verse_ref_spin.value()
-        set_setting("bible.verse_text_size", str(text_size))
-        set_setting("bible.verse_ref_size", str(ref_size))
-        self.font_size_changed.emit(text_size, ref_size)
+    def _on_bible_font_changed(self):
+        """A Bible font control moved: persist nothing here (each control
+        saves its own key), just push live updates to the verse list."""
+        groups = self._font_groups
+        self.font_size_changed.emit(groups["bible.verse"]["size"].value(),
+                                    groups["bible.ref"]["size"].value())
+        self.bible_font_changed.emit()
 
-    def _on_strip_font_size_changed(self):
-        """Persist strip size. Strips pick it up when their tab is next shown."""
-        from core.database import set_setting
-        set_setting("slides.strip_font_size", str(self._strip_text_spin.value()))
+    def _create_interface_section(self):
+        """Per-area type controls: family + weight + size + live preview.
 
-    def _on_deck_font_size_changed(self):
-        """Persist deck-list size. Cards pick it up when SLIDES is next shown."""
-        from core.database import set_setting
-        set_setting("slides.deck_font_size", str(self._deck_text_spin.value()))
+        Each control saves only its own key on change, so untouched axes
+        stay unset and today's rendering is preserved. Consumers pick
+        settings up live (Bible list) or on next show/search/open.
+        """
+        section = QWidget()
+        section.setVisible(False)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-    def _on_designer_font_size_changed(self):
-        """Persist designer text size. The designer picks it up when next opened."""
-        from core.database import set_setting
-        set_setting("slides.editor_font_size", str(self._designer_text_spin.value()))
+        title = QLabel("Interface")
+        title.setStyleSheet(LABEL_STYLE)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Type per area — sizes in px")
+        subtitle.setStyleSheet(SUBTITLE_STYLE)
+        layout.addWidget(subtitle)
+
+        self._add_font_group(
+            layout, prefix="bible.verse", title="Bible Verses",
+            subtitle="Verse list text. Applies instantly.",
+            size_min=8, size_max=16, size_default=12, weight_default=400,
+            preview_text="And God said, Let there be light: "
+                         "and there was light.",
+            family_key="bible.verse_font_family",
+            weight_key="bible.verse_font_weight",
+            size_key="bible.verse_text_size",
+            on_change=self._on_bible_font_changed)
+        self._add_font_group(
+            layout, prefix="bible.ref", title="Bible Reference",
+            subtitle="Book chapter:verse. Applies instantly.",
+            size_min=7, size_max=14, size_default=11, weight_default=700,
+            preview_text="GEN 1:3",
+            family_key="bible.verse_ref_font_family",
+            weight_key="bible.verse_ref_font_weight",
+            size_key="bible.verse_ref_size",
+            on_change=self._on_bible_font_changed)
+        self._add_font_group(
+            layout, prefix="slides.strip", title="Slide Strips",
+            subtitle="Applies when Slides is next shown. Family and "
+                     "weight override the deck theme once changed.",
+            size_min=9, size_max=20, size_default=13, weight_default=700,
+            preview_text="Amazing grace how sweet the sound",
+            family_key="slides.strip_font_family",
+            weight_key="slides.strip_font_weight",
+            size_key="slides.strip_font_size")
+        self._add_font_group(
+            layout, prefix="slides.deck", title="Deck List",
+            subtitle="Deck titles. Applies when Slides is next shown.",
+            size_min=9, size_max=18, size_default=12, weight_default=700,
+            preview_text="Amazing Grace",
+            family_key="slides.deck_font_family",
+            weight_key="slides.deck_font_weight",
+            size_key="slides.deck_font_size")
+        self._add_font_group(
+            layout, prefix="slides.editor", title="Designer Text",
+            subtitle="Lite Designer panes. Applies when the designer is "
+                     "next opened.",
+            size_min=9, size_max=24, size_default=13, weight_default=400,
+            preview_text="Bless the Lord, O my soul",
+            family_key="slides.editor_font_family",
+            weight_key="slides.editor_font_weight",
+            size_key="slides.editor_font_size")
+        self._add_font_group(
+            layout, prefix="search.result", title="Search Results",
+            subtitle="Keyword and Semantic result text. Applies to new searches.",
+            size_min=8, size_max=16, size_default=9, weight_default=400,
+            preview_text="For God so loved the world, that he gave…",
+            family_key="search.result_font_family",
+            weight_key="search.result_font_weight",
+            size_key="search.result_font_size")
+        self._add_font_group(
+            layout, prefix="search.ref", title="Search Result Reference",
+            subtitle="Result citations. Applies to new searches.",
+            size_min=7, size_max=14, size_default=10, weight_default=700,
+            preview_text="JHN 3:16",
+            family_key="search.ref_font_family",
+            weight_key="search.ref_font_weight",
+            size_key="search.ref_font_size")
+
+        layout.addStretch()
+
+        self._sections["Interface"] = section
+        self._content_layout.addWidget(section)
+
+    def _add_font_group(self, parent_layout, *, prefix, title, subtitle,
+                        size_min, size_max, size_default, weight_default,
+                        preview_text, family_key=None, weight_key=None,
+                        size_key=None, on_change=None):
+        """One font area card. Returns the control dict (also stored in
+        self._font_groups[prefix]). All values set before connecting, so
+        building never saves. size_key overrides the default
+        "<prefix>.font_size" (legacy size keys keep working)."""
+        from PyQt6.QtGui import QFont, QFontDatabase
+        from PyQt6.QtWidgets import QApplication, QFontComboBox
+        from core.database import get_setting, set_setting
+        from ui.app_theme import INTERFACE_FONT_WEIGHTS, build_interface_font
+
+        family_setting = family_key or f"{prefix}.font_family"
+        weight_setting = weight_key or f"{prefix}.font_weight"
+        size_setting = size_key or f"{prefix}.font_size"
+
+        card = GlassCard()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 8, 12, 8)
+        card_layout.setSpacing(6)
+
+        head = QLabel(title)
+        head.setStyleSheet(SECTION_LABEL_STYLE)
+        card_layout.addWidget(head)
+        sub = QLabel(subtitle)
+        sub.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        sub.setWordWrap(True)
+        card_layout.addWidget(sub)
+
+        system_family = QApplication.font().family()
+        families = set(QFontDatabase.families())
+
+        fam_combo = QFontComboBox()
+        fam_combo.setStyleSheet(COMBO_STYLE)
+        fam_combo.setToolTip("Font family")
+        saved_family = get_setting(family_setting, "")
+        if saved_family not in families:
+            saved_family = ""
+        fam_combo.setCurrentFont(QFont(saved_family or system_family))
+        card_layout.addWidget(fam_combo)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        wt_combo = QComboBox()
+        wt_combo.setStyleSheet(COMBO_STYLE)
+        wt_combo.setToolTip("Font weight")
+        for value, label in INTERFACE_FONT_WEIGHTS:
+            wt_combo.addItem(label, value)
+        try:
+            saved_weight = int(get_setting(weight_setting, ""))
+        except (TypeError, ValueError):
+            saved_weight = weight_default
+        nearest = min((v for v, _ in INTERFACE_FONT_WEIGHTS),
+                      key=lambda v: abs(v - saved_weight))
+        wt_combo.setCurrentIndex(max(0, wt_combo.findData(nearest)))
+        row.addWidget(wt_combo, 1)
+
+        size_spin = QSpinBox()
+        size_spin.setRange(size_min, size_max)
+        try:
+            saved_size = int(get_setting(size_setting, ""))
+        except (TypeError, ValueError):
+            saved_size = size_default
+        size_spin.setValue(max(size_min, min(size_max, saved_size)))
+        size_spin.setSuffix(" px")
+        size_spin.setToolTip("Font size")
+        size_spin.setStyleSheet(SPIN_STYLE)
+        row.addWidget(size_spin)
+        card_layout.addLayout(row)
+
+        preview = QLabel(preview_text)
+        preview.setWordWrap(True)
+        preview.setMinimumHeight(56)
+        preview.setStyleSheet(f"""
+            QLabel {{
+                background: rgba(0, 0, 0, 0.4);
+                color: {WHITE};
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 10px 12px;
+            }}
+        """)
+        card_layout.addWidget(preview)
+
+        controls = {"family": fam_combo, "weight": wt_combo,
+                    "size": size_spin, "preview": preview,
+                    "meta": {"size_min": size_min, "size_max": size_max,
+                             "size_default": size_default,
+                             "weight_default": weight_default}}
+        self._font_groups[prefix] = controls
+
+        def refresh(*_args):
+            meta = controls["meta"]
+            preview.setFont(build_interface_font(
+                fam_combo.currentFont().family(), size_spin.value(),
+                wt_combo.currentData(), meta["size_min"], meta["size_max"],
+                meta["size_default"], meta["weight_default"]))
+
+        def save_family(*_args):
+            set_setting(family_setting,
+                        fam_combo.currentFont().family())
+            refresh()
+            if on_change is not None:
+                on_change()
+
+        def save_weight(*_args):
+            set_setting(weight_setting, str(wt_combo.currentData()))
+            refresh()
+            if on_change is not None:
+                on_change()
+
+        def save_size(*_args):
+            set_setting(size_setting, str(size_spin.value()))
+            refresh()
+            if on_change is not None:
+                on_change()
+
+        fam_combo.currentFontChanged.connect(save_family)
+        wt_combo.currentIndexChanged.connect(save_weight)
+        size_spin.valueChanged.connect(save_size)
+        refresh()
+        parent_layout.addWidget(card)
+        return controls
 
     def _on_song_nav_mode_changed(self):
         """Persist song section-hop display behavior (read live on each use)."""
@@ -972,6 +1092,59 @@ class SettingsTab(QWidget):
         """Persist History preview context size (read live on each use)."""
         from core.database import set_setting
         set_setting("history.context_verses", str(self._history_context_spin.value()))
+
+    def _refresh_shared_display_label(self):
+        """Derived shared-state indicator for the saved mode."""
+        from core.outputs import shared_display_enabled
+        try:
+            on = shared_display_enabled(
+                self._output_mode_combo.currentData())
+        except (AttributeError, RuntimeError):
+            return
+        self._shared_display_label.setText(
+            "Shared display: ON — tabs share one Preview/Live." if on else
+            "Shared display: OFF — each tab keeps its own Preview/Live.")
+
+    def _on_output_mode_changed(self):
+        """Persist the broadcast mode and apply it immediately.
+
+        Switching to Prioritized re-points every tab's display handle at
+        the shared scope (carrying the current screen across, so nothing
+        blanks and both tabs converge on one content); switching to
+        Simultaneous hands each tab its own scope, seeded from what was
+        on screen. No restart: the handles are bound once per tab and
+        re-pointed underneath.
+        """
+        from core.outputs import set_output_mode
+        from core.display_state import follow_output_mode
+        if set_output_mode(self._output_mode_combo.currentData()):
+            follow_output_mode()
+        self._refresh_shared_display_label()
+        self._refresh_output_roster()
+
+    def _refresh_output_roster(self):
+        """Roster line: each tab's pool plus what it is currently using."""
+        if not hasattr(self, "_output_roster") or self._output_roster is None:
+            return
+        from core.outputs import TAB_OUTPUTS, active_outputs, outputs_for_tab
+        lines = []
+        for tab_key, label in (("SCRIPTURE", "Scriptures"),
+                               ("SLIDES", "Decks"),
+                               ("MEDIA", "Media"),
+                               ("PRESENTATION", "Presentation")):
+            pool = outputs_for_tab(tab_key)
+            if not pool:
+                continue
+            span = f"{pool[0]}–{pool[-1]}" if len(pool) > 1 else pool[0]
+            active = active_outputs(tab_key)
+            if tab_key in ("MEDIA", "PRESENTATION"):
+                detail = "reserved"
+            elif tuple(active) == tuple(pool):
+                detail = "all in use"
+            else:
+                detail = "using " + ", ".join(active)
+            lines.append(f"{label} → Displays {span}  ({detail})")
+        self._output_roster.setText("\n".join(lines))
 
     def _on_quick_verse_timeout_changed(self):
         """Persist the quick-verse inter-keystroke budget (read live on each use)."""
@@ -996,12 +1169,19 @@ class SettingsTab(QWidget):
 
         # ── Index Management Cards ──
         self._index_widgets = {}
+        # Card titles name the SEARCH PAGE each index feeds, not the file
+        # format — the operator thinks in pages, not index internals. The
+        # description keeps the technical name for whoever rebuilds it.
         index_defs = [
-            ("FTS5 Index", "fts", None,
-             "Keyword search over all translations — Porter stemming in the "
-             "index, ranked by SQLite FTS5 bm25"),
-            ("Fuzzy BM25", "fuzzy_bm25", "fuzzy_bm25_fingerprint.json", "Keyword search for fuzzy lane"),
-            ("Fuzzy FAISS", "fuzzy_faiss", "faiss_fingerprint.json", "Semantic search (vectors)"),
+            ("Keyword Index", "fts", None,
+             "Keyword page — SQLite FTS5 over all translations, Porter "
+             "stemming in the index, ranked by bm25"),
+            ("Semantic · BM25", "fuzzy_bm25", "fuzzy_bm25_fingerprint.json",
+             "Semantic page, keyword lane — fuzzy BM25 over the "
+             "translations below"),
+            ("Semantic · Vectors", "fuzzy_faiss", "faiss_fingerprint.json",
+             "Semantic page, vector lane — FAISS embeddings (long build on "
+             "CPU)"),
         ]
 
         for label, key, fingerprint_file, desc in index_defs:
@@ -1892,15 +2072,17 @@ class SettingsTab(QWidget):
             # FTS is one stemmed table over every translation: no
             # translation set to pass, and no BM25 pickle to build.
             ([python_bin, os.path.join(project_root, "data", "bible", "rebuild_fts.py")],
-             "FTS5 Index"),
+             "Keyword Index"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_bm25.py"),
-              "--fuzzy", "--translations", ",".join(fuzzy_trans)], "Fuzzy BM25"),
+              "--fuzzy", "--translations", ",".join(fuzzy_trans)],
+             "Semantic · BM25"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_faiss.py"),
-              "--translations", ",".join(fuzzy_trans)], "Fuzzy FAISS"),
+              "--translations", ",".join(fuzzy_trans)],
+             "Semantic · Vectors"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_topical.py"),
               "--cpu"], "Topical"),
             ([python_bin, os.path.join(project_root, "data", "bible", "build_keywords.py")],
-             "Keyword"),
+             "Topical Keywords"),
         ]
 
         self._build_queue = scripts

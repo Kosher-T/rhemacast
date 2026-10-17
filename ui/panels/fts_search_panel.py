@@ -169,15 +169,30 @@ class _ResultRow(QFrame):
 
         ref = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref)
-        ref_label.setStyleSheet(f"color: {WHITE}; font-size: 10px; font-weight: 700;")
+        from ui.app_theme import area_font, font_qss
+        ref_font = area_font("search.ref", 10, 700,
+                                  family_key="search.ref_font_family",
+                                  weight_key="search.ref_font_weight",
+                                  size_key="search.ref_font_size")
+        ref_label.setStyleSheet(f"color: {WHITE}; " + font_qss(ref_font))
         text_layout.addWidget(ref_label)
 
         verse_text = data.get("text", "")
         text_label = QLabel()
-        text_label.setStyleSheet(f"color: {SLATE_400}; font-size: 9px;")
+        text_font = area_font("search.result", 9,
+                                    family_key="search.result_font_family",
+                                    weight_key="search.result_font_weight",
+                                    size_key="search.result_font_size")
+        text_label.setStyleSheet(f"color: {SLATE_400}; " + font_qss(text_font))
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
-        fm = QFontMetrics(text_label.font())
+        from PyQt6.QtGui import QFont
+        probe = QFont()
+        if text_font["family"]:
+            probe.setFamily(text_font["family"])
+        probe.setPixelSize(text_font["size"])
+        probe.setWeight(text_font["weight"])
+        fm = QFontMetrics(probe)
         text_label.setMaximumHeight(fm.height() * 2)
 
         if query and verse_text:
@@ -300,29 +315,31 @@ class FtsSearchPanel(QWidget):
         self._paint_max_initial = 40
         self._sweep_done.connect(self._on_sweep_done)
         self.setStyleSheet(PANEL_BODY_STYLE)
-        self.setAccessibleName("FTS Search Panel")
+        self.setAccessibleName("Keyword Search Panel")
         self.setAccessibleDescription("Search Bible verses across 6 translations using FTS5 full-text search")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # Header
-        header = QLabel("FTS Search")
-        header.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 700;")
-        layout.addWidget(header)
+        # No in-panel title: the page's text tab already names it
+        # (Outputs | Keyword | Semantic) — a repeated heading just ate
+        # result height.
 
         # Search input
         input_row = QHBoxLayout()
         input_row.setSpacing(6)
 
         self.query_input = QLineEdit()
+        # Native × affordance: clears the query in one click (shows only
+        # while text is present; clearing fires textChanged like typing).
+        self.query_input.setClearButtonEnabled(True)
         # Word gestures + focus-select-all + triple-click-select-all.
         # A plain QLineEdit on purpose: emulating a single-line field on
         # QTextEdit is what produced the selection and caret bugs.
         install_line_edit_nav(self.query_input)
-        self.query_input.setPlaceholderText("e.g., rich man threw a party for his son...")
-        self.query_input.setAccessibleName("FTS search query")
+        self.query_input.setPlaceholderText("e.g., keywords: faith strength mercy...")
+        self.query_input.setAccessibleName("Keyword search query")
         self.query_input.setAccessibleDescription("Type a Bible verse reference or text to search across all translations")
         self.query_input.setStyleSheet(f"""
             QLineEdit {{
@@ -401,9 +418,11 @@ class FtsSearchPanel(QWidget):
         self.filter_input.textChanged.connect(self._on_filter_changed)
         filter_row.addWidget(self.filter_input)
 
-        self.filter_clear_btn = QPushButton("×")
+        self.filter_clear_btn = QPushButton()
         self.filter_clear_btn.setAccessibleName("Clear book filter")
         self.filter_clear_btn.setAccessibleDescription("Clear the book filter and show all results")
+        from ui.icons import apply_button
+        apply_button(self.filter_clear_btn, "close")
         self.filter_clear_btn.setFixedWidth(28)
         self.filter_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.filter_clear_btn.setStyleSheet(f"""
@@ -431,7 +450,7 @@ class FtsSearchPanel(QWidget):
         self.results_list = _FtsResultsList()
         self.results_list.itemSelectionChanged.connect(
             self._sync_row_selection)
-        self.results_list.setAccessibleName("FTS search results")
+        self.results_list.setAccessibleName("Keyword search results")
         self.results_list.setAccessibleDescription("List of Bible verse search results ordered by relevance")
         self.results_list.setSpacing(2)
         self.results_list.setStyleSheet(f"""

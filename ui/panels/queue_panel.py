@@ -7,18 +7,16 @@ Reject → discards and frees memory.
 Limited to 50 visible items (virtual scrolling).
 """
 
-import asyncio
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QStackedWidget, QToolTip
+    QListWidget, QListWidgetItem, QFrame, QStackedWidget
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.styles import (
-    PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
-    QUEUE_ITEM_STYLE, SHOW_BTN_STYLE, REJECT_BTN_STYLE,
-    ACCENT, ACCENT_SOFT, SLATE_300, SLATE_500, SLATE_600, WHITE, BORDER_SUBTLE
+    PANEL_BODY_STYLE, QUEUE_ITEM_STYLE, SHOW_BTN_STYLE, REJECT_BTN_STYLE,
+    SLATE_300, SLATE_500, SLATE_600,
 )
 from core.queues import db_write_queue
 from core.bible_service import get_display_name
@@ -26,35 +24,6 @@ from core.bible_service import get_display_name
 logger = logging.getLogger(__name__)
 
 MAX_VISIBLE_ITEMS = 50
-
-
-class _TabButton(QPushButton):
-    """QPushButton that shows a tooltip on hover via QToolTip.showText."""
-
-    def __init__(self, icon: str, tooltip: str, parent=None):
-        super().__init__(icon, parent)
-        self._tooltip_text = tooltip
-        self.setMouseTracking(True)
-        self.setAccessibleName(tooltip)
-        self.setAccessibleDescription(f"Switch to {tooltip} panel")
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def enterEvent(self, event):
-        pos = self.mapToGlobal(QPoint(self.width() // 2, self.height()))
-        QToolTip.showText(pos, self._tooltip_text, self)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        QToolTip.hideText()
-        super().leaveEvent(event)
-
-    def keyPressEvent(self, event):
-        """Allow Space/Enter to activate tab."""
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.click()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
 
 
 class QueueItemWidget(QFrame):
@@ -109,9 +78,11 @@ class QueueItemWidget(QFrame):
         layout.addWidget(show_btn)
 
         # Reject
-        reject_btn = QPushButton("✕")
+        reject_btn = QPushButton()
         reject_btn.setAccessibleName("Reject verse")
         reject_btn.setAccessibleDescription("Discard this suggestion from the queue")
+        from ui.icons import apply_button
+        apply_button(reject_btn, "close")
         reject_btn.setStyleSheet(REJECT_BTN_STYLE)
         reject_btn.setToolTip("Discard this suggestion from the queue (Delete)")
         reject_btn.setFixedWidth(28)
@@ -131,7 +102,11 @@ class QueueItemWidget(QFrame):
 
 
 class QueuePanel(QWidget):
-    """Operator review queue panel with sub-tab switching (QUEUE | THEMES | SEARCH)."""
+    """Operator review queue panel.
+
+    Sub-pages: Outputs | Keyword | Semantic (plus the internal "queue"
+    list, kept for backward compatibility).
+    """
 
     # Emitted when the operator clicks "Show" on a verse
     display_requested = pyqtSignal(dict)
@@ -141,6 +116,8 @@ class QueuePanel(QWidget):
     theme_double_clicked = pyqtSignal(str, str)  # (output_id, theme_name)
     # Emitted when operator right-clicks a theme → Quick Edit
     theme_edit_requested = pyqtSignal(str)  # theme_name
+    # Emitted when the operator adds/removes an output in the Outputs page
+    outputs_changed = pyqtSignal(list)  # active output ids
     # Emitted when operator sends a search result to schedule
     verse_to_schedule = pyqtSignal(dict)
     # Single-click search result → navigate in current browser translation
@@ -160,45 +137,33 @@ class QueuePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        # ── Sub-page tabs (top): Outputs | Keyword | Semantic ──
+        # Text buttons, same row style as the Decks panel — the old icon
+        # rail read as glyphs and gave no hint what the pages were.
+        from ui.panels.text_tabs import build_text_tab_row
+        self._active_tab = "outputs"
+        # Group id order — the row is exclusive and checkable, so it
+        # highlights on its own; WITHOUT this connection the button lights
+        # up and nothing else happens (no page switch).
+        self._tab_keys = ("outputs", "keyword", "semantic")
+        tab_row, self._page_tabs, self._tab_buttons = build_text_tab_row(
+            [("outputs", "Outputs", "Per-output display themes"),
+             ("keyword", "Keyword", "Keyword search — FTS5, stemmed, "
+                                     "across every translation"),
+             ("semantic", "Semantic", "Semantic search — describe it in "
+                                      "your own words")],
+            checked_key="outputs")
+        self._page_tabs.idClicked.connect(
+            lambda index: self._switch_tab(self._tab_keys[index]))
 
-        # ── Vertical tab bar (left side) ──
-        tab_bar = QWidget()
-        tab_bar.setFixedWidth(48)
-        tab_bar.setStyleSheet(PANEL_HEADER_STYLE)
-        tab_layout = QVBoxLayout(tab_bar)
-        tab_layout.setContentsMargins(4, 8, 4, 8)
-        tab_layout.setSpacing(4)
-
-        self._tab_buttons: dict[str, QPushButton] = {}
-        self._active_tab = "themes"
-
-        for tab_name, icon, tooltip in [
-            ("themes", "\u25C9", "Themes"),
-            ("fts_search", "\u2315", "FTS Search"),
-            ("fuzzy", "\u2318", "Fuzzy Search"),
-        ]:
-            btn = _TabButton(icon, tooltip)
-            btn.setCheckable(True)
-            btn.setChecked(tab_name == "themes")
-            btn.setFixedSize(40, 40)
-            btn.setStyleSheet(self._tab_style(tab_name == "themes"))
-            btn.clicked.connect(lambda checked, n=tab_name: self._switch_tab(n))
-            tab_layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
-            self._tab_buttons[tab_name] = btn
-
-        tab_layout.addStretch()
-
-        # Item count
+        # Item count rides the row's right edge (queue page only).
         self.count_label = QLabel("0")
-        self.count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px; font-weight: 600;")
-        tab_layout.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.count_label.setStyleSheet(
+            f"color: {SLATE_500}; font-size: 9px; font-weight: 600;")
+        tab_row.layout().addWidget(self.count_label)
+        layout.addWidget(tab_row)
 
-        body.addWidget(tab_bar)
-
-        # ── Stacked content (right side) ──
+        # ── Stacked content (the open sub-page) ──
         self._stack = QStackedWidget()
 
         # Queue list (index 0) — hidden, kept for backward compatibility
@@ -207,78 +172,52 @@ class QueuePanel(QWidget):
         self.list_widget.setStyleSheet("QListWidget { padding: 6px; }")
         self._stack.addWidget(self.list_widget)
 
-        # Themes panel (index 1) — lazy loaded
+        # Outputs (themes) panel — lazy loaded
         self._themes_panel = None
         self._themes_index = -1
 
-        # FTS Search panel (index 2) — lazy loaded
+        # Keyword (FTS) panel — lazy loaded
         self._fts_search_panel = None
         self._fts_search_index = -1
 
-        # Fuzzy Search panel (index 3) — lazy loaded
+        # Semantic (fuzzy/FAISS) panel — lazy loaded
         self._fuzzy_search_panel = None
         self._fuzzy_search_index = -1
 
-        # Start on themes panel (index 1)
+        # Start on the Outputs page
         self._ensure_themes_loaded()
         self._stack.setCurrentIndex(self._themes_index)
         self.count_label.setVisible(False)
 
-        body.addWidget(self._stack, 1)
-
-        layout.addLayout(body, 1)
-
-    def _tab_style(self, active: bool) -> str:
-        if active:
-            return f"""
-                QPushButton {{
-                    color: {ACCENT};
-                font-size: 20px; font-weight: 700;
-                background: {ACCENT_SOFT};
-                    border-radius: 6px;
-                    border: none;
-                }}
-            """
-        return f"""
-            QPushButton {{
-                color: {SLATE_500};
-                font-size: 20px; font-weight: 700;
-                background: transparent;
-                border-radius: 6px;
-                border: none;
-            }}
-            QPushButton:hover {{
-                color: {WHITE};
-                background: rgba(255, 255, 255, 5);
-            }}
-        """
+        layout.addWidget(self._stack, 1)
 
     def _switch_tab(self, name: str):
+        """Flip sub-pages: Outputs | Keyword | Semantic (or "queue")."""
         if name == self._active_tab:
             return
 
-        # Update button styles
-        for tab_name, btn in self._tab_buttons.items():
-            btn.setChecked(tab_name == name)
-            btn.setStyleSheet(self._tab_style(tab_name == name))
-
         self._active_tab = name
+        # The row's buttons drive themselves (exclusive QButtonGroup +
+        # :checked QSS); set the checked one for programmatic switches.
+        btn = self._tab_buttons.get(name)
+        if btn is not None:
+            btn.setChecked(True)
 
         if name == "queue":
             self._stack.setCurrentIndex(0)
             self.count_label.setVisible(True)
-        elif name == "themes":
+        elif name == "outputs":
             self._ensure_themes_loaded()
             self._stack.setCurrentIndex(self._themes_index)
             self.count_label.setVisible(False)
-        elif name == "fts_search":
+        elif name == "keyword":
             self._ensure_fts_search_loaded()
             self._stack.setCurrentIndex(self._fts_search_index)
             self.count_label.setVisible(False)
             # Clicking the tab is as much "go search" as the hotkey is:
             # hand the operator the box with its text already selected.
             self._fts_search_panel.focus_query()
-        elif name == "fuzzy":
+        elif name == "semantic":
             self._ensure_fuzzy_search_loaded()
             self._stack.setCurrentIndex(self._fuzzy_search_index)
             self.count_label.setVisible(False)
@@ -287,11 +226,17 @@ class QueuePanel(QWidget):
     def _ensure_themes_loaded(self):
         if self._themes_panel is None:
             from ui.panels.themes_panel import ThemesPanel
-            self._themes_panel = ThemesPanel()
+            from core.outputs import active_outputs
+            self._themes_panel = ThemesPanel(
+                output_ids=active_outputs("SCRIPTURE"), tab_key="SCRIPTURE",
+                allow_add_remove=True)
             self._themes_panel.theme_changed.connect(self.theme_changed)
             self._themes_panel.theme_double_clicked.connect(self.theme_double_clicked)
             self._themes_panel.theme_edit_requested.connect(self.theme_edit_requested)
-            self._themes_index = self._stack.addWidget(self._themes_panel)
+            self._themes_panel.outputs_changed.connect(self.outputs_changed)
+            from ui.widgets.scrollable import scrollable
+            self._themes_index = self._stack.addWidget(
+                scrollable(self._themes_panel))
 
     def _ensure_fts_search_loaded(self):
         if self._fts_search_panel is None:
@@ -316,14 +261,14 @@ class QueuePanel(QWidget):
             self._fuzzy_search_index = self._stack.addWidget(self._fuzzy_search_panel)
 
     def switch_to_fts_search(self):
-        """Programmatically switch to the FTS search tab and focus the query input."""
-        self._switch_tab("fts_search")
+        """Switch to the Keyword search page and focus the query input."""
+        self._switch_tab("keyword")
         if self._fts_search_panel:
             self._fts_search_panel.focus_query()
 
     def switch_to_fuzzy_search(self):
-        """Programmatically switch to the fuzzy search tab and focus the query input."""
-        self._switch_tab("fuzzy")
+        """Switch to the Semantic search page and focus the query input."""
+        self._switch_tab("semantic")
         if self._fuzzy_search_panel:
             self._fuzzy_search_panel.focus_query()
 

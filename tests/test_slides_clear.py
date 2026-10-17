@@ -392,3 +392,55 @@ def test_presentation_resync_delegates_shared_state(qapp, tmp_path, monkeypatch)
     pres.resync_screens()
     assert refreshed == [(verse, pres._display.preview_payload)]
     pres._display.set_cloaked(False)
+
+
+def test_cloak_uncloak_never_broadcasts_off_set(qapp, tmp_path, monkeypatch):
+    """A deck cloak → uncloak must touch ONLY the deck output set.
+
+    Regression: the restore path looked up a hardcoded "1", so the first
+    payload after an uncloak also went to scripture's output 1 — the
+    operator had to re-send from Scriptures to get their screen back.
+    """
+    import asyncio as _asyncio
+    import core.websocket_server as ws
+    from core.outputs import (MODE_SIMULTANEOUS, active_outputs,
+                              set_output_mode)
+    from core.display_state import follow_output_mode
+    set_output_mode(MODE_SIMULTANEOUS)
+    follow_output_mode()
+
+    sent = []
+
+    class FakeLoop:
+        def is_closed(self):
+            return False
+
+    def fake_broadcast(payload, target=None):
+        sent.append((payload.get("action", "display"), target))
+        async def _done():
+            return None
+        return _done()
+
+    monkeypatch.setattr(ws, "_server_loop", FakeLoop())
+    monkeypatch.setattr(ws, "broadcast_display", fake_broadcast)
+    monkeypatch.setattr(_asyncio, "run_coroutine_threadsafe",
+                        lambda coro, loop: coro.close())
+
+    tab = _tab(qapp, tmp_path)
+    deck = {"id": 1, "title": "# T",
+            "slides": [{"text": "l1", "section": ""}], "format": None}
+    tab._show_slide(deck, 0, live=True)
+
+    sent.clear()
+    tab._on_clear_recall()   # cloak
+    cloak_targets = {t for _a, t in sent}
+    tab._on_clear_recall()   # uncloak
+    sent.clear()
+    tab._on_clear_recall()   # uncloak again (restore replays snapshots)
+    targets = {t for _a, t in sent}
+
+    deck_set = set(active_outputs("SLIDES"))
+    assert deck_set == {"4", "5", "6"}
+    assert cloak_targets == deck_set, cloak_targets
+    assert targets == deck_set, f"deck restore leaked: {targets - deck_set}"
+    assert set(tab._display.live_output_payloads) <= deck_set

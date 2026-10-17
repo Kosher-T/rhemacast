@@ -206,11 +206,15 @@ class StartupValidator:
         try:
             from core.theme_loader import get_theme_names
             from core.database import get_setting
+            from core.outputs import active_outputs
             known = set(get_theme_names())
             configured = {}
-            for oid in ("1", "2", "3"):
+            # Only the outputs a tab is actually using: a theme stored for
+            # a deleted output is dormant, not a broken configuration.
+            for oid in active_outputs("SCRIPTURE"):
                 configured[f"display.output_{oid}_theme"] = get_setting(
                     f"display.output_{oid}_theme", "default")
+            for oid in active_outputs("SLIDES"):
                 configured[f"display.slides_output_{oid}_theme"] = get_setting(
                     f"display.slides_output_{oid}_theme", "slides")
             bad = {k: v for k, v in configured.items() if v not in known}

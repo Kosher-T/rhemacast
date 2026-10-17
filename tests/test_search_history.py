@@ -356,7 +356,7 @@ def test_history_constants_match_spec():
     assert SEARCH_HISTORY_MAX_ENTRIES > 0
 
 def test_switching_to_search_tab_by_click_focuses_and_selects(monkeypatch, tmp_path):
-    """Clicking the FTS tab is as much "go search" as the hotkey is.
+    """Clicking the Keyword tab is as much "go search" as the hotkey is.
 
     Regression: _switch_tab() only set the stack index, so a tab CLICK left
     the query box unfocused and unselected — the operator clicked a search
@@ -386,7 +386,7 @@ def test_switching_to_search_tab_by_click_focuses_and_selects(monkeypatch, tmp_p
 
     panel._switch_tab("queue")
     _qt().processEvents()
-    panel._switch_tab("fts_search")
+    panel._switch_tab("keyword")
     _qt().processEvents()
     from PyQt6.QtTest import QTest
     QTest.qWait(40)

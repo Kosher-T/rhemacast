@@ -13,7 +13,6 @@ Wires all panel signals to backend actions:
 
 import os
 import logging
-import asyncio
 import threading
 
 from PyQt6.QtWidgets import (
@@ -43,12 +42,14 @@ class PresentationTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Shared display state (see core/display_state.py): preview/live
-        # payloads are identical across tabs by construction. Tab-local gesture
-        # code accesses it through the properties below — never plain attrs,
-        # so constructing this tab never wipes another tab's screens.
-        from core.display_state import display_state
-        self._display = display_state
+        # Display state (see core/display_state.py): in prioritized mode
+        # this is the shared singleton (preview/live identical across
+        # tabs); in simultaneous mode it is this tab's own scoped state.
+        # Tab-local gesture code accesses it through the properties below
+        # — never plain attrs, so constructing this tab never wipes
+        # another tab's screens.
+        from core.display_state import display_state_for
+        self._display = display_state_for("SCRIPTURE")
         self._prev_verse_data = None      # Previous verse (for Prev button)
         self._next_verse_data = None      # Next verse (for Next button)
         # Prev/next bracket whatever is DISPLAYED, and live_data is the one
@@ -143,14 +144,17 @@ class PresentationTab(QWidget):
 
         # Per-output themes: {"1": "default", "2": "default", ...}
         from core.database import get_setting
-        output_count = int(get_setting("display.output_count", 1))
+        from core.outputs import active_outputs, main_output_for_tab
+        # Only the operator's ACTIVE outputs appear here; deleted outputs
+        # stop broadcasting entirely.
         self._themes_by_output: dict[str, str] = {}
-        for i in range(1, output_count + 1):
-            oid = str(i)
+        for oid in active_outputs("SCRIPTURE"):
             self._themes_by_output[oid] = get_setting(f"display.output_{oid}_theme", "default")
 
-        # Legacy single-theme property (always = output 1 theme)
-        self._current_theme = self._themes_by_output.get("1", "default")
+        # Main output = this set's first active id (follows the Outputs
+        # page when the operator deletes/adds outputs).
+        self._main_output = main_output_for_tab("SCRIPTURE") or "1"
+        self._current_theme = self._themes_by_output.get(self._main_output, "default")
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(4, 4, 4, 4)
@@ -336,6 +340,7 @@ class PresentationTab(QWidget):
         
         # Queue panel: theme double-click → push preview to live with that theme
         self.queue_panel.theme_double_clicked.connect(self._on_theme_double_click)
+        self.queue_panel.outputs_changed.connect(self._on_outputs_changed)
         
         # Live output: clear/recall toggle
         self.live_preview.clear_recall.connect(self._on_clear_recall)
@@ -415,7 +420,7 @@ class PresentationTab(QWidget):
         self._restore_last_schedule()
 
     def _build_payload(self, text: str, ref: str, version: str, book: str = "",
-                       chapter: str = "", verse: str = "", output_id: str = "1",
+                       chapter: str = "", verse: str = "", output_id: str | None = None,
                        slide_format: dict | None = None,
                        content: str = "verse", deck_id: int | None = None) -> dict:
         """Build a display payload matching the WS broadcast format.
@@ -426,6 +431,7 @@ class PresentationTab(QWidget):
         (Converting here would double-escape the spans into visible text.)
         """
         from core.theme_loader import resolve_theme
+        output_id = output_id or self._main_output_id()
         theme_name = self._themes_by_output.get(output_id, "default")
         # Per-kind fallback: slide content never falls back app-wide to the
         # scripture theme.
@@ -450,8 +456,9 @@ class PresentationTab(QWidget):
             payload["deck_id"] = deck_id
         return payload
 
-    def _payload_for_display(self, data: dict, output_id: str = "1") -> dict:
+    def _payload_for_display(self, data: dict, output_id: str | None = None) -> dict:
         """Build a display payload from a stored display dict (verse or slide)."""
+        output_id = output_id or self._main_output_id()
         if data.get("item_type") == "slide":
             return self._build_payload(
                 data.get("text", ""), data.get("ref", ""), "",
@@ -918,7 +925,7 @@ class PresentationTab(QWidget):
             logger.info("Display cloaked")
         else:
             self._set_cloak(False)
-            stored = self._display.matching_live_output_payload("1")
+            stored = self._display.matching_live_output_payload()
             if stored is not None and self._current_display:
                 # Replaying beats rebuilding: the stored payload carries the
                 # originating output theme, so a deck cloaked in SLIDES does
@@ -963,14 +970,46 @@ class PresentationTab(QWidget):
                                         self._display.live_from_schedule)
             self._broadcast_to_ws(payload)
 
+    def _main_output_id(self) -> str:
+        """This set's main output, tolerating test harnesses that build the
+        tab without __init__ (Qt raises on any attribute then)."""
+        try:
+            return self._main_output or "1"
+        except (AttributeError, RuntimeError):
+            return "1"
+
+    def _on_outputs_changed(self, output_ids: list):
+        """Outputs page add/remove: adopt the new active set.
+
+        Added outputs pick up their stored theme; removed ones stop
+        broadcasting and stop being restored. When the main output itself
+        was removed, the next surviving output becomes main.
+        """
+        from core.database import get_setting
+        from core.outputs import active_outputs, main_output_for_tab
+        active = list(output_ids or active_outputs("SCRIPTURE"))
+        themes = {
+            oid: self._themes_by_output.get(oid)
+            or get_setting(f"display.output_{oid}_theme", "default")
+            for oid in active
+        }
+        self._themes_by_output = themes
+        self._main_output = main_output_for_tab("SCRIPTURE") or (active[0] if active else "1")
+        self._current_theme = themes.get(self._main_output, "default")
+        if self._current_preview:
+            self._display.publish_preview(
+                self._payload_for_display(self._current_preview),
+                self._current_preview)
+        logger.info(f"Scripture outputs now: {active} (main {self._main_output})")
+
     def _on_theme_changed(self, output_id: str, theme_name: str):
         """Single-click theme: update that output's theme + re-render preview."""
         self._themes_by_output[output_id] = theme_name
         # Keep legacy property in sync
-        if output_id == "1":
+        if output_id == self._main_output_id():
             self._current_theme = theme_name
 
-        if output_id == "1" and self._current_preview:
+        if output_id == self._main_output and self._current_preview:
             # Main output preview update (handles verse + slide dicts,
             # including ref-only shapes previewed from the SLIDES tab).
             data = self._current_preview
@@ -981,12 +1020,12 @@ class PresentationTab(QWidget):
     def _on_theme_double_click(self, output_id: str, theme_name: str):
         """Double-click theme: update that output's theme + re-render live + broadcast."""
         self._themes_by_output[output_id] = theme_name
-        if output_id == "1":
+        if output_id == self._main_output_id():
             self._current_theme = theme_name
 
         if self._current_display:
             payload = self._payload_for_display(self._current_display, output_id=output_id)
-            if output_id == "1":
+            if output_id == self._main_output_id():
                 self._display.publish_live(payload, self._current_display,
                                            self._display.live_sched_uid,
                                            self._display.live_from_schedule)
@@ -1435,8 +1474,6 @@ class PresentationTab(QWidget):
             kind = "slide"
         log_live_payload(payload, kind=kind)
         try:
-            from core.websocket_server import broadcast_display, _server_loop
-
             if payload.get("action") != "clear":
                 if preserve_theme:
                     themed_outputs = self._display.matching_live_output_payloads()
@@ -1476,20 +1513,17 @@ class PresentationTab(QWidget):
                     # per-output themes become the next restore's authority.
                     self._display.remember_live_output_payloads(themed_outputs)
 
-            if _server_loop is None or _server_loop.is_closed():
-                return
-
+            # OBS fan-out goes through the output router: this tab's own
+            # set only (never the other tab's), plus cross-set cloaking in
+            # prioritized mode. Gated pushes still advance only the model.
+            from core.output_router import (
+                broadcast_tab_payload, clear_tab_outputs)
             if self._obs_gated(payload):
                 return  # cloaked: OBS holds its blank, model advances.
             if payload.get("action") == "clear":
-                asyncio.run_coroutine_threadsafe(
-                    broadcast_display(payload), _server_loop
-                )
+                clear_tab_outputs("SCRIPTURE")
             else:
-                for output_id, themed in themed_outputs.items():
-                    asyncio.run_coroutine_threadsafe(
-                        broadcast_display(themed, target=output_id), _server_loop
-                    )
+                broadcast_tab_payload("SCRIPTURE", themed_outputs)
         except Exception as e:
             logger.error(f"Failed to initiate WebSocket broadcast: {e}")
 

@@ -17,7 +17,7 @@ import tempfile
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QFileDialog, QMessageBox, QMenu,
+    QLineEdit, QFileDialog, QMessageBox, QMenu, QStackedWidget,
     QListView, QStyledItemDelegate, QAbstractItemView, QStyle,
 )
 from PyQt6.QtCore import (
@@ -33,6 +33,7 @@ from ui.styles import (
     SLATE_600, SLATE_500, SLATE_400,
     WHITE, SELECTION_BG, SELECTION_BORDER,
     BORDER_SUBTLE, CYAN_400, MENU_BG, apply_minimal_scrollbar,
+    ACCENT,
 )
 from ui.widgets.text_nav import install_line_edit_nav
 
@@ -107,10 +108,18 @@ class DeckCardDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._title_px = DEFAULT_DECK_TITLE_SIZE
         self._meta_px = max(8, DEFAULT_DECK_TITLE_SIZE - 3)
+        self._title_family = ""
+        self._title_weight = 700
 
     def set_sizes(self, title_px: int, meta_px: int):
         self._title_px = title_px
         self._meta_px = meta_px
+
+    def set_fonts(self, family: str, weight: int):
+        """Deck title family/weight override ("" family keeps painter font;
+        weight defaults to today's bold)."""
+        self._title_family = family
+        self._title_weight = weight
 
     def paint(self, painter: QPainter, option, index):
         d = index.data(DeckListModel._ROW_ROLE)
@@ -132,7 +141,9 @@ class DeckCardDelegate(QStyledItemDelegate):
         x, w = rect.x() + 10, rect.width() - 20
         title_font = QFont(painter.font())
         title_font.setPixelSize(self._title_px)
-        title_font.setWeight(QFont.Weight.Bold)
+        if self._title_family:
+            title_font.setFamily(self._title_family)
+        title_font.setWeight(self._title_weight)
         painter.setFont(title_font)
         painter.setPen(QColor(WHITE))
         title_h = QFontMetrics(title_font).height()
@@ -166,6 +177,9 @@ class DeckListPanel(QWidget):
     deck_edit_requested = pyqtSignal(int)  # deck_id → open Lite Designer
     deck_slide_updated = pyqtSignal(int, int)  # deck_id, slide index edited
     decks_changed = pyqtSignal()
+    output_theme_changed = pyqtSignal(str, str)
+    outputs_changed = pyqtSignal(list)  # active output ids after add/remove
+    output_theme_double_clicked = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -193,16 +207,55 @@ class DeckListPanel(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        # ── Header ──
-        header = QLabel("DECKS")
-        header.setStyleSheet(
-            f"color: {SLATE_500}; font-size: 9px; font-weight: 700; "
-            f"letter-spacing: 1px; background: transparent;"
-        )
-        root.addWidget(header)
+        # ── Tabs: Decks | Outputs (shared text-tab row) ──
+        from ui.panels.text_tabs import build_text_tab_row
+        tab_row, self._page_tabs, tab_buttons = build_text_tab_row(
+            [("decks", "Decks", "Deck library"),
+             ("outputs", "Outputs", "Per-output display themes")],
+            checked_key="decks")
+        self._decks_tab_btn = tab_buttons["decks"]
+        self._outputs_tab_btn = tab_buttons["outputs"]
+        self._decks_tab_btn.setChecked(True)
+        root.addWidget(tab_row)
+
+        self._pages = QStackedWidget()
+        root.addWidget(self._pages, 1)
+        self._decks_page = QWidget()
+        decks_layout = QVBoxLayout(self._decks_page)
+        decks_layout.setContentsMargins(0, 0, 0, 0)
+        decks_layout.setSpacing(6)
+        self._pages.addWidget(self._decks_page)
+        self._page_tabs.idClicked.connect(self._switch_page)
+
+        # ── Outputs page: per-output deck themes (Displays 4-6) ──
+        self._outputs_page = QWidget()
+        outputs_layout = QVBoxLayout(self._outputs_page)
+        outputs_layout.setContentsMargins(0, 0, 0, 0)
+        outputs_layout.setSpacing(6)
+        from ui.panels.themes_panel import ThemesPanel
+        from core.theme_loader import FREEFORM
+        from core.outputs import active_outputs
+        # Stacked output blocks, scrollable: 3 outputs x their themes is
+        # taller than this narrow panel.
+        self._outputs_themes = ThemesPanel(
+            output_ids=active_outputs("SLIDES"), theme_kind=FREEFORM,
+            setting_prefix="display.slides_output", default_theme="slides",
+            main_label="Main", tab_key="SLIDES", allow_add_remove=True)
+        self._outputs_themes.theme_changed.connect(
+            self.output_theme_changed.emit)
+        self._outputs_themes.theme_double_clicked.connect(
+            self.output_theme_double_clicked.emit)
+        self._outputs_themes.outputs_changed.connect(
+            self.outputs_changed.emit)
+        from ui.widgets.scrollable import scrollable
+        outputs_layout.addWidget(scrollable(self._outputs_themes), 1)
+        self._pages.addWidget(self._outputs_page)
 
         # ── Search ──
         self.search_box = QLineEdit()
+        # Native × affordance: clears the query in one click (shows only
+        # while text is present; clearing re-runs the filter via textChanged).
+        self.search_box.setClearButtonEnabled(True)
         # Word gestures + focus-select-all + triple-click-select-all.
         # A plain QLineEdit on purpose: emulating a single-line field on
         # QTextEdit is what produced the selection and caret bugs.
@@ -223,7 +276,7 @@ class DeckListPanel(QWidget):
         """)
         self.search_box.textChanged.connect(
             lambda: self._on_search(self.search_box.text()))
-        root.addWidget(self.search_box)
+        decks_layout.addWidget(self.search_box)
 
         # ── Session-only search history (Up/Down recall) ──
         # Qualifying a query: 2s idle, or the operator opens/activates a
@@ -255,7 +308,7 @@ class DeckListPanel(QWidget):
         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._on_context_menu)
         self._view.selectionModel().currentChanged.connect(self._on_current_changed)
-        root.addWidget(self._view, 1)
+        decks_layout.addWidget(self._view, 1)
 
         # Scroll-qualifies the query, but only after a render settles
         # (populating the list moves the scrollbar on its own).
@@ -267,7 +320,7 @@ class DeckListPanel(QWidget):
             f"color: {SLATE_600}; font-size: 11px; background: transparent; padding-top: 24px;"
         )
         self._empty.hide()
-        root.addWidget(self._empty, 1)
+        decks_layout.addWidget(self._empty, 1)
 
         # ── Action footer (imports only — per-deck actions live in the
         # right-click context menu)
@@ -301,9 +354,13 @@ class DeckListPanel(QWidget):
         row0.addWidget(self.btn_export_list)
         footer.addLayout(row0)
 
-        root.addLayout(footer)
+        decks_layout.addLayout(footer)
 
         self.refresh()
+
+    def _switch_page(self, index: int):
+        """Flip between the Decks list and the Outputs theme columns."""
+        self._pages.setCurrentIndex(index)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -333,10 +390,16 @@ class DeckListPanel(QWidget):
         self._view.clearSelection()
 
     def refresh_card_size(self):
-        """Re-read the deck font setting (view relayouts; zero rebuilds)."""
+        """Re-read the deck font settings (view relayouts; zero rebuilds)."""
+        from core.database import get_setting
+        from ui.app_theme import resolve_font_family, resolve_font_weight
         size = _deck_title_size()
         self._model.set_row_height(2 * size + 18)
         self._delegate.set_sizes(size, max(8, size - 3))
+        self._delegate.set_fonts(
+            resolve_font_family(get_setting("slides.deck_font_family", "")),
+            resolve_font_weight(get_setting("slides.deck_font_weight", ""),
+                                700))
 
     # ── Internals ──────────────────────────────────────────────────────────
 

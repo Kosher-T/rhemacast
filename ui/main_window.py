@@ -10,7 +10,7 @@ import logging
 import time
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal
@@ -362,7 +362,10 @@ class MainWindow(QMainWindow):
         sub_layout.addStretch()
         
         # Start Service button
-        self.start_service_btn = QPushButton("▶  Start Service")
+        self.start_service_btn = QPushButton("Start Service")
+        from ui.icons import apply_button
+        apply_button(self.start_service_btn, "play")
+        self.start_service_btn.setText("Start Service")
         self.start_service_btn.setStyleSheet(_service_btn_style)
         self.start_service_btn.setToolTip("Boot all backend threads (Audio, STT, Search, DB Writer, Hardware Monitor)")
         self.start_service_btn.clicked.connect(self._toggle_service)
@@ -433,19 +436,30 @@ class MainWindow(QMainWindow):
                 logging.getLogger(__name__).error(f"Failed to check offline queue: {e}")
 
     def _setup_tabs(self):
-        # Add tabs (name -> widget_init_function)
+        # Tabs: (internal key, display label, group, widget factory).
+        # Display tabs (live-output workspaces) lead; core tabs follow,
+        # separated in the bar. Future display tabs (Media, Presentation)
+        # join the display group; pack gating filters this list.
+        # Keys stay UPPER_SNAKE (referenced across main_window, workers,
+        # and tests); only labels are user-facing.
         tabs_config = [
-            ("SCRIPTURE", lambda: PresentationTab()),
-            ("LIBRARY", lambda: LibraryTab()),
-            ("SLIDES", lambda: SlidesTab()),
-            ("HISTORY", lambda: HistoryTab()),
-            ("SETTINGS", lambda: SettingsTab()),
-            ("THEME DESIGNER", self._init_theme_designer)
+            ("SCRIPTURE", "Scriptures", "display", lambda: PresentationTab()),
+            ("SLIDES", "Decks", "display", lambda: SlidesTab()),
+            ("LIBRARY", "Library", "core", lambda: LibraryTab()),
+            ("HISTORY", "History", "core", lambda: HistoryTab()),
+            ("THEME DESIGNER", "Theme Designer", "core",
+             self._init_theme_designer),
+            ("SETTINGS", "Settings", "core", lambda: SettingsTab()),
         ]
-        
-        for i, (name, init_func) in enumerate(tabs_config):
+
+        seen_core = False
+        for i, (key, label, group, init_func) in enumerate(tabs_config):
+            if group == "core" and not seen_core:
+                seen_core = True
+                self.title_bar.tabs_layout.addWidget(
+                    self._tab_group_separator())
             # Create content widget
-            if i == 0:
+            if key == "SCRIPTURE":
                 # Presentation tab is fully loaded immediately
                 content = init_func()
                 # Connect theme quick-edit from queue panel
@@ -456,30 +470,49 @@ class MainWindow(QMainWindow):
                 # Other tabs are lazy-loaded Placeholders
                 content = PlaceholderTab(init_func)
                 # Connect hotkey editor when Settings tab finishes loading
-                if name == "SETTINGS":
+                if key == "SETTINGS":
                     content.loaded.connect(self._on_settings_tab_loaded)
                 # Connect history verse navigation when History finishes loading
-                if name == "HISTORY":
-                    content.loaded.connect(self._on_history_tab_loaded)                
+                if key == "HISTORY":
+                    content.loaded.connect(self._on_history_tab_loaded)
             self.stack.addWidget(content)
-            self._tabs[name] = content
-            
+            self._tabs[key] = content
+
             # Create tab button
-            btn = ChromeTab(name, is_active=(i == 0))
+            btn = ChromeTab(label, is_active=(i == 0))
             # Create a closure to capture the index
-            btn.clicked.connect(lambda checked, idx=i, n=name: self._switch_tab(idx, n))
-            
+            btn.clicked.connect(lambda checked, idx=i, n=key: self._switch_tab(idx, n))
+
             # Add container to align tabs to the bottom of the title bar
             btn_layout = QVBoxLayout()
             btn_layout.setContentsMargins(0, 0, 0, 0)
             btn_layout.addStretch()
             btn_layout.addWidget(btn)
-            
+
             tab_container = QWidget()
             tab_container.setLayout(btn_layout)
-            
+
             self.title_bar.tabs_layout.addWidget(tab_container)
-            self._tab_buttons[name] = btn
+            self._tab_buttons[key] = btn
+
+    @staticmethod
+    def _tab_group_separator() -> QWidget:
+        """Thin divider between display tabs and core tabs (bottom-aligned
+        with the tab buttons)."""
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.VLine)
+        line.setFixedWidth(3)
+        # Solid grey (not the hairline border tokens): a group divider
+        # must read as one at a glance.
+        line.setStyleSheet(
+            f"background-color: {SLATE_600}; border: none;")
+        wrap = QWidget()
+        lay = QVBoxLayout()
+        lay.setContentsMargins(10, 8, 10, 2)
+        lay.addStretch()
+        lay.addWidget(line, stretch=1)
+        wrap.setLayout(lay)
+        return wrap
 
     def _switch_tab(self, index: int, name: str):
         # Update button states
@@ -580,12 +613,21 @@ class MainWindow(QMainWindow):
             widget._hotkey_editor.bindings_changed.connect(self._on_hotkey_bindings_changed)
         if hasattr(widget, 'font_size_changed'):
             widget.font_size_changed.connect(self._on_font_size_changed)
+        if hasattr(widget, 'bible_font_changed'):
+            widget.bible_font_changed.connect(self._on_bible_font_changed)
 
     def _on_font_size_changed(self, text_size: int, ref_size: int):
         """Propagate font size changes to the browser panel for live preview."""
         pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "browser_panel"):
             pres_tab.browser_panel.update_verse_font_sizes(text_size, ref_size)
+
+    def _on_bible_font_changed(self):
+        """Propagate family/weight changes (sizes ride along — the panel
+        re-reads all six Bible font keys)."""
+        pres_tab = self._tabs.get("SCRIPTURE")
+        if pres_tab and hasattr(pres_tab, "browser_panel"):
+            pres_tab.browser_panel.update_verse_fonts()
         
     def _init_theme_designer(self) -> QWidget:
         from ui.tabs.theme_designer_tab import ThemeDesignerTab
@@ -1439,7 +1481,7 @@ class MainWindow(QMainWindow):
         return (combo.key(), combo.keyboardModifiers())
 
     def _hotkey_fuzzy_search(self):
-        # Switch to Presentation tab, then to Fuzzy Search sub-tab
+        # Switch to Presentation tab, then to the Semantic search page
         pres_idx = 0  # PRESENTATION is the first tab
         self._switch_tab(pres_idx, "SCRIPTURE")
         pres_tab = self._tabs.get("SCRIPTURE")
@@ -1447,7 +1489,7 @@ class MainWindow(QMainWindow):
             pres_tab.queue_panel.switch_to_fuzzy_search()
 
     def _hotkey_fts_search(self):
-        # Switch to Presentation tab, then to FTS Search sub-tab
+        # Switch to Presentation tab, then to the Keyword search page
         pres_idx = 0  # PRESENTATION is the first tab
         self._switch_tab(pres_idx, "SCRIPTURE")
         pres_tab = self._tabs.get("SCRIPTURE")
@@ -1603,7 +1645,7 @@ class MainWindow(QMainWindow):
             from core.service_manager import manager
             manager.initiate_shutdown()
             self._service_running = False
-            self.start_service_btn.setText("▶  Start Service")
+            self.start_service_btn.setText("Start Service")
             self.start_service_btn.setToolTip("Boot all backend threads")
             self.start_service_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -1638,7 +1680,8 @@ class MainWindow(QMainWindow):
             import asyncio
             if _server_loop and _server_loop.is_running():
                 # Broadcast clear action to all outputs on the server's loop
-                for output_id in ["1", "2", "3"]:
+                from core.outputs import ALL_OUTPUTS
+                for output_id in ALL_OUTPUTS:
                     asyncio.run_coroutine_threadsafe(
                         broadcast_display({"action": "clear"}, target=output_id),
                         _server_loop

@@ -190,14 +190,29 @@ class SearchResultWidget(QFrame):
 
         ref = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref)
-        ref_label.setStyleSheet(f"color: {WHITE}; font-size: 10px; font-weight: 700;")
+        from ui.app_theme import area_font, font_qss
+        ref_font = area_font("search.ref", 10, 700,
+                                  family_key="search.ref_font_family",
+                                  weight_key="search.ref_font_weight",
+                                  size_key="search.ref_font_size")
+        ref_label.setStyleSheet(f"color: {WHITE}; " + font_qss(ref_font))
         text_layout.addWidget(ref_label)
 
         verse_text = data.get("text", "")
         text_label = QLabel(verse_text)
-        text_label.setStyleSheet(f"color: {SLATE_400}; font-size: 9px;")
+        text_font = area_font("search.result", 9,
+                                    family_key="search.result_font_family",
+                                    weight_key="search.result_font_weight",
+                                    size_key="search.result_font_size")
+        text_label.setStyleSheet(f"color: {SLATE_400}; " + font_qss(text_font))
         text_label.setWordWrap(True)
-        fm = QFontMetrics(text_label.font())
+        from PyQt6.QtGui import QFont, QFontMetrics
+        probe = QFont()
+        if text_font["family"]:
+            probe.setFamily(text_font["family"])
+        probe.setPixelSize(text_font["size"])
+        probe.setWeight(text_font["weight"])
+        fm = QFontMetrics(probe)
         text_label.setMaximumHeight(fm.height() * 2)
         text_layout.addWidget(text_label)
 
@@ -267,7 +282,7 @@ class SearchPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(PANEL_BODY_STYLE)
-        self.setAccessibleName("Fuzzy Search Panel")
+        self.setAccessibleName("Semantic Search Panel")
         self.setAccessibleDescription("Semantic search using FAISS and BM25 for natural language Bible verse queries")
         self._searching = False
         self._verse_results = []
@@ -280,22 +295,22 @@ class SearchPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        # ── Header ──
-        header = QLabel("Fuzzy Search")
-        header.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 700;")
-        layout.addWidget(header)
+        # No in-panel title: the page's text tab already names it.
 
         # ── Query input ──
         input_row = QHBoxLayout()
         input_row.setSpacing(6)
 
         self.query_input = QLineEdit()
+        # Native × affordance: clears the query in one click (shows only
+        # while text is present; clearing fires textChanged like typing).
+        self.query_input.setClearButtonEnabled(True)
         # Word gestures + focus-select-all + triple-click-select-all.
         # A plain QLineEdit on purpose: emulating a single-line field on
         # QTextEdit is what produced the selection and caret bugs.
         install_line_edit_nav(self.query_input)
-        self.query_input.setPlaceholderText("e.g., prodigal son, David and Goliath...")
-        self.query_input.setAccessibleName("Fuzzy search query")
+        self.query_input.setPlaceholderText("e.g., describe it: jesus walks on water...")
+        self.query_input.setAccessibleName("Semantic search query")
         self.query_input.setAccessibleDescription("Type a natural language description to find Bible verses")
         self.query_input.setStyleSheet(f"""
             QLineEdit {{
@@ -369,7 +384,7 @@ class SearchPanel(QWidget):
         self.results_list = _SearchResultsList()
         self.results_list.itemSelectionChanged.connect(
             self._sync_row_selection)
-        self.results_list.setAccessibleName("Fuzzy search results")
+        self.results_list.setAccessibleName("Semantic search results")
         self.results_list.setAccessibleDescription("List of Bible verse search results ordered by relevance")
         self.results_list.setSpacing(2)
         self.results_list.setStyleSheet(f"""
