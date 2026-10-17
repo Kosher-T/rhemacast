@@ -76,6 +76,12 @@ Thumbs.db
 opencode.json
 .opencode/
 
+# --- Mobile file back-and-forths (do not want to use Github)
+mobile_version/
+
+# --- Temp Harness
+ocv/
+
 # --- TRACKED BELOW (commented out): project sources, docs, tests, user decks ---
 # tests/
 # /docs/
