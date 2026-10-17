@@ -146,18 +146,6 @@ def _outline_ring(value: str) -> str:
     return ",".join(ring)
 
 
-def _outline_to_css(value: str) -> str:
-    """The outline as a text-shadow declaration for an inline span.
-
-    The theme's own soft drop shadow rides along so an outlined run does not
-    lose the depth the un-outlined runs keep.
-    """
-    ring = _outline_ring(value)
-    if not ring:
-        return ""
-    return "text-shadow:" + ring + ",var(--rc-text-shadow,0 4px 12px rgba(0,0,0,0.4))"
-
-
 # Canonical "no outline" value. The deck has to be able to SAY "off",
 # otherwise an inherited (theme) outline reasserts itself on the display and
 # the operator's toggle looks broken there while the button reads off.
@@ -696,7 +684,7 @@ def format_to_line(fmt: dict | None) -> str | None:
     """Serialize a deck-format dict to a top-level format line (or None if empty).
 
     Stable key order (size, bold, color, italics, case, underline, strike,
-    align, spacing, dir, outline, font). Size emits the longest valid prefix
+    align, spacing, dir, outline, shadow, font). Size emits the longest valid prefix
     (nominal[, min[, max]]) — the only shapes the parser produces. super/sub
     are run-only concepts but round-trip harmlessly if present.
     """
@@ -728,6 +716,8 @@ def format_to_line(fmt: dict | None) -> str | None:
         parts.append(f"dir={fmt['dir']}")
     if fmt.get("outline"):
         parts.append(f"outline={fmt['outline']}")
+    if fmt.get("shadow"):
+        parts.append(f"shadow={fmt['shadow']}")
     if fmt.get("font"):
         parts.append(f"font={fmt['font']}")
     return "; ".join(parts) or None

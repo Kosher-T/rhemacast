@@ -316,7 +316,9 @@ def test_tier3_bold_fans_out_run_and_chains(tmp_path):
     assert "italics=true" in texts[0] and "italics=true" in texts[1]
 
 
-def test_tier4_bold_applies_line_by_line(tmp_path):
+def test_tier4_bold_writes_deck_format_not_inline(tmp_path):
+    """Tier 4 is the whole deck: bold lands in top-script deck format,
+    and no inline runs are stamped into the slide text."""
     from core.slide_service import create_deck
     from ui.widgets.lite_designer.lite_designer import LiteDesigner
     import core.database as db
@@ -331,8 +333,8 @@ def test_tier4_bold_applies_line_by_line(tmp_path):
     _ladder_to(w, 4)
     w._ribbon._toggle_bold()
     w._store_active()
-    assert w._slides[0]["text"] == (
-        "[line one here (bold=true)]\n[line two here (bold=true)]")
+    assert w._format.get("bold") is True
+    assert w._slides[0]["text"] == "line one here\nline two here"
 
 
 def test_loaded_false_flips_true(tmp_path):

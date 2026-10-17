@@ -349,6 +349,20 @@ def display_format_defaults(theme_data: Optional[dict]) -> dict:
         return {}
     out: dict = {}
 
+    color = t.get("color")
+    if isinstance(color, str):
+        from core.slide_parser import _parse_hex_color
+        parsed_color = _parse_hex_color(color)
+        if parsed_color:
+            out["color"] = parsed_color
+
+    size = t.get("size")
+    if size is not None:
+        try:
+            out["size"] = max(1, int(float(str(size).rstrip("px").strip())))
+        except (TypeError, ValueError):
+            pass
+
     weight = t.get("weight")
     if weight is not None:
         try:
@@ -364,6 +378,18 @@ def display_format_defaults(theme_data: Optional[dict]) -> dict:
     outline = theme_outline(t)
     if outline:
         out["outline"] = outline
+
+    # Shadow as the ribbon needs it: "none" when the theme says none, or
+    # when its hard ring was consumed as the outline above (it paints as
+    # outline, not shadow); the raw value when a genuine drop shadow
+    # rides along; absent when the theme says nothing at all.
+    ts = t.get("text_shadow")
+    if isinstance(ts, str) and ts.strip():
+        slow = ts.strip().lower()
+        if slow in ("none", "off"):
+            out["shadow"] = "none"
+        elif not (outline and theme_outline({"text_shadow": ts}) == outline):
+            out["shadow"] = ts.strip()
 
     transform = str(t.get("text_transform") or "").strip().lower()
     if transform == "uppercase":

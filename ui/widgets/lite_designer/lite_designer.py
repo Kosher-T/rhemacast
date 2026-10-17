@@ -103,10 +103,15 @@ def _editor_style(px: int) -> str:
     # Glyph size interpolated (fixed via display_text_px): a bare-QWidget
     # ancestor rule (the popup's 11px) would otherwise win over widget
     # fonts, so the size must live in this QTextEdit-selected rule.
+    # Family/weight follow the designer font settings (Nunito/400 default).
+    from ui.widgets.lite_designer.slide_cards import (
+        display_font_family, display_font_weight)
+    family = display_font_family() or "Nunito"
+    weight = display_font_weight()
     return ("QTextEdit { background: transparent; color: " + TEXT_PRIMARY + ";"
             "  border: none; padding: 0px;"
-            "  font-family: 'Nunito', sans-serif;"
-            f"  font-size: {px}px;"
+            f"  font-family: '{family}', sans-serif;"
+            f"  font-size: {px}px;  font-weight: {weight};"
             "  selection-background-color: " + TEXT_SELECTION + "; }"
             # Viewport is an unstyled QWidget child: shield it from
             # ancestor bare-QWidget borders (see slide_cards).
@@ -282,7 +287,10 @@ class LiteDesigner(QWidget):
         btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_save.clicked.connect(self._on_save)
         lay.addWidget(btn_save)
-        btn_close = QPushButton("X")
+        btn_close = QPushButton()
+        btn_close.setToolTip("Close designer")
+        from ui.icons import apply_button
+        apply_button(btn_close, "close")
         btn_close.setStyleSheet(_BTN_CLOSE)
         btn_close.setFixedSize(28, 28)
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -480,7 +488,8 @@ class LiteDesigner(QWidget):
         align); a card document only carries the deck's own run props.
         Without this the ribbon reads empty on load even though the deck
         displays bold + outlined. Reads from disk (never _working_theme),
-        matching the preview's save-only contract.
+        matching the preview's save-only contract. The deck top-script
+        rides along too: effective ribbon state is theme < deck < run.
         """
         try:
             _name, theme_data = core.theme_loader.resolve_theme(
@@ -489,6 +498,10 @@ class LiteDesigner(QWidget):
                 core.theme_loader.display_format_defaults(theme_data))
         except Exception:
             self._ribbon.set_theme_defaults({})
+        try:
+            self._ribbon.set_deck_format(self._format)
+        except (AttributeError, RuntimeError):
+            pass
 
     def _base_spacing(self):
         return self._format.get("spacing")
@@ -981,6 +994,10 @@ class LiteDesigner(QWidget):
     def _on_deck_format_patch(self, patch):
         self._format.update(patch)
         self._ribbon.set_deck_spacing(self._format.get("spacing"))
+        try:
+            self._ribbon.set_deck_format(self._format)
+        except (AttributeError, RuntimeError):
+            pass
         for doc in self._docs.values():
             if self._format.get("spacing") is not None:
                 apply_spacing_to_doc(doc, self._format["spacing"])
@@ -1264,6 +1281,9 @@ class LiteDesigner(QWidget):
         self._sel_tier = 0
         try:
             self._ribbon.fan_out = None
+            self._ribbon.fan_out_remove_outline = None
+            self._ribbon.fan_out_clear_all = None
+            self._ribbon.fan_out_block = None
         except (AttributeError, RuntimeError):
             pass
         try:
@@ -1296,6 +1316,9 @@ class LiteDesigner(QWidget):
         self._sel_tier = 0
         try:
             self._ribbon.fan_out = None
+            self._ribbon.fan_out_remove_outline = None
+            self._ribbon.fan_out_clear_all = None
+            self._ribbon.fan_out_block = None
         except (AttributeError, RuntimeError):
             pass
         for card in getattr(self, "_cards", []):
@@ -1312,22 +1335,77 @@ class LiteDesigner(QWidget):
                     pass
 
     def _retarget_fan_out(self):
-        """Ribbon char-format fan-out follows the tier: tiers 3-4 rewrite
-        every scoped slide's runs; tiers 1-2 act natively on the focused
+        """Ribbon fan-out follows the tier: tier 3 stamps inline runs into
+        every scoped slide; tier 4 writes top-script deck format (the
+        highlight IS the deck); tiers 1-2 act natively on the focused
         display box (section chips stay plain text)."""
-        if self._sel_tier in (3, 4):
+        if self._sel_tier == 4:
             self._ribbon.fan_out = self._apply_format_to_scope
             self._ribbon.fan_out_remove_outline = self._strip_outline_in_scope
+            self._ribbon.fan_out_clear_all = self._clear_format_in_scope
+            self._ribbon.fan_out_block = self._apply_block_to_deck
+        elif self._sel_tier == 3:
+            self._ribbon.fan_out = self._apply_format_to_scope
+            self._ribbon.fan_out_remove_outline = self._strip_outline_in_scope
+            self._ribbon.fan_out_clear_all = self._clear_format_in_scope
+            self._ribbon.fan_out_block = None
         else:
             self._ribbon.fan_out = None
             self._ribbon.fan_out_remove_outline = None
+            self._ribbon.fan_out_clear_all = None
+            self._ribbon.fan_out_block = None
 
-    def _strip_outline_in_scope(self):
-        """Ribbon fan-out for outline-off: mark every scoped slide's content
-        explicitly un-outlined (tiers 3-4)."""
+    def _clear_format_in_scope(self):
+        """Ribbon fan-out for clear-formatting: strip every char run in the
+        tier scope back to plain text (tiers 3-4). Title, deck format line
+        and section markers are never in scope — only slide content docs
+        are touched, and block structure (breaks, lists, alignment) stays.
+        At tier 4 the deck's own char keys reset too (a deck-level bold
+        would otherwise keep rendering through the cleared slides)."""
 
         indices = self._scope_indices()
         if not indices:
+            return
+        self._applying_scope_format = True
+        try:
+            from ui.widgets.lite_designer.rich_txt import (
+                clear_char_formatting)
+            if self._active in indices:
+                clear_char_formatting(self._edit.document())
+            for i in indices:
+                if i == self._active:
+                    continue
+                clear_char_formatting(self._doc_for(i))
+        finally:
+            self._applying_scope_format = False
+        if self._sel_tier == 4:
+            for key in ("size_nominal", "size_min", "size_max", "bold",
+                        "color", "italics", "case", "underline", "strike",
+                        "super", "sub", "outline", "shadow", "font"):
+                self._format[key] = None
+            self._ribbon.set_deck_format(self._format)
+        self._store_active()
+        self._dirty = True
+        self._refresh_card_states()
+        if self._sel_tier in (3, 4):
+            # Same rebuild-eats-selection as _apply_format_to_scope above:
+            # repaint so repeated clicks keep working.
+            self._visualize_tier()
+        self._schedule_preview()
+
+    def _strip_outline_in_scope(self):
+        """Ribbon fan-out for outline-off: mark every scoped slide's content
+        explicitly un-outlined (tier 3), or switch the whole deck off at
+        tier 4 (top-script outline=none beats the theme deck-wide)."""
+
+        indices = self._scope_indices()
+        if not indices:
+            return
+        if self._sel_tier == 4:
+            self._format["outline"] = "none"
+            self._ribbon.set_deck_format(self._format)
+            self._dirty = True
+            self._schedule_preview()
             return
         self._applying_scope_format = True
         try:
@@ -1645,14 +1723,18 @@ class LiteDesigner(QWidget):
                     f"{'s' if newcomers != 1 else ''}")
 
     def _apply_format_to_scope(self, fmt):
-        """Ribbon fan-out for tiers 3-4: apply one char format to every
-        scoped slide's full content (tiers 1-2 act natively on the
+        """Ribbon fan-out for tiers 3-4 (tiers 1-2 act natively on the
         focused display box; section chips stay plain text).
 
-        Per-document undo stacks stay intact (each slide reverts on its
-        own Ctrl+Z). The tier is preserved so Bold-then-Italic chains
-        keep working.
+        Tier 3 stamps inline runs into every scoped slide (per-document
+        undo stacks stay intact — each slide reverts on its own Ctrl+Z).
+        Tier 4 means the whole deck, so it writes top-script deck format
+        instead of touching any slide text. The tier is preserved so
+        Bold-then-Italic chains keep working.
         """
+        if self._sel_tier == 4:
+            self._apply_format_to_deck(fmt)
+            return
         from PyQt6.QtGui import QTextCursor as _QC
         indices = self._scope_indices()
         if not indices:
@@ -1685,6 +1767,87 @@ class LiteDesigner(QWidget):
             # drop the scope painting): repaint the tier so the next ribbon
             # click still lands on a visible, working selection.
             self._visualize_tier()
+        self._schedule_preview()
+
+    def _deck_patch_from_format(self, fmt) -> dict:
+        """One ribbon char format -> top-script deck keys.
+
+        Only channels the ribbon itself writes (native marks + metadata
+        props); anything else in the format is not a deck concept and is
+        ignored. Explicit offs arrive as the OFF sentinels and leave as
+        "none" — the deck must be able to SAY off, or the theme wins.
+        """
+        from PyQt6.QtGui import QTextFormat as _TF
+        from ui.widgets.lite_designer.rich_txt import (
+            UL_PROP, SO_PROP, COLOR_PROP, SIZE_PROP, CASE_PROP, FONT_PROP,
+            OUTLINE_PROP, OUTLINE_OFF, SHADOW_PROP, SHADOW_OFF)
+        patch = {}
+        if fmt.hasProperty(_TF.Property.FontWeight):
+            patch["bold"] = fmt.fontWeight() >= 600
+        if fmt.hasProperty(_TF.Property.FontItalic):
+            patch["italics"] = bool(fmt.fontItalic())
+        if fmt.hasProperty(UL_PROP):
+            patch["underline"] = bool(fmt.property(UL_PROP))
+        if fmt.hasProperty(SO_PROP):
+            patch["strike"] = bool(fmt.property(SO_PROP))
+        if fmt.hasProperty(COLOR_PROP):
+            color = fmt.property(COLOR_PROP)
+            if color:
+                patch["color"] = str(color)
+        if fmt.hasProperty(SIZE_PROP):
+            try:
+                patch["size_nominal"] = max(1, int(fmt.property(SIZE_PROP)))
+            except (TypeError, ValueError):
+                pass
+        if fmt.hasProperty(CASE_PROP):
+            case = fmt.property(CASE_PROP)
+            if case in ("upper", "lower", "origin"):
+                patch["case"] = case
+        if fmt.hasProperty(FONT_PROP):
+            family = fmt.property(FONT_PROP)
+            if family:
+                patch["font"] = str(family)
+        if fmt.hasProperty(OUTLINE_PROP):
+            raw = fmt.property(OUTLINE_PROP)
+            outline = "none" if raw == OUTLINE_OFF else str(raw or "")
+            if outline:
+                patch["outline"] = outline
+        if fmt.hasProperty(SHADOW_PROP):
+            raw = fmt.property(SHADOW_PROP)
+            shadow = "none" if raw == SHADOW_OFF else str(raw or "")
+            if shadow:
+                patch["shadow"] = shadow
+        return patch
+
+    def _apply_format_to_deck(self, fmt):
+        """Tier-4 fan-out: the highlight IS the deck, so the format lands
+        in top-script deck format (theme < deck < inline on display).
+
+        Working state only — Save serializes it into the top-script line,
+        Reset/close-without-save discards it, exactly like slide edits.
+        Deck writes have no per-slide Ctrl+Z; the tier stays up so the
+        next click refines the same deck value.
+        """
+        patch = self._deck_patch_from_format(fmt)
+        if not patch:
+            return
+        self._format.update(patch)
+        self._ribbon.set_deck_format(self._format)
+        self._dirty = True
+        self._schedule_preview()
+
+    def _apply_block_to_deck(self, prop_id, value):
+        """Tier-4 fan-out for block props (align/dir): deck-level, same
+        working-state contract as _apply_format_to_deck."""
+        from ui.widgets.lite_designer.rich_txt import (
+            ALIGN_PROP, DIR_PROP, SPACING_PROP)
+        key = {ALIGN_PROP: "align", DIR_PROP: "dir",
+               SPACING_PROP: "spacing"}.get(prop_id)
+        if key is None:
+            return
+        self._format[key] = value
+        self._ribbon.set_deck_format(self._format)
+        self._dirty = True
         self._schedule_preview()
 
     def _handle_paste(self) -> bool:

@@ -157,3 +157,107 @@ def apply_palette(app) -> None:
     p.setColor(QPalette.ColorRole.ToolTipText,
                QColor(color("text_primary")))
     app.setPalette(p)
+
+
+# ─── Per-area interface fonts (settings-backed) ─────────────────────────────
+# Each text area (Bible verses, slide strips, deck list, designer text,
+# search results) stores its own family/weight/size under
+# "<area>.font_family" / "<area>.font_weight" / "<area>.font_size".
+# Nothing is applied globally: consumers read their area's keys (with
+# fallbacks preserving today's look) and the Settings → Interface section
+# edits them with a live preview.
+
+INTERFACE_FONT_WEIGHT_DEFAULT = 400
+INTERFACE_FONT_WEIGHTS = (
+    (100, "Thin"), (200, "Extra Light"), (300, "Light"), (400, "Normal"),
+    (500, "Medium"), (600, "Demi Bold"), (700, "Bold"),
+    (800, "Extra Bold"), (900, "Black"),
+)
+INTERFACE_FONT_PREVIEW_TEXT = (
+    "The quick brown fox jumps over the lazy dog 0123456789")
+
+
+def resolve_font_family(value) -> str:
+    """A saved family iff it names an installed font, else "" (keep the
+    current painter/widget font — today's look preserved). Never raises."""
+    try:
+        from PyQt6.QtGui import QFontDatabase
+        if value and value in set(QFontDatabase.families()):
+            return value
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_font_weight(value, default: int = 400) -> int:
+    """A saved weight iff it parses to 1-1000, else the default (today's
+    look preserved). Never raises."""
+    try:
+        weight = int(value)
+    except (TypeError, ValueError):
+        return default
+    return weight if 1 <= weight <= 1000 else default
+
+
+def area_font(prefix: str, size_default: int, weight_default: int = 400,
+              size_min: int = 7, size_max: int = 24, family_key=None,
+              weight_key=None, size_key=None) -> dict:
+    """Validated {family, weight, size} for a settings area. Key names are
+    explicit (house style is flat underscores: "bible.verse_text_size").
+    Unset/invalid falls back to today's rendering ("" family = keep
+    current font). Never raises."""
+    from core.database import get_setting
+    family_key = family_key or f"{prefix}.font_family"
+    weight_key = weight_key or f"{prefix}.font_weight"
+    size_key = size_key or f"{prefix}.font_size"
+    try:
+        family = resolve_font_family(get_setting(family_key, ""))
+        weight = resolve_font_weight(get_setting(weight_key, ""),
+                                     weight_default)
+        size = int(get_setting(size_key, str(size_default)))
+        if not size_min <= size <= size_max:
+            size = size_default
+    except Exception:
+        family, weight, size = "", weight_default, size_default
+    return {"family": family, "weight": weight, "size": size}
+
+
+def font_qss(spec: dict) -> str:
+    """QSS font fragment for a validated area_font spec (color rides
+    separately in the caller's stylesheet)."""
+    fam = f" font-family: '{spec['family']}';" if spec.get("family") else ""
+    return (f"{fam} font-size: {spec.get('size', 10)}px;"
+            f" font-weight: {spec.get('weight', 400)};")
+
+
+def build_interface_font(family=None, size=None, weight=None, size_min=7,
+                         size_max=72, size_default=10, weight_default=400):
+    """QFont from raw settings values, validated with fallbacks.
+
+    Unknown family -> system family; out-of-range size -> size_default;
+    junk weight -> weight_default. Never raises (worst case: defaults).
+    """
+    from PyQt6.QtGui import QFont
+    from PyQt6.QtWidgets import QApplication
+    font = QFont()
+    try:
+        system = QApplication.font()
+    except Exception:
+        system = QFont()
+    resolved = resolve_font_family(family)
+    font.setFamily(resolved or system.family())
+    try:
+        size = int(size)
+    except (TypeError, ValueError):
+        size = size_default
+    if not size_min <= size <= size_max:
+        size = size_default
+    font.setPointSize(size)
+    try:
+        weight = int(weight)
+    except (TypeError, ValueError):
+        weight = weight_default
+    if not 1 <= weight <= 1000:
+        weight = weight_default
+    font.setWeight(weight)
+    return font

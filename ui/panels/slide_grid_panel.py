@@ -40,6 +40,29 @@ def strip_text_size() -> int:
         return DEFAULT_STRIP_TEXT_SIZE
 
 
+def strip_font_family() -> str:
+    """Operator strip-font override ("" = follow the deck theme)."""
+    try:
+        from core.database import get_setting
+        from ui.app_theme import resolve_font_family
+        return resolve_font_family(get_setting("slides.strip_font_family", ""))
+    except Exception:
+        return ""
+
+
+def strip_font_weight() -> int | None:
+    """Operator strip-weight override (None = follow the deck theme)."""
+    try:
+        from core.database import get_setting
+        raw = get_setting("slides.strip_font_weight", "")
+        if not str(raw or "").strip():
+            return None
+        weight = int(raw)
+        return weight if 1 <= weight <= 1000 else None
+    except (TypeError, ValueError):
+        return None
+
+
 class SlideCard(QFrame):
     """One slide card: index badge + full multi-line text.
 
@@ -74,6 +97,13 @@ class SlideCard(QFrame):
             weight = int(t.get("weight", 700))
         except (TypeError, ValueError):
             weight = 700
+        # Operator overrides win over the deck theme when configured.
+        override_family = strip_font_family()
+        if override_family:
+            font_family = override_family
+        override_weight = strip_font_weight()
+        if override_weight is not None:
+            weight = override_weight
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -333,7 +363,7 @@ class SlideGridPanel(QWidget):
         self._deck: dict | None = None
         self._selected_index: int | None = None
         self._columns = max(1, columns)
-        self._built_strip_size: int | None = None
+        self._built_strip_fonts: tuple | None = None
         # Trailing grid row holding all extra vertical space (see set_deck).
         self._trailing_stretch_row: int | None = None
         # Incremental card build: jobs are (row, col, slide_idx); the first
@@ -436,7 +466,8 @@ class SlideGridPanel(QWidget):
             logger.warning(f"Preview theme unavailable ({e}); using bare styling")
             theme = {}
         strip_size = strip_text_size()
-        self._built_strip_size = strip_size
+        self._built_strip_fonts = (strip_size, strip_font_family(),
+                                   strip_font_weight())
         self._build_theme = theme
         self._build_size = strip_size
 
@@ -567,7 +598,7 @@ class SlideGridPanel(QWidget):
     def clear(self):
         self._deck = None
         self._selected_index = None
-        self._built_strip_size = None
+        self._built_strip_fonts = None
         self._build_gen += 1  # cancel any chained idle build
         self._build_jobs = []
         self._build_pos = 0
@@ -576,11 +607,12 @@ class SlideGridPanel(QWidget):
         self._empty_label.show()
         self._grid.addWidget(self._empty_label, 0, 0)
 
-    def refresh_strip_size(self):
-        """Rebuild cards if the settings font size changed (keeps selection + scroll)."""
+    def refresh_strip_fonts(self):
+        """Rebuild cards if the strip font settings changed (keeps selection + scroll)."""
         if not self._deck:
             return
-        if strip_text_size() == self._built_strip_size:
+        current = (strip_text_size(), strip_font_family(), strip_font_weight())
+        if current == self._built_strip_fonts:
             return
         sel = self._selected_index
         sb = self._scroll.verticalScrollBar().value()

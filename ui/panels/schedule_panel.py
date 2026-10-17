@@ -111,9 +111,9 @@ class ScheduleItem(QFrame):
 
         is_slide = data.get("item_type") == "slide"
         if is_slide:
-            title = data.get("name") or ref or "(untitled)"
-            count = len(data.get("slides", []))
-            display = f"\u266a {title}   \u00b7   {count} slides"
+            # Freeform decks: anything can be in one, so no music note and
+            # no slide count — just the title.
+            display = data.get("name") or ref or "(untitled)"
         else:
             from core.bible_service import get_display_name
             display_name = get_display_name(translation) if translation else ""
@@ -327,8 +327,9 @@ class SchedulePanel(QWidget):
 
     All schedule contents live in `core.schedule_model.schedule_model`, so
     every SchedulePanel instance (SCRIPTURE tab, SLIDES tab, ...) renders
-    identical items by construction. This widget owns only view state:
-    selection, color-coding toggle, and file dialogs.
+    identical items by construction. Selection stays per-instance; the
+    color-coding toggle is shared across tabs (one flag, all panels
+    converge).
     """
 
     item_clicked = pyqtSignal(dict)
@@ -338,6 +339,12 @@ class SchedulePanel(QWidget):
     items_deleted = pyqtSignal(list)
     schedule_modified = pyqtSignal()  # Emitted when schedule changes
     schedule_loaded = pyqtSignal(str)  # Emitted with file path when loaded
+
+    # Color-coding is shared across tabs: toggling it in SCRIPTURE lights
+    # SLIDES too (and vice versa). One class flag + a registry of live
+    # panels; instances never diverge.
+    _shared_color_enabled = False
+    _instances = None  # WeakSet, created on first use (import-time Qt safe)
 
     def __init__(self, model=None, parent=None):
         super().__init__(parent)
@@ -393,8 +400,9 @@ class SchedulePanel(QWidget):
         self.list_widget.viewport().installEventFilter(self)
         layout.addWidget(self.list_widget)
 
-        # Color coding toggle (bottom bar)
-        self._color_enabled = False
+        # Color coding toggle (bottom bar) — shared across tabs (see
+        # _shared_color_enabled): a new panel opens matching the live state.
+        self._color_enabled = SchedulePanel._shared_color_enabled
         bottom_bar = QWidget()
         bottom_bar.setStyleSheet("background: transparent;")
         bottom_layout = QHBoxLayout(bottom_bar)
@@ -403,7 +411,7 @@ class SchedulePanel(QWidget):
 
         self._color_toggle = QPushButton("Color Code")
         self._color_toggle.setCheckable(True)
-        self._color_toggle.setChecked(False)
+        self._color_toggle.setChecked(self._color_enabled)
         self._color_toggle.setFixedHeight(22)
         self._color_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._color_toggle.setStyleSheet(f"""
@@ -449,6 +457,13 @@ class SchedulePanel(QWidget):
         self._model.file_changed.connect(self._update_title)
         self._rebuild()
         self._update_title()
+        # Join the cross-tab registry (WeakSet: dead panels drop out on
+        # their own). Construction already converged on the shared flag,
+        # and _rebuild() above painted accordingly.
+        import weakref as _weakref
+        if SchedulePanel._instances is None:
+            SchedulePanel._instances = _weakref.WeakSet()
+        SchedulePanel._instances.add(self)
 
     # ── Model-backed view ──────────────────────────────────────────────────
 
@@ -594,12 +609,20 @@ class SchedulePanel(QWidget):
     # ─── Color coding ────────────────────────────────────────────────────────
 
     def _toggle_color_coding(self, checked: bool):
-        """Toggle color coding on/off."""
-        self._color_enabled = checked
-        if checked:
-            self._assign_colors()
-        else:
-            self._clear_colors()
+        """Toggle color coding on/off — shared across tabs: every live
+        SchedulePanel converges on the new state (setChecked emits
+        toggled, not clicked, so this never recurses)."""
+        SchedulePanel._shared_color_enabled = checked
+        for panel in list(SchedulePanel._instances or ()):
+            try:
+                panel._color_enabled = checked
+                panel._color_toggle.setChecked(checked)
+                if checked:
+                    panel._assign_colors()
+                else:
+                    panel._clear_colors()
+            except RuntimeError:
+                pass  # panel mid-teardown; the WeakSet drops it
 
     def _assign_colors(self):
         """Assign background colors to schedule items based on the card above.
@@ -613,6 +636,7 @@ class SchedulePanel(QWidget):
             return
 
         color_idx = 0
+        color_idx_at = 0
         prev_book = None
         prev_chapter = None
         chapter_idx = 0
@@ -623,11 +647,12 @@ class SchedulePanel(QWidget):
             if not item_widget:
                 continue
             data = item_widget.data if item_widget else None
-            # Slides: color per deck (book slot = deck identity), shade per section
-            book = (data.get("book") if data else "") or (
-                f"\u266a{data.get('deck_id', data.get('ref', ''))}"
-                if data and data.get("item_type") == "slide" else ""
-            )
+            # Decks are exempt from color coding: every freeform deck is
+            # its own thing, so grouping colors are meaningless for them.
+            if data and data.get("item_type") == "slide":
+                item_widget.set_background(_DEFAULT_BG)
+                continue
+            book = data.get("book") if data else ""
             chapter = (data.get("chapter", "") if data else "") or (data.get("section", "") if data else "")
 
             if book != prev_book:

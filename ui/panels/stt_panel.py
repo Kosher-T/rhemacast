@@ -63,8 +63,12 @@ class STTPanel(QWidget):
 
         header_layout.addSpacing(8)
 
-        # Transcribe button
-        self.transcribe_btn = QPushButton("●")
+        # Transcribe button (round record dot; the green/red background
+        # carries ready/recording state, the glyph stays constant)
+        self.transcribe_btn = QPushButton()
+        self.transcribe_btn.setFixedSize(28, 28)
+        from ui.icons import apply_button
+        apply_button(self.transcribe_btn, "record")
         self.transcribe_btn.setFixedSize(28, 28)
         self._set_btn_ready()
         self.transcribe_btn.setToolTip("Start/Stop live transcription")

@@ -43,6 +43,28 @@ def display_text_px() -> int:
         return DISPLAY_TEXT_PX_DEFAULT
 
 
+def display_font_family() -> str:
+    """Operator designer-font override ("" = keep Nunito default)."""
+    try:
+        from core.database import get_setting
+        from ui.app_theme import resolve_font_family
+        return resolve_font_family(
+            get_setting("slides.editor_font_family", ""))
+    except Exception:
+        return ""
+
+
+def display_font_weight() -> int:
+    """Operator designer-weight override (400 = today's look)."""
+    try:
+        from core.database import get_setting
+        from ui.app_theme import resolve_font_weight
+        return resolve_font_weight(
+            get_setting("slides.editor_font_weight", ""), 400)
+    except Exception:
+        return 400
+
+
 def move_to_word_end_right(cursor, keep_anchor=False) -> bool:
     """Custom Ctrl+Right: shared kernel (`text_nav.word_end_right_stop`),
     applied to the cursor. Returns True when handled (fall through to
@@ -204,13 +226,20 @@ _SECTION_ACTIVE = (
 # designer popup's 11px) would otherwise win over widget fonts, so the
 # size must live in this QTextEdit-selected rule. Built per widget at
 # creation (settings apply on next open — same contract as deck fonts).
-def _display_box_style(active: bool, px: int) -> str:
+def _display_box_style(active: bool, px: int, family: str | None = None,
+                       weight: int | None = None) -> str:
     color = TEXT_PRIMARY if active else TEXT_FAINT
     sel = ("  selection-background-color: " + TEXT_SELECTION + ";"
            if active else "")
+    if family is None:
+        family = display_font_family()
+    if weight is None:
+        weight = display_font_weight()
+    fam_rule = f"  font-family: '{family}';" if family else ""
     return ("QTextEdit {"
             f"  background: transparent; color: {color};"
-            f"  font-size: {px}px; border: none; padding: 0px;"
+            f"  font-size: {px}px;{fam_rule}  font-weight: {weight};"
+            f"  border: none; padding: 0px;"
             f"{sel}" "}"
             + _VIEWPORT_CLEAN)
 
@@ -520,22 +549,22 @@ class SlideCard(QFrame):
         actions_layout.setContentsMargins(3, 1, 3, 1)
         actions_layout.setSpacing(2)
 
-        self._btn_up = self._make_btn("\u2191")
+        self._btn_up = self._make_btn("arrow-up", "Move slide up")
         self._btn_up.clicked.connect(lambda: self.move_requested.emit(
             self._index, -1))
         actions_layout.addWidget(self._btn_up)
 
-        self._btn_down = self._make_btn("\u2193")
+        self._btn_down = self._make_btn("arrow-down", "Move slide down")
         self._btn_down.clicked.connect(lambda: self.move_requested.emit(
             self._index, +1))
         actions_layout.addWidget(self._btn_down)
 
-        self._btn_add = self._make_btn("+")
+        self._btn_add = self._make_btn("plus", "Add slide after")
         self._btn_add.clicked.connect(
             lambda: self.add_after_requested.emit(self._index))
         actions_layout.addWidget(self._btn_add)
 
-        self._btn_del = self._make_btn("\u00d7")
+        self._btn_del = self._make_btn("close", "Delete slide")
         self._btn_del.clicked.connect(
             lambda: self.delete_requested.emit(self._index))
         actions_layout.addWidget(self._btn_del)
@@ -567,8 +596,11 @@ class SlideCard(QFrame):
         self.set_content_text(text)
         self._update_style()
 
-    def _make_btn(self, symbol: str) -> QPushButton:
-        btn = QPushButton(symbol)
+    def _make_btn(self, icon_name: str, tip: str) -> QPushButton:
+        from ui.icons import apply_button
+        btn = QPushButton()
+        btn.setToolTip(tip)
+        apply_button(btn, icon_name)
         btn.setStyleSheet(_BTN_NORMAL)
         btn.setFixedSize(18, 18)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)

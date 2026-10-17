@@ -200,6 +200,9 @@ class HistoryTab(QWidget):
         # ── Filter ──
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Filter history…")
+        # Native × affordance: clears the filter in one click (shows
+        # only while text is present; clearing re-runs the filter).
+        self._search_input.setClearButtonEnabled(True)
         self._search_input.setStyleSheet(_SEARCH_INPUT_STYLE)
         self._search_input.setFixedHeight(40)
         self._search_input.textChanged.connect(self._filter_cards)

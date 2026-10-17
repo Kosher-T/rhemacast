@@ -5,14 +5,12 @@ Center panel: Preview (left) + Live (right) + macro controls under Live.
 Each viewport is a QWebEngineView rendering the same HTML/CSS/JS as OBS.
 """
 
-import os
-
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSplitter
 )
-from PyQt6.QtGui import QIcon, QMouseEvent
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QEvent
+from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 
 from ui.widgets.display_view import DisplayView
 from ui.widgets.aspect_ratio import AspectRatioWidget
@@ -263,17 +261,17 @@ class LivePreviewPanel(QWidget):
         nav_bar.setSpacing(6)
         nav_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        btn_prev = QPushButton("<")
+        btn_prev = QPushButton()
         btn_prev.setStyleSheet(NAV_BTN_STYLE)
         btn_prev.setFixedSize(36, 24)
         btn_prev.setToolTip("Previous Verse")
+        from ui.icons import apply_button
+        apply_button(btn_prev, "chevron-left")
         btn_prev.clicked.connect(self.prev_verse.emit)
         nav_bar.addWidget(btn_prev)
 
-        _icon_path = os.path.join(os.path.dirname(__file__), "..", "assets", "eye-off.svg")
         btn_clear = QPushButton()
-        btn_clear.setIcon(QIcon(_icon_path))
-        btn_clear.setIconSize(QSize(12, 12))
+        apply_button(btn_clear, "eye-off")
         btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
         btn_clear.setFixedSize(36, 24)
         btn_clear.setToolTip("Cloak / Uncloak")
@@ -281,10 +279,11 @@ class LivePreviewPanel(QWidget):
         nav_bar.addWidget(btn_clear)
         self.btn_clear = btn_clear
 
-        btn_next = QPushButton(">")
+        btn_next = QPushButton()
         btn_next.setStyleSheet(NAV_BTN_STYLE)
         btn_next.setFixedSize(36, 24)
         btn_next.setToolTip("Next Verse")
+        apply_button(btn_next, "chevron-right")
         btn_next.clicked.connect(self.next_verse.emit)
         nav_bar.addWidget(btn_next)
 

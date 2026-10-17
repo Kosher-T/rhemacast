@@ -83,6 +83,9 @@ body {
     width: 100%;
     color: transparent;
     -webkit-text-fill-color: transparent;
+    /* The fill layer carries the shadow; this transparent stroke copy
+       inherits text-shadow otherwise and would cast a second, darker one. */
+    text-shadow: none;
     /* --rc-oc-stroke carries its own units ("0.65em #000"). A single
        self-describing value means a JS/CSS version mix can only ever show
        NO stroke, never a mis-scaled blob. */
@@ -304,10 +307,19 @@ function renderInlineColors(text) {
                     } else {
                         // An outline becomes a duplicated stroke layer behind
                         // the glyphs; everything else rides the inline style.
+                        // Explicit offs ride as data markers: the block SVG
+                        // conversion destroys the inline text-shadow:none,
+                        // so it must know which runs opted out of the
+                        // stroke and of the inherited shadow.
+                        const noAttrs = [];
+                        if (parsed.outline === "none") noAttrs.push("outline");
+                        if (parsed.shadow === "none") noAttrs.push("shadow");
+                        const noStr = noAttrs.length
+                            ? ' data-rc-no="' + noAttrs.join(" ") + '"' : "";
                         const body = (parsed.outline && parsed.outline !== "none")
                             ? _outlineRun(inner, _attrEscape(disp), parsed.outline)
                             : inner;
-                        out += '<span style="' + spanStyle(parsed) + '">' + body + '</span>';
+                        out += '<span' + noStr + ' style="' + spanStyle(parsed) + '">' + body + '</span>';
                     }
                 }
             } else {
@@ -449,6 +461,46 @@ function _ocSnapshot(node) {
     const cs = getComputedStyle(node.parentElement);
     const size = parseFloat(cs.fontSize) || 16;
     const ls = cs.letterSpacing === "normal" ? 0 : parseFloat(cs.letterSpacing) || 0;
+    // Decoration: SVG text cannot do text-decoration, so underline and
+    // strike ride along as data and are redrawn as <line> elements.
+    let deco = "none";
+    try {
+        const td = String(cs.textDecorationLine || "");
+        if (/\bunderline\b/.test(td)) deco = "underline";
+        else if (/\bline-through\b/.test(td)) deco = "line-through";
+    } catch (e) {}
+    // Inline shadow: the conversion destroys the span carrying it, so it
+    // must be re-applied per tspan on the fill layer ("none" inherits).
+    let shadow = "none";
+    try { shadow = cs.textShadow || "none"; } catch (e) {}
+    // Nested run outline: innermost wins over the block conversion, so an
+    // explicit run outline keeps rendering under a theme outline instead
+    // of being silently swallowed by it.
+    let ouW = 0, ouC = "";
+    try {
+        const pe = node.parentElement;
+        const oc = (pe && typeof pe.closest === "function")
+            ? pe.closest(".rc-oc") : null;
+        if (oc) {
+            ouW = parseFloat(oc.getAttribute("data-rc-oc-w")) || 0;
+            ouC = oc.getAttribute("data-rc-oc-c") || "";
+        }
+    } catch (e) {}
+    // Explicit offs (data-rc-no markers): the conversion replaces the
+    // markup carrying text-shadow:none, so the opt-out must ride along
+    // as data — otherwise a none-run inherits the block's stroke and
+    // shadow inside the SVG.
+    let noOutline = false, noShadow = false;
+    try {
+        const pe = node.parentElement;
+        const tagged = (pe && typeof pe.closest === "function")
+            ? pe.closest("[data-rc-no]") : null;
+        if (tagged) {
+            const flags = String(tagged.getAttribute("data-rc-no") || "").split(/\s+/);
+            noOutline = flags.indexOf("outline") !== -1;
+            noShadow = flags.indexOf("shadow") !== -1;
+        }
+    } catch (e) {}
     return {
         color: cs.color || "#fff",
         family: cs.fontFamily || "sans-serif",
@@ -459,6 +511,12 @@ function _ocSnapshot(node) {
         wordSpacing: parseFloat(cs.wordSpacing) || 0,
         transform: cs.textTransform || "none",
         pre: /pre/.test(cs.whiteSpace || ""),
+        deco: deco,
+        shadow: shadow,
+        ouW: ouW,
+        ouC: ouC,
+        noOutline: noOutline,
+        noShadow: noShadow,
     };
 }
 
@@ -599,8 +657,20 @@ function convertOutlineScope(el, width, color) {
         for (const r of runs) {
             let text = r.chars.map((c) => c.ch).join("");
             if (!r.style.pre) text = text.replace(/\s+/g, " ");
-            text = _ocApplyTransform(text, r.style.transform);
             if (!text) continue;
+            // Bake the case transform into the SVG text itself: the
+            // converted markup inherits the CSS transform, but advances
+            // are measured here — measuring untransformed text while the
+            // browser renders transformed text drifts every word apart.
+            text = _ocApplyTransform(text, r.style.transform);
+            // Whitespace-only runs carry no ink: canvas reports a zero
+            // ascent for spaces in some fonts, which must never abort the
+            // scope — their advances still lay out via tokens below, and
+            // the line's ascent/descent come from the inked runs.
+            if (!/\S/.test(text)) {
+                measured.push({ style: r.style, tokens: _ocTokens(text, r.style) });
+                continue;
+            }
             const m = _ocMeasure(text, r.style);
             if (!m || !(m.ascent > 0)) { failed = true; break; }
             ascent = Math.max(ascent, m.ascent);
@@ -645,8 +715,12 @@ function convertOutlineScope(el, width, color) {
         // viewport is padded by the full outline width: without it the SVG
         // clips the outline into a sharp box. Padding grows the line rhythm
         // (autoFit measures the padded box, so the outline stays inside the
-        // container); ink stays exactly where layout put it.
-        const pad = width;
+        // container); ink stays exactly where layout put it. A nested run
+        // with a WIDER outline than the block pads for itself.
+        let pad = width;
+        for (const m of measured) {
+            if (m.style.ouW > pad) pad = m.style.ouW;
+        }
         const svg = document.createElementNS(_OC_SVG_NS, "svg");
         svg.setAttribute("width", String(Math.max(1, Math.ceil(totalW + 2 * pad))));
         svg.setAttribute("height", String(boxH + 2 * pad));
@@ -681,26 +755,72 @@ function convertOutlineScope(el, width, color) {
         // that duplication is inherent to the two-layer technique).
         const strokeEl = mkText(true), fillEl = mkText(false);
         strokeEl.setAttribute("aria-hidden", "true");
+        // Only the fill casts: the stroke copy is fatter than the glyphs
+        // by the outline width, so its shadow would start further out and
+        // land on top of the fill's own — the "shadow moved" double cast.
+        strokeEl.style.textShadow = "none";
         let x = pad;
+        const decos = [];
+        const baseY = boxH - descent + pad;
         for (const m of measured) {
+            // SVG text cannot do text-decoration: redraw underline and
+            // strike as lines over the fill, positioned from the font
+            // size the way browsers place them.
+            const runX0 = x;
             for (const k of m.tokens) {
                 if (k.text) {
-                    for (const pair of [[strokeEl, "none"], [fillEl, m.style.color]]) {
+                    const ouW = (m.style.ouW > 0) ? m.style.ouW : width;
+                    const ouC = m.style.ouC || color;
+                    for (const layer of [0, 1]) {
+                        if (layer === 0 && m.style.noOutline) continue;
                         const ts = document.createElementNS(_OC_SVG_NS, "tspan");
                         ts.setAttribute("x", x.toFixed(2));
-                        ts.setAttribute("fill", pair[1]);
                         ts.setAttribute("font-family", m.style.family);
                         ts.setAttribute("font-weight", m.style.weight);
                         ts.setAttribute("font-style", m.style.fontStyle);
                         ts.textContent = k.text;
-                        pair[0].appendChild(ts);
+                        if (layer === 0) {
+                            ts.setAttribute("fill", "none");
+                            ts.setAttribute("stroke", ouC);
+                            ts.setAttribute("stroke-width", String(2 * ouW));
+                            ts.setAttribute("stroke-linejoin", "round");
+                            ts.setAttribute("stroke-linecap", "round");
+                            strokeEl.appendChild(ts);
+                        } else {
+                            ts.setAttribute("fill", m.style.color);
+                            ts.setAttribute("stroke", "none");
+                            if (m.style.shadow && m.style.shadow !== "none") {
+                                ts.style.textShadow = m.style.shadow;
+                            } else if (m.style.noShadow) {
+                                ts.style.textShadow = "none";
+                            }
+                            fillEl.appendChild(ts);
+                        }
                     }
                 }
                 x += k.advance;
             }
+            if (m.style.deco === "underline" || m.style.deco === "line-through") {
+                const size = m.style.size || 16;
+                const dy = (m.style.deco === "underline") ? size * 0.10 : -size * 0.26;
+                decos.push({ x0: runX0, x1: x, y: baseY + dy,
+                             color: m.style.color,
+                             w: Math.max(1.2, size * 0.055) });
+            }
         }
         svg.appendChild(strokeEl);
         svg.appendChild(fillEl);
+        for (const d of decos) {
+            const ln = document.createElementNS(_OC_SVG_NS, "line");
+            ln.setAttribute("x1", d.x0.toFixed(2));
+            ln.setAttribute("x2", d.x1.toFixed(2));
+            ln.setAttribute("y1", d.y.toFixed(2));
+            ln.setAttribute("y2", d.y.toFixed(2));
+            ln.setAttribute("stroke", d.color);
+            ln.setAttribute("stroke-width", d.w.toFixed(2));
+            ln.setAttribute("stroke-linecap", "round");
+            svg.appendChild(ln);
+        }
         frag.appendChild(svg);
         if (li < plan.length - 1) frag.appendChild(document.createElement("br"));
     }
@@ -747,9 +867,12 @@ function applyOutlineLayers() {
     verseText.removeAttribute("data-rc-oc");
     verseText.style.removeProperty("--rc-oc-stroke");
     if (block && block !== "none") {
-        // Outermost wins: one conversion keeps every nested color, and the
-        // verseText stash keeps nested run markers so a later invalidate
-        // can still restore them. Nested run outlines defer to the block.
+        // One conversion keeps every nested color, and the verseText stash
+        // keeps nested run markers so a later invalidate can still restore
+        // them. A nested run outline wins over the block for its own words
+        // (innermost wins, like the cascade); the stroke layer carries it
+        // per tspan. Runs marked data-rc-no opt out of the stroke and/or
+        // the inherited shadow, so explicit offs survive the conversion.
         convertOutlineScope(verseText, block.width, block.color);
         return;
     }
@@ -791,6 +914,17 @@ function _colorA(color, alpha) {
     const r = parseInt(d.slice(0, 2), 16), g = parseInt(d.slice(2, 4), 16),
           b = parseInt(d.slice(4, 6), 16);
     return "rgba(" + r + ", " + g + ", " + b + ", " + alpha + ")";
+}
+
+// "none"/"off"/blank, or every numeric knob at zero (offsets, blur,
+// opacity, distance, angle — hex colors stripped first so #000000 does
+// not read as knobs). An all-zero shadow paints nothing, so say so
+// explicitly instead of emitting invalid CSS the browser drops.
+function _shadowIsNone(value) {
+    const v = String(value == null ? "" : value).trim();
+    if (!v || /^(none|off)$/i.test(v)) return true;
+    const nums = v.replace(/#[0-9a-fA-F]{3,6}/g, " ").match(/-?[\d.]+/g) || [];
+    return nums.length > 0 && nums.every(n => parseFloat(n) === 0);
 }
 
 // "8px 40% 3px #000000" -> {size, opacity, distance, color} | null
@@ -1017,8 +1151,21 @@ function applyTheme(theme, slideFormat) {
     // broaden it or switch it off. A genuine drop shadow stays a drop shadow.
     const tOutline = _themeOutline(t);
     if (tOutline) root.style.setProperty("--rc-text-outline", tOutline);
-    const tShadow = tOutline ? "" : String(t.text_shadow || "").trim();
-    if (tShadow) root.style.setProperty("--rc-text-shadow", tShadow);
+    const tShadowRaw = String(t.text_shadow || "").trim();
+    // A shadow consumed as the outline (legacy hard ring in disguise)
+    // must not ALSO paint as a shadow — that would double the outline.
+    // Any other none/off/zero shadow resolves to none EXPLICITLY: leaving
+    // the variable unset falls back to the stylesheet's default soft
+    // shadow, which paints a phantom shadow over outlined text.
+    const shadowIsOutline = !!tOutline
+        && _themeOutline({ text_shadow: tShadowRaw }) === tOutline;
+    if (!shadowIsOutline) {
+        if (tShadowRaw) {
+            root.style.setProperty("--rc-text-shadow",
+                _shadowIsNone(tShadowRaw) ? "none" : tShadowRaw);
+        }
+        // Absent entirely: leave unset, the stylesheet default applies.
+    }
     // A theme-only change carries no fresh text: restore pristine markup so
     // the new metrics reconvert below instead of persisting stale SVGs.
     try { invalidateOutlines(); } catch (e) {}
@@ -1058,6 +1205,15 @@ function applyTheme(theme, slideFormat) {
                         : (f.outline === "none" ? "none" : null);
     if (deckOutline) root.style.setProperty("--rc-text-outline-value", deckOutline);
     else root.style.removeProperty("--rc-text-outline-value");
+    // Deck shadow: absent -> the theme's shadow stays; "none" -> off for
+    // the whole deck. The stored value is canonical ("8px 40% 3px #hex
+    // angle"), not CSS, so it converts; garbage is ignored (theme stays).
+    if (f.shadow === "none" || f.shadow === "off") {
+        root.style.setProperty("--rc-text-shadow", "none");
+    } else if (f.shadow) {
+        const ds = _parseShadow(f.shadow);
+        if (ds && ds !== "none") root.style.setProperty("--rc-text-shadow", _shadowRing(ds));
+    }
     if (f.font) root.style.setProperty("--rc-text-font-family", "'" + String(f.font).replace(/'/g, "") + "'");
 
     if (r.color)         root.style.setProperty("--rc-ref-color", r.color);

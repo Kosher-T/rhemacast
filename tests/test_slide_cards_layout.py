@@ -52,11 +52,19 @@ def test_card_structure_matches_sketch(qapp):
     # Verify index label
     assert card._idx_label.text() == "1"
 
-    # Verify action buttons
-    assert card._btn_up.text() == "\u2191"
-    assert card._btn_down.text() == "\u2193"
-    assert card._btn_add.text() == "+"
-    assert card._btn_del.text() == "\u00d7"
+    # Verify action buttons (SVG icons; tooltips carry the meaning)
+    assert card._btn_up.text() == ""
+    assert card._btn_up.toolTip() == "Move slide up"
+    assert not card._btn_up.icon().isNull()
+    assert card._btn_down.text() == ""
+    assert card._btn_down.toolTip() == "Move slide down"
+    assert not card._btn_down.icon().isNull()
+    assert card._btn_add.text() == ""
+    assert card._btn_add.toolTip() == "Add slide after"
+    assert not card._btn_add.icon().isNull()
+    assert card._btn_del.text() == ""
+    assert card._btn_del.toolTip() == "Delete slide"
+    assert not card._btn_del.icon().isNull()
 
 
 def test_no_horizontal_scroll(qapp):

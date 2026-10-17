@@ -80,6 +80,9 @@ body, html {
     width: 100%;
     color: transparent;
     -webkit-text-fill-color: transparent;
+    /* The fill layer carries the shadow; this transparent stroke copy
+       inherits text-shadow otherwise and would cast a second, darker one. */
+    text-shadow: none;
     /* --rc-oc-stroke carries its own units ("0.65em #000"). A single
        self-describing value means a JS/CSS version mix can only ever show
        NO stroke, never a mis-scaled blob. */

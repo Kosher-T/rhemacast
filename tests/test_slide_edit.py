@@ -150,6 +150,35 @@ def test_explicit_outline_none_beats_a_hard_shadow():
         "outline") is None
 
 
+def test_all_zero_shadow_is_valid_but_invisible():
+    """A zeroed shadow ("0px 0% 0px #000000 0") must never paint: size
+    clamps to the 1px minimum, but zero opacity means zero alpha in the
+    emitted paint. Explicit offs kill inherited shadow/outline alike."""
+    from core.slide_parser import _parse_shadow, _shadow_to_css, _span_style
+    assert _parse_shadow("0px 0% 0px #000000 0") == "1px 0% 0px #000000 0"
+    assert "rgba(0, 0, 0, 0)" in _shadow_to_css("0px 0% 0px #000000 0")
+    assert "text-shadow:none" in _span_style({"shadow": "none"})
+    assert "text-shadow:none" in _span_style({"outline": "none"})
+
+
+def test_deck_shadow_round_trips_through_top_script():
+    """Deck shadow serializes into the format line and parses back to
+    the canonical value (tier-4 writes persist through Save)."""
+    from core.slide_parser import (
+        deck_to_txt, format_to_line, parse_slide_txt)
+    fmt = {"shadow": "8px 40% 3px #ff0000 45", "outline": "none",
+           "bold": True}
+    line = format_to_line(fmt)
+    assert "shadow=8px 40% 3px #ff0000 45" in line, line
+    assert "outline=none" in line, line
+    raw = deck_to_txt("T", [{"section": "1", "text": "Words"}], fmt)
+    back = parse_slide_txt(raw)
+    assert back["format"]["shadow"] == "8px 40% 3px #ff0000 45"
+    assert back["format"]["outline"] == "none"
+    assert back["format"]["bold"] is True
+    assert back["slides"][0]["text"] == "Words"
+
+
 def test_outline_ring_agrees_across_renderers():
     """The outline ring is built three times (Python parser, the OBS display,
     the embedded preview) from (width, color) alone. Byte-identical output

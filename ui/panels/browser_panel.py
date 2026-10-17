@@ -179,6 +179,10 @@ class VerseDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.verse_text_size = VERSE_TEXT_SIZE
         self.verse_ref_size = VERSE_REF_SIZE
+        self.verse_font_family = ""
+        self.verse_font_weight = 400
+        self.verse_ref_font_family = ""
+        self.verse_ref_font_weight = 700
 
     def paint(self, painter, option: QStyleOptionViewItem, index: QModelIndex):
         model = index.model()
@@ -226,7 +230,9 @@ class VerseDelegate(QStyledItemDelegate):
         painter.setPen(QPen(QColor(BLUE_500)))
         font = painter.font()
         font.setPixelSize(self.verse_ref_size)
-        font.setBold(True)
+        if self.verse_ref_font_family:
+            font.setFamily(self.verse_ref_font_family)
+        font.setWeight(self.verse_ref_font_weight)
         painter.setFont(font)
         painter.drawText(ref_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ref)
 
@@ -235,7 +241,9 @@ class VerseDelegate(QStyledItemDelegate):
         text_color = VERSE_SELECTED_TEXT if is_selected else SLATE_300
         painter.setPen(QPen(QColor(text_color)))
         font.setPixelSize(self.verse_text_size)
-        font.setBold(False)
+        if self.verse_font_family:
+            font.setFamily(self.verse_font_family)
+        font.setWeight(self.verse_font_weight)
         painter.setFont(font)
         fm = QFontMetrics(font)
         elided = fm.elidedText(verse["text"], Qt.TextElideMode.ElideRight, text_rect.width())
@@ -1056,6 +1064,22 @@ class BrowserPanel(QWidget):
             ref_size = int(get_setting("bible.verse_ref_size", str(VERSE_REF_SIZE)))
         self._delegate.verse_text_size = text_size
         self._delegate.verse_ref_size = ref_size
+        self.update_verse_fonts()
+
+    def update_verse_fonts(self):
+        """Re-read all six Bible font keys (family/weight/size × text/ref)
+        and repaint. Family "" keeps the painter font; weights default to
+        today's rendering (text 400, ref bold 700)."""
+        from core.database import get_setting
+        from ui.app_theme import resolve_font_family, resolve_font_weight
+        self._delegate.verse_font_family = resolve_font_family(
+            get_setting("bible.verse_font_family", ""))
+        self._delegate.verse_font_weight = resolve_font_weight(
+            get_setting("bible.verse_font_weight", ""), 400)
+        self._delegate.verse_ref_font_family = resolve_font_family(
+            get_setting("bible.verse_ref_font_family", ""))
+        self._delegate.verse_ref_font_weight = resolve_font_weight(
+            get_setting("bible.verse_ref_font_weight", ""), 700)
         self.verse_list.viewport().update()
 
     def get_all_selected_verses(self) -> list[dict]:

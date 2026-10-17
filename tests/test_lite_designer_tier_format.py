@@ -197,7 +197,10 @@ def _doc_outline_width(w, index, pos=0):
 
 def test_tier4_scope_survives_repeated_size_clicks(tmp_path):
     """Tier 3/4 reported bug: the first style click collapsed the multi-card
-    highlight (card documents were rebuilt, dropping the scope painting)."""
+    highlight (card documents were rebuilt, dropping the scope painting).
+    At tier 4 the clicks land in deck format (whole-deck highlight means
+    deck-level), and the tier survives them all."""
+    from ui.widgets.lite_designer.format_ribbon import _parse_outline_value
     w = _designer(tmp_path, "# T\n\n\n*1\nFirst slide words\n\n\n*2\nSecond slide words\n")
     _ladder_to(w, 4)
     indices = w._scope_indices()
@@ -208,11 +211,12 @@ def test_tier4_scope_survives_repeated_size_clicks(tmp_path):
     r._outline_size.setValue(2)
     assert w._sel_tier == 4
     assert _scope_selected(w, indices)
-    assert all(_doc_outline_width(w, i) == 2 for i in indices)
+    assert _parse_outline_value(w._format["outline"])[1] == 2
+    assert w._slides[0]["text"] == "First slide words"
     r._outline_size.setValue(3)
     assert w._sel_tier == 4
     assert _scope_selected(w, indices)
-    assert all(_doc_outline_width(w, i) == 3 for i in indices)
+    assert _parse_outline_value(w._format["outline"])[1] == 3
 
 
 def test_tier3_bold_marks_every_scoped_slide(tmp_path):
@@ -238,7 +242,8 @@ def test_tier4_outline_off_keeps_scope(tmp_path):
     r = w._ribbon
     r._btn_outline.setChecked(True)
     r._outline_size.setValue(5)
-    assert all(_doc_outline_width(w, i) == 5 for i in indices)
+    from ui.widgets.lite_designer.format_ribbon import _parse_outline_value
+    assert _parse_outline_value(w._format["outline"])[1] == 5
     r._btn_outline.setChecked(False)
     r._on_outline_toggled()
     assert w._sel_tier == 4
@@ -348,3 +353,151 @@ def test_format_after_doc_swap_stays_wired(tmp_path):
     r._outline_size.setValue(3)
     assert _outline_width(w) == 3
     assert w._sel_tier == 1
+
+
+def test_tier4_clear_strips_every_slide_to_plain_text(tmp_path):
+    """Whole-deck clear: every scoped slide loses ALL inline runs but keeps
+    its words; title and section markers (never in scope) are untouched."""
+    w = _designer(
+        tmp_path,
+        "# T\n\n\n*1\n[Alpha words here (color=#000000; bold=true)]"
+        "\n\n\n*2\n[Beta words here (italics=true)]\n")
+    assert "[" in w._slides[0].get("text", "")
+    _ladder_to(w, 4)
+    w._ribbon._btn_clear.clicked.emit()
+    assert w._sel_tier == 4, "clear must not collapse the ladder"
+    assert [s.get("text", "") for s in w._slides] == [
+        "Alpha words here", "Beta words here"]
+    assert w._title == "T"
+
+
+def test_tier3_clear_covers_only_its_section(tmp_path):
+    """Section-scope clear: the other section's formatting survives."""
+    w = _designer(
+        tmp_path,
+        "# T\n\n\n*1\n[Alpha words here (bold=true)]"
+        "\n\n\n*2\n[Beta words here (bold=true)]\n")
+    _ladder_to(w, 3)
+    w._ribbon._btn_clear.clicked.emit()
+    assert [s.get("text", "") for s in w._slides] == [
+        "Alpha words here", "[Beta words here (bold=true)]"]
+
+
+def test_recent_colors_round_trip_through_settings_db(tmp_path):
+    """The prod persistence path (settings table) keeps recents across
+    sessions and shrugs off junk values."""
+    import core.database as db
+    from ui.widgets.lite_designer import format_ribbon as fr
+    db.DB_PATH = str(tmp_path / "app.db")
+    db.init_db()
+    assert fr._load_recent_colors() == []
+    fr._save_recent_colors(["#123456", "#abcdef"])
+    assert fr._load_recent_colors() == ["#123456", "#abcdef"]
+    fr._save_recent_colors(["not-a-color", "#123456", "#123456", "#fff"])
+    assert fr._load_recent_colors() == ["#123456", "#ffffff"]
+    db.set_setting(fr._RECENT_KEY, "{junk json")
+    assert fr._load_recent_colors() == []
+
+
+def test_tier4_bold_writes_deck_format_not_inline(tmp_path):
+    """Whole-deck highlight + B (theme-bold, so this turns OFF) lands in
+    top-script deck format; no slide text is touched at all."""
+    w = _designer(tmp_path,
+                  "# T\n\n\n*1\nFirst slide words\n\n\n*2\nSecond slide words\n")
+    _ladder_to(w, 4)
+    assert w._ribbon._btn_bold.isChecked()
+    w._ribbon._btn_bold.click()
+    assert w._format.get("bold") is False
+    assert not w._ribbon._btn_bold.isChecked()
+    assert w._slides[0]["text"] == "First slide words"
+    assert w._slides[1]["text"] == "Second slide words"
+
+
+def test_tier3_bold_stays_inline(tmp_path):
+    """Section scope still stamps inline runs per slide and never touches
+    the deck format."""
+    w = _designer(tmp_path,
+                  "# T\n\n\n*Same\nFirst slide words\n\n\nSecond slide words\n")
+    _ladder_to(w, 3)
+    w._ribbon._btn_bold.click()
+    assert w._format.get("bold") is None
+    assert "bold=false" in w._slides[0]["text"]
+    assert "bold=false" in w._slides[1]["text"]
+
+
+def test_tier4_outline_off_writes_deck_none(tmp_path):
+    """Whole-deck outline-off becomes top-script outline=none (beats the
+    theme deck-wide); no per-slide sentinels are stamped."""
+    w = _designer(tmp_path, "# T\n\n\n*1\nFirst slide words\n")
+    _ladder_to(w, 4)
+    assert w._ribbon._btn_outline.isChecked()
+    w._ribbon._btn_outline.setChecked(False)
+    w._ribbon._on_outline_toggled()
+    assert w._format.get("outline") == "none"
+    assert not w._ribbon._btn_outline.isChecked()
+    assert w._slides[0]["text"] == "First slide words"
+
+
+def test_tier4_shadow_writes_deck_canonical(tmp_path):
+    """Whole-deck shadow toggle lands the canonical deck value (not CSS),
+    ready for the display converter."""
+    w = _designer(tmp_path, "# T\n\n\n*1\nFirst slide words\n")
+    _ladder_to(w, 4)
+    w._ribbon._btn_shadow.setChecked(True)
+    w._ribbon._on_shadow_toggled()
+    shadow = w._format.get("shadow")
+    assert shadow and shadow != "none" and "#" in shadow, shadow
+    assert w._slides[0]["text"] == "First slide words"
+
+
+def test_tier4_clear_resets_deck_and_strips_slides(tmp_path):
+    """Whole-deck clear: inline runs stripped everywhere AND the deck's
+    own char keys reset (a deck-level bold must not keep rendering
+    through cleared slides); spacing survives (not an inline format)."""
+    w = _designer(
+        tmp_path,
+        "# T\n\n\n*1\n[Alpha words (bold=true; color=#ff0000)]"
+        "\n\n\n*2\n[Beta words (italics=true)]\n")
+    _ladder_to(w, 4)
+    w._ribbon._btn_bold.click()  # deck bold=false first...
+    assert w._format.get("bold") is False
+    w._format["spacing"] = 1.5
+    w._ribbon._btn_clear.clicked.emit()
+    assert w._format.get("bold") is None
+    assert w._format.get("color") is None
+    assert w._format.get("outline") is None
+    assert w._format.get("spacing") == 1.5
+    assert w._slides[0]["text"] == "Alpha words"
+    assert w._slides[1]["text"] == "Beta words"
+
+
+def test_tier4_align_goes_to_deck(tmp_path):
+    """Whole-deck align lands in deck format; the slide text is untouched."""
+    w = _designer(tmp_path, "# T\n\n\n*1\nFirst slide words\n")
+    _ladder_to(w, 4)
+    w._ribbon._on_align("center")
+    assert w._format.get("align") == "center"
+    assert w._slides[0]["text"] == "First slide words"
+
+
+def test_deck_patch_from_format_covers_channels_and_offs(tmp_path):
+    """The QTextCharFormat -> deck-keys translation: every ribbon channel
+    lands, and OFF sentinels leave as "none"."""
+    from PyQt6.QtGui import QTextCharFormat
+    from ui.widgets.lite_designer.rich_txt import (
+        COLOR_PROP, SIZE_PROP, OUTLINE_PROP, OUTLINE_OFF,
+        SHADOW_PROP, SHADOW_OFF, UL_PROP)
+    w = _designer(tmp_path, "# T\n\n\n*1\nWords\n")
+    fmt = QTextCharFormat()
+    fmt.setFontWeight(700)
+    fmt.setFontItalic(True)
+    fmt.setProperty(UL_PROP, True)
+    fmt.setProperty(COLOR_PROP, "#123456")
+    fmt.setProperty(SIZE_PROP, 42)
+    fmt.setProperty(OUTLINE_PROP, OUTLINE_OFF)
+    fmt.setProperty(SHADOW_PROP, "8px 40% 3px #ff0000 45")
+    patch = w._deck_patch_from_format(fmt)
+    assert patch == {"bold": True, "italics": True, "underline": True,
+                     "color": "#123456", "size_nominal": 42,
+                     "outline": "none",
+                     "shadow": "8px 40% 3px #ff0000 45"}, patch

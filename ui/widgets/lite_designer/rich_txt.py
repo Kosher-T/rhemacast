@@ -638,6 +638,41 @@ def apply_spacing_to_doc(doc: QTextDocument, value: float | None):
             break
 
 
+def clear_char_formatting(doc: QTextDocument):
+    """Strip ALL character formatting from a document, keeping everything
+    else: text, paragraph breaks, lists, block props (align/dir/spacing).
+
+    Structural HR/GAP blocks are skipped — their glyph formats are
+    editor-only cues, and their blocks serialize from block props, so
+    touching them would only repaint cues for no model gain. Everything
+    else (bold/italics/underline/strike/color/size/case/font/outline/
+    shadow/super/sub, native or prop) resets to the document default,
+    which drops explicit OFF sentinels too (cleared = inherit the theme).
+
+    One undo step for the whole pass (edit block), so a whole-deck clear
+    reverts with a single Ctrl+Z per... per document, each scoped slide
+    keeping its own undo stack like every other fan-out op.
+    """
+    cursor = QTextCursor(doc)
+    cursor.beginEditBlock()
+    try:
+        for i in range(doc.blockCount()):
+            block = doc.findBlockByNumber(i)
+            bfmt = block.blockFormat()
+            if bfmt.hasProperty(HR_BLOCK_PROP) \
+                    or bfmt.hasProperty(GAP_BLOCK_PROP):
+                continue
+            start = block.position()
+            end = start + block.length() - 1  # exclude the block break
+            if end > start:
+                cursor.setPosition(start)
+                cursor.setPosition(
+                    end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.setCharFormat(QTextCharFormat())
+    finally:
+        cursor.endEditBlock()
+
+
 def _guard_structure(line: str) -> str:
     """Keep lyric lines from parsing as title/section markers."""
     stripped = line.lstrip()

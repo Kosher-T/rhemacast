@@ -120,3 +120,32 @@ def test_alt_drag_never_copies(qapp):
         Qt.MouseButton.LeftButton, Qt.KeyboardModifier.AltModifier)
     QApplication.sendEvent(panel.list_widget.viewport(), ev)
     assert ev.dropAction() == Qt.DropAction.MoveAction
+
+
+def test_color_code_shared_across_panels(qapp):
+    """Toggling Color Code in one tab lights the other: one shared flag,
+    every live panel converges (button + paint), and panels born while
+    enabled open enabled."""
+    from ui.panels.schedule_panel import SchedulePanel
+    prev = SchedulePanel._shared_color_enabled
+    SchedulePanel._shared_color_enabled = False
+    try:
+        a, _ = _panel(qapp, n=3)
+        b, _ = _panel(qapp, n=3)
+        assert not a._color_toggle.isChecked()
+        assert not b._color_toggle.isChecked()
+        a._color_toggle.click()
+        assert SchedulePanel._shared_color_enabled is True
+        assert a._color_toggle.isChecked()
+        assert b._color_toggle.isChecked()
+        assert a._color_enabled and b._color_enabled
+        b._color_toggle.click()
+        assert SchedulePanel._shared_color_enabled is False
+        assert not a._color_toggle.isChecked()
+        assert not b._color_toggle.isChecked()
+        assert not a._color_enabled and not b._color_enabled
+        a._color_toggle.click()
+        c, _ = _panel(qapp, n=1)
+        assert c._color_toggle.isChecked() and c._color_enabled
+    finally:
+        SchedulePanel._shared_color_enabled = prev
