@@ -59,6 +59,8 @@ class PresentationTab(QWidget):
         # left the neighbours of the previously displayed verse in place,
         # so Next walked off from the wrong scripture.
         self._display.add_live_data_hook(self._on_live_data_changed)
+        self._display.register_owner_op("SCRIPTURE", "step", self._step_verse)
+        self._display.register_owner_op("SCRIPTURE", "uncloak", self._uncloak_now)
         self._init_workspace()
 
     # ── Shared-state aliases (read/write core.display_state) ──────────────
@@ -865,7 +867,23 @@ class PresentationTab(QWidget):
             logger.info(f"Preview pushed to live (slide): {data.get('ref', '')}")
             return
 
-        # ── Verse preview (existing behavior) ──
+        # ── Verse preview ──
+        # Replay beats rebuild: the stored payload carries the inline verse
+        # number, the full reference and the theme this content was
+        # rendered with. Rebuilding from the navigation dict alone loses
+        # all three (bare text + translation on the OBS screen).
+        stored = self._display.matching_preview_payload()
+        if stored is not None:
+            self._current_display = data
+            self._is_cleared = False
+            self._set_cloak(False)
+            self._display.publish_live(stored, data,
+                                       self._display.live_sched_uid,
+                                       self._display.live_from_schedule)
+            self._broadcast_to_ws(stored, data)
+            logger.info(f"Preview pushed to live (replayed): {stored.get('ref', '')}")
+            return
+
         verse_text = data.get("text", "")
         book = data.get("book", "")
         chapter = data.get("chapter", "")
@@ -918,32 +936,44 @@ class PresentationTab(QWidget):
         """Cloak toggle — replaces the old clear/recall. Shared state:
         toggling here cloaks/uncloaks both tabs' live screens and OBS."""
         if not self._cloak:
-            # Cloak on: blank OBS + operator live views only. Uncloak
-            # shows whatever is current THEN (never a stale recall).
-            self._set_cloak(True)
-            self._broadcast_to_ws({"action": "clear"}, self._current_display)
-            logger.info("Display cloaked")
-        else:
-            self._set_cloak(False)
-            stored = self._display.matching_live_output_payload()
-            if stored is not None and self._current_display:
-                # Replaying beats rebuilding: the stored payload carries the
-                # originating output theme, so a deck cloaked in SLIDES does
-                # not come back wearing this tab's SCRIPTURE theme.
-                payload = stored
-                self._display.publish_live(payload, self._current_display,
-                                           self._display.live_sched_uid,
-                                           self._display.live_from_schedule)
-                self._broadcast_to_ws(payload, self._current_display,
-                                      preserve_theme=True)
-            elif self._current_display:
-                payload = self._payload_for_display(self._current_display)
-                self._display.publish_live(payload, self._current_display,
-                                           self._display.live_sched_uid,
-                                           self._display.live_from_schedule)
-                self._broadcast_to_ws(payload, self._current_display)
-            if self._current_display:
-                logger.info("Display uncloaked")
+            self._cloak_now()
+            return
+        # Uncloak restores the live screen, so the tab that OWNS the
+        # displayed content performs it: a deck slide uncloaked here would
+        # be rebuilt with scripture themes and pushed to scripture outputs.
+        if self._display.dispatch_to_owner("uncloak"):
+            return
+        self._uncloak_now()
+
+    def _cloak_now(self):
+        """Blank the live screen; the model and preview stay intact."""
+        self._set_cloak(True)
+        from core.outputs import shared_display_enabled
+        self._broadcast_to_ws({"action": "clear"}, self._current_display,
+                              scope_all=shared_display_enabled())
+        logger.info("Display cloaked")
+
+    def _uncloak_now(self):
+        """Reveal what is current now, replaying the stored payload so the
+        originating output theme returns with it (a deck cloaked in SLIDES
+        does not come back wearing SCRIPTURE's theme)."""
+        self._set_cloak(False)
+        stored = self._display.matching_live_output_payload()
+        if stored is not None and self._current_display:
+            payload = stored
+            self._display.publish_live(payload, self._current_display,
+                                       self._display.live_sched_uid,
+                                       self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, self._current_display,
+                                  preserve_theme=True)
+        elif self._current_display:
+            payload = self._payload_for_display(self._current_display)
+            self._display.publish_live(payload, self._current_display,
+                                       self._display.live_sched_uid,
+                                       self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, self._current_display)
+        if self._current_display:
+            logger.info("Display uncloaked")
 
     def refresh_display_names(self, old_display: str, new_display: str):
         """Re-render current screens after a translation rename.
@@ -1078,6 +1108,29 @@ class PresentationTab(QWidget):
             pass
 
     def _on_prev_verse(self):
+        """Entry point for prev: the DISPLAY state routes it.
+
+        Tabs are interfaces — a deck displayed while the operator stands
+        here must still be stepped by the deck's own code and theme, so the
+        shared state hands the step to whichever tab owns the content.
+        """
+        if self._display.dispatch_step(-1):
+            return
+        self._step_verse(-1)
+
+    def _on_next_verse(self):
+        """Entry point for next: see _on_prev_verse."""
+        if self._display.dispatch_step(1):
+            return
+        self._step_verse(1)
+
+    def _step_verse(self, delta: int):
+        """This tab's own prev/next implementation (the registered stepper)."""
+        if delta < 0:
+            return self._on_prev_verse_own()
+        return self._on_next_verse_own()
+
+    def _on_prev_verse_own(self):
         """Previous VERSE (scripture) or previous SLIDE (deck).
 
         Deliberately never steps schedule items: a schedule item that was
@@ -1102,8 +1155,8 @@ class PresentationTab(QWidget):
         version = prev.get("version", "") or (self._current_display.get("version", "") if self._current_display else "")
         self._navigate_to_bible_verse(prev, version, skip_navigator=True)
 
-    def _on_next_verse(self):
-        """Next VERSE (scripture) or next SLIDE (deck). See _on_prev_verse."""
+    def _on_next_verse_own(self):
+        """Next VERSE (scripture) or next SLIDE (deck). See _on_prev_verse_own."""
         self._disarm_schedule_ring()
         cur = self._current_display
         if cur and cur.get("item_type") == "slide":
@@ -1456,7 +1509,8 @@ class PresentationTab(QWidget):
             self.stt_panel.btn_pause_rec.setText("PAUSE")
 
     def _broadcast_to_ws(self, payload: dict, data: dict | None = None,
-                           preserve_theme: bool = False):
+                           preserve_theme: bool = False,
+                           scope_all: bool = False):
         """
         Send a display payload to all connected outputs via WebSocket.
         Each output receives the payload with its own theme applied.
@@ -1521,7 +1575,11 @@ class PresentationTab(QWidget):
             if self._obs_gated(payload):
                 return  # cloaked: OBS holds its blank, model advances.
             if payload.get("action") == "clear":
-                clear_tab_outputs("SCRIPTURE")
+                if scope_all:
+                    from core.output_router import clear_all_outputs
+                    clear_all_outputs()
+                else:
+                    clear_tab_outputs("SCRIPTURE")
             else:
                 broadcast_tab_payload("SCRIPTURE", themed_outputs)
         except Exception as e:

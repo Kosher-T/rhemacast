@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 # Off by default: zero overhead, zero console spam.
 import os as _os
 _KEYTAP_ENABLED = _os.environ.get("RHEMACAST_KEYTAP") == "1"
+# Double-tap Ctrl releases the keyboard from a focused search box. Generous
+# enough for a deliberate double tap, short enough that two unrelated Ctrl
+# presses (e.g. around a Ctrl+Tab) never read as one.
+_CTRL_DOUBLE_TAP_SECONDS = 0.45
 
 
 class ChromeTab(QPushButton):
@@ -754,6 +758,15 @@ class MainWindow(QMainWindow):
         if event.type() == _QE.Type.KeyRelease:
             if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
                 self._end_song_nav_if_any()
+                self._maybe_release_focus_from_textbox()
+        elif event.type() == _QE.Type.KeyPress and not event.isAutoRepeat():
+            # A Ctrl tap only counts when Ctrl was pressed ALONE: Ctrl+A
+            # followed by Ctrl+C (select all, copy) must not read as a
+            # double tap and drop the operator's focus mid-copy.
+            if event.key() == Qt.Key.Key_Control:
+                self._ctrl_tap_clean = True
+            elif getattr(self, "_ctrl_tap_clean", False):
+                self._ctrl_tap_clean = False
 
         # Presses arriving while the window is inactive are skipped by
         # QShortcut matching (and must not arm song-nav either) — record them
@@ -772,6 +785,12 @@ class MainWindow(QMainWindow):
                         (event.key(), event.modifiers(), now))
             except Exception:
                 pass
+
+        # Built-in chords live here, not in DEFAULT_BINDINGS, because they
+        # are deliberately NOT editable (see BUILT_IN_KEYS in Settings).
+        if event.type() == _QE.Type.KeyPress:
+            if self.isActiveWindow() and self._maybe_display_tab_chord(event):
+                return True
 
         # Slide section-hop combos are intercepted here (not via QShortcut):
         # the app filter runs before delivery, so QWebEngineView viewports
@@ -983,6 +1002,7 @@ class MainWindow(QMainWindow):
             "add_to_schedule": self._hotkey_add_to_schedule,
             "double_click": self._hotkey_double_click,
             "navigate_scripture": self._hotkey_navigate_scripture,
+            "deck_search": self._hotkey_deck_search,
         }
         # Kept for replaying presses lost to window inactivation (see below).
         self._hotkey_actions = dict(action_handlers)
@@ -1028,6 +1048,7 @@ class MainWindow(QMainWindow):
             "song_prev_section": "Ctrl+Left",
             "song_next_section": "Ctrl+Right",
             "navigate_scripture": "Ctrl+N",
+            "deck_search": "Ctrl+G",
     }
 
     def _on_hotkey_bindings_changed(self, bindings: dict):
@@ -1075,6 +1096,95 @@ class MainWindow(QMainWindow):
                 pi = browser.predictive_input
                 if focused in (pi.book_input, pi.chapter_input, pi.verse_input):
                     self.setFocus()
+
+    def _maybe_display_tab_chord(self, event) -> bool:
+        """Ctrl+Alt+Left/Right: cycle the DISPLAY tabs, wrapping around.
+
+        Fixed on purpose (not in Settings), like the double-tap Ctrl: these
+        are navigation reflexes, and an operator mid-service should not be
+        able to lose them to a stray rebind. Only display tabs take part —
+        Settings/Library/History are not on the path.
+        """
+        from PyQt6.QtCore import Qt as _Qt
+        mods = event.modifiers()
+        if not (mods & _Qt.KeyboardModifier.ControlModifier):
+            return False
+        if not (mods & _Qt.KeyboardModifier.AltModifier):
+            return False
+        if event.key() == _Qt.Key.Key_Left:
+            step = -1
+        elif event.key() == _Qt.Key.Key_Right:
+            step = 1
+        else:
+            return False
+        if event.isAutoRepeat():
+            return True          # swallow the repeat, never wrap twice
+        self._cycle_display_tab(step)
+        return True
+
+    def _cycle_display_tab(self, step: int) -> str | None:
+        """Move `step` through the display tabs, wrapping at both ends."""
+        display_keys = [k for k in self._tabs
+                        if k in ("SCRIPTURE", "SLIDES", "MEDIA", "PRESENTATION")]
+        if not display_keys:
+            return None
+        names = list(self._tabs.keys())
+        current = self.stack.currentIndex()
+        current_key = (names[current] if 0 <= current < len(names) else None)
+        if current_key in display_keys:
+            idx = (display_keys.index(current_key) + step) % len(display_keys)
+        else:
+            # Arrived from a non-display tab (Settings/History/Library):
+            # continue in the direction of travel to the next display tab,
+            # wrapping — not "jump to an end", which would feel like the
+            # chord skipped the tab the operator was on.
+            position = names.index(current_key) if current_key in names else 0
+            idx = None
+            for offset in range(1, len(names) + 1):
+                probe = (position + step * offset) % len(names)
+                if names[probe] in display_keys:
+                    idx = display_keys.index(names[probe])
+                    break
+            if idx is None:
+                idx = 0
+        key = display_keys[idx]
+        self._switch_tab(names.index(key), key)
+        logger.info(f"Display tab cycled to {key}")
+        return key
+
+    def _maybe_release_focus_from_textbox(self):
+        """Double-tap Ctrl: hand the keyboard back to the operator's arrows.
+
+        A focused search box swallows Left/Right for caret movement, so
+        prev/next stop working while typing. Tapping Ctrl twice drops the
+        focus and the arrow keys drive the display again — the tab decides
+        what stepping means (the display state routes the step to the tab
+        that owns the displayed content).
+        """
+        clean = getattr(self, "_ctrl_tap_clean", False)
+        self._ctrl_tap_clean = False
+        if not clean:
+            # Ctrl was part of a combo (Ctrl+C, Ctrl+Tab, …): not a tap.
+            return
+        now = time.monotonic()
+        last = getattr(self, "_last_ctrl_release_at", 0.0)
+        self._last_ctrl_release_at = now
+        if now - last > _CTRL_DOUBLE_TAP_SECONDS:
+            return
+        # Consume the pair so a triple tap doesn't fire twice.
+        self._last_ctrl_release_at = 0.0
+        from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication,
+                                     QLineEdit, QPlainTextEdit, QTextEdit)
+        focused = QApplication.focusWidget()
+        if not isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit,
+                                    QAbstractSpinBox)):
+            return
+        focused.clearFocus()
+        tab = self._active_workspace_tab()
+        if tab is not None:
+            tab.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        logger.info("Double-tap Ctrl: focus released from textbox")
 
     def _active_workspace_tab(self):
         """Return the workspace tab (SCRIPTURE or SLIDES) currently shown.
@@ -1495,6 +1605,22 @@ class MainWindow(QMainWindow):
         pres_tab = self._tabs.get("SCRIPTURE")
         if pres_tab and hasattr(pres_tab, "queue_panel"):
             pres_tab.queue_panel.switch_to_fts_search()
+
+    def _hotkey_deck_search(self):
+        """Open the Decks tab and put the cursor in its search box —
+        the deck-library counterpart to Ctrl+F / Ctrl+Shift+F."""
+        names = list(self._tabs.keys())
+        if "SLIDES" in names:
+            self._switch_tab(names.index("SLIDES"), "SLIDES")
+        deck_tab = self._tabs.get("SLIDES")
+        real = getattr(deck_tab, "real_widget", None)
+        if real is not None and getattr(deck_tab, "_loaded", False):
+            deck_tab = real
+        deck_panel = getattr(deck_tab, "deck_panel", None)
+        box = getattr(deck_panel, "search_box", None)
+        if box is not None:
+            box.setFocus()
+            box.selectAll()
 
     def _hotkey_switch_translation(self, version: str):
         """Switch browser to the specified translation."""

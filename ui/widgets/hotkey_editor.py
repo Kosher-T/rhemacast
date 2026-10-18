@@ -362,6 +362,48 @@ class HotkeyRow(QFrame):
         return self.capture_btn.get_key()
 
 
+class BuiltInHotkeyRow(QFrame):
+    """A read-only row for a fixed chord: name, why it exists, and the key
+    as static text — nothing here can be captured or cleared."""
+
+    def __init__(self, action_name: str, description: str, keys: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }}
+        """)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setSpacing(12)
+
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(0)
+        name_label = QLabel(action_name)
+        name_label.setStyleSheet(
+            f"color: {WHITE}; font-size: 12px; font-weight: 600;")
+        info_layout.addWidget(name_label)
+        desc_label = QLabel(description)
+        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        info_layout.addWidget(desc_label)
+        layout.addLayout(info_layout, 1)
+
+        fixed = QLabel(keys)
+        fixed.setStyleSheet(
+            f"color: {SLATE_400}; font-size: 11px; font-weight: 600;"
+            " background: transparent;")
+        layout.addWidget(fixed)
+
+        badge = QLabel("fixed")
+        badge.setStyleSheet(
+            f"color: {SLATE_600}; font-size: 9px; font-weight: 700;"
+            " letter-spacing: 1px; background: transparent;")
+        badge.setToolTip("Built in — not editable")
+        layout.addWidget(badge)
+
+
 class TranslationHotkeyRow(QFrame):
     """A row for translation-specific hotkey: name + dropdown + capture button + remove."""
 
@@ -477,6 +519,20 @@ class TranslationHotkeyRow(QFrame):
 #   Alt+Left / Right  step through SCHEDULE items.
 # Merging these is what used to make Right at the last slide jump to the next
 # schedule item.
+# Chords that exist but are NOT editable: navigation reflexes an operator
+# must not be able to lose to a stray rebind mid-service. Rendered read-only
+# in Settings; implemented in MainWindow's event filter.
+BUILT_IN_BINDINGS = {
+    "cycle_display_tab": (
+        "Cycle Display Tabs",
+        "Next/previous display tab, wrapping around",
+        "Ctrl+Alt+Right / Ctrl+Alt+Left"),
+    "release_textbox_focus": (
+        "Release Textbox Focus",
+        "Hand the keyboard back to the arrows (prev/next)",
+        "Ctrl, Ctrl"),
+}
+
 DEFAULT_BINDINGS = {
     "clear_recall": ("Cloak / Uncloak", "Blank live output (cloak) or reveal current", "Esc", "global"),
     "next_verse": ("Next Verse", "Next verse (or next slide within the deck)", "Right", "global"),
@@ -489,6 +545,7 @@ DEFAULT_BINDINGS = {
     "fts_search": ("Keyword Search", "Open the Keyword search page (FTS5, stemmed, every translation)", "Ctrl+Shift+F", "scripture"),
     "fuzzy_search": ("Semantic Search", "Open the Semantic search page (fuzzy keywords + verse vectors)", "Ctrl+Shift+S", "scripture"),
     "navigate_scripture": ("Navigate", "Go to SCRIPTURE and focus the navigator book field", "Ctrl+N", "scripture"),
+    "deck_search": ("Deck Search", "Open the Decks tab and focus its search box", "Ctrl+G", "slides"),
     "song_prev_section": ("Previous Section", "Jump live slide strip to first slide of previous section", "Ctrl+Left", "slides"),
     "song_next_section": ("Next Section", "Jump live slide strip to first slide of next section", "Ctrl+Right", "slides"),
 }
@@ -622,6 +679,21 @@ class HotkeyEditor(QWidget):
                 self._container_layout.addWidget(row)
                 self._rows[action_id] = row
 
+        # ── Built-in (fixed) shortcuts — read-only, no capture ──
+        self._container_layout.addSpacing(20)
+        builtin_header = QLabel("Built-in Navigation")
+        builtin_header.setStyleSheet(
+            f"color: {WHITE}; font-size: 17px; font-weight: 800;")
+        self._container_layout.addWidget(builtin_header)
+        builtin_desc = QLabel(
+            "Fixed shortcuts for navigating during a service — shown for "
+            "reference, not editable")
+        builtin_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        self._container_layout.addWidget(builtin_desc)
+        self._container_layout.addSpacing(4)
+        for name, description, keys in BUILT_IN_BINDINGS.values():
+            self._container_layout.addWidget(
+                BuiltInHotkeyRow(name, description, keys))
         # ── Translation Shortcuts section ──
         self._container_layout.addSpacing(16)
 

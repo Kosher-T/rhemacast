@@ -251,165 +251,121 @@ def test_renderer_copies_agree_on_reset_list():
     _, reset_embedded = _theme_vars("ui/widgets/display_view.py")
     assert reset_js == reset_embedded
 
+def _owner_tabs(qapp, tmp_path, monkeypatch):
+    """Scripture + Decks tabs sharing one display scope, with the owner-op
+    registrations the real tabs install."""
+    from core.display_state import display_state_for, follow_output_mode
+    from core.display_state import reset_display_states
+    from core.outputs import MODE_PRIORITIZED, set_output_mode
+    from core.schedule_model import ScheduleModel
+    from ui.tabs.presentation_tab import PresentationTab
+    from ui.tabs.slides_tab import SlidesTab
+    db = _init_db(tmp_path)
+    set_output_mode(MODE_PRIORITIZED)
+    reset_display_states()
+    follow_output_mode()
+    scripture = PresentationTab.__new__(PresentationTab)
+    decks = SlidesTab.__new__(SlidesTab)
+    scripture._display = display_state_for("SCRIPTURE")
+    decks._display = display_state_for("SLIDES")
+    scripture._main_output = "1"
+    scripture._themes_by_output = {"1": "fullscreen", "2": "fullscreen"}
+    scripture._verse_themes_by_output = {}
+    scripture._current_theme = "fullscreen"
+    decks._main_output = "4"
+    decks._themes_by_output = {"4": "slides", "5": "slides"}
+    decks._verse_themes_by_output = {"4": "default", "5": "default"}
+    decks._current_theme = "slides"
+    for tab in (scripture, decks):
+        tab._display.register_owner_op(
+            "SCRIPTURE" if tab is scripture else "SLIDES",
+            "uncloak", tab._uncloak_now)
+        tab._is_cleared = False
+        tab._last_cleared_display = None
+    return scripture, decks
+
+
+def _cloak_uncloak_from_deck_tab(decks):
+    """Cloak then uncloak, pressed in the DECKS tab."""
+    decks._display.set_cloaked(True)
+    decks._cloak_now()
+    decks._on_clear_recall()
+
 
 def test_cross_tab_uncloak_keeps_originating_verse_theme(qapp, tmp_path, monkeypatch):
     """The same authority rule applies in the other direction.
 
-    A verse displayed with the SCRIPTURE output theme, cloaked in SCRIPTURE,
-    then uncloaked from SLIDES must not come back wearing the SLIDES verse
-    map. Stored payloads are tab-agnostic; local maps are not.
+    A verse displayed with the SCRIPTURE output theme, cloaked, then
+    uncloaked from the DECKS tab must come back wearing scripture's theme
+    and be sent to scripture's outputs. Stored payloads are tab-agnostic;
+    the theme that produced them is not, so the tab that OWNS the content
+    performs the restore.
     """
-    db = _init_db(tmp_path)
-    db.set_setting("display.slides_output_4_theme", "slides")
-    db.set_setting("display.output_1_theme", "fullscreen")
-
-    from core.display_state import DisplayState
-    from ui.tabs.presentation_tab import PresentationTab
-    from ui.tabs.slides_tab import SlidesTab
-
-    scripture = PresentationTab.__new__(PresentationTab)
-    scripture._themes_by_output = {"1": "fullscreen"}
-    scripture._current_theme = "fullscreen"
+    scripture, decks = _owner_tabs(qapp, tmp_path, monkeypatch)
+    live_data = {
+        "text": "In the beginning", "book": "Genesis", "chapter": "1",
+        "verse_num": "1", "version": "KJV",
+    }
     original = scripture._build_payload(
-        "In the beginning", "[KJV] Genesis 1:1", "KJV",
-        "Genesis", "1", "1", output_id="1",
-    )
+        live_data["text"], "[KJV] Genesis 1:1", "KJV",
+        "Genesis", "1", "1", output_id="1")
     assert original["content"] == "verse"
     assert original["theme"] == "fullscreen"
-
-    live_data = {
-        "text": original["text"],
-        "book": "Genesis",
-        "chapter": "1",
-        "verse_num": "1",
-        "version": "KJV",
-    }
-    state = DisplayState()
-    state.publish_live(original, live_data, None, False)
-    state.set_cloaked(True)
-
-    slides = SlidesTab.__new__(SlidesTab)
-    slides._display = state
-    slides._themes_by_output = {"1": "slides"}
-    slides._verse_themes_by_output = {"1": "default"}
+    scripture._display.publish_live(original, live_data, None, False)
+    scripture._broadcast_to_ws(original, live_data)
 
     sent = _capture_broadcasts(monkeypatch)
-    renders = []
-    slot = lambda payload: renders.append(dict(payload))
-    state.live_changed.connect(slot)
-    try:
-        slides._on_clear_recall()
-    finally:
-        try:
-            state.live_changed.disconnect(slot)
-        except Exception:
-            pass
-        state.set_cloaked(False)
+    _cloak_uncloak_from_deck_tab(decks)
 
-    assert state.cloaked is False
-    assert renders, "uncloak must re-render live"
-    restored = state.live_payload
-    assert restored["content"] == "verse"
-    assert renders[-1]["theme"] == "fullscreen"
-    assert restored["theme"] == "fullscreen"
-    assert sent, "uncloak must rebroadcast live"
-    themed = [payload for payload, _target in sent
+    themed = [(payload, target) for payload, target in sent
               if payload.get("action") != "clear"]
-    assert themed, "expected content rebroadcasts alongside cloaks"
-    assert all(payload["theme"] == "fullscreen" for payload in themed)
+    assert themed, "uncloak must rebroadcast the live screen"
+    targets = sorted(target for _p, target in themed)
+    # Only the owner's set — the stubs configure two outputs each.
+    assert targets and set(targets) <= {"1", "2", "3"}, targets
+    assert all(payload["theme"] == "fullscreen" for payload, _t in themed), (
+        "a verse must not come back wearing the deck's verse theme")
+    assert decks._display.live_payload["theme"] == "fullscreen"
 
 
 def test_cross_tab_uncloak_keeps_originating_slide_theme(qapp, tmp_path, monkeypatch):
-    """A Slides deck push must survive cloak -> SCRIPTURE -> uncloak.
+    """A deck slide must survive cloak -> uncloak from SCRIPTURES with the
+    DECK's theme, and land on the deck's outputs only.
 
-    Regression for a live-service failure: a slide displayed with the Slides
-    output theme, cloaked in SLIDES, then uncloaked from SCRIPTURE came back
-    wearing the SCRIPTURE output theme instead. The stored live payload —
-    including the theme chosen by the originating push — is authoritative,
-    so uncloak must reuse it rather than rebuild from the active tab.
+    Regression for a live-service failure: a slide displayed with the
+    Slides output theme came back wearing SCRIPTURE's theme because the
+    restoring tab rebuilt the payload from its own theme map.
     """
-    db = _init_db(tmp_path)
-    db.set_setting("display.slides_output_4_theme", "slides")
-    db.set_setting("display.output_1_theme", "fullscreen")
-
-    from core.display_state import DisplayState
-    from ui.tabs.presentation_tab import PresentationTab
-    from ui.tabs.slides_tab import SlidesTab
-
-    slides = SlidesTab.__new__(SlidesTab)
-    slides._themes_by_output = {"1": "slides", "2": "slides"}
-    slides._verse_themes_by_output = {"1": "default", "2": "default"}
-    original = slides._build_payload(
-        "I am overwhelmed by this deep longing, Lord",
-        "Deep Calls to Deep",
-        "",
-        output_id="1",
-        slide_format=None,
-        deck_id=1,
-    )
-    assert original["content"] == "slide"
-    assert original["theme"] == "slides"
-    assert original["theme_data"]["slide"]["show_title"] is False
-
+    scripture, decks = _owner_tabs(qapp, tmp_path, monkeypatch)
     live_data = {
         "item_type": "slide",
-        "text": original["text"],
-        "ref": original["ref"],
-        "version": "",
+        "text": "I am overwhelmed by this deep longing, Lord",
         "deck_title": "Deep Calls to Deep",
-        "slide_format": None,
-        "slides": [{"text": original["text"], "section": ""}],
+        "slides": [{"text": "I am overwhelmed by this deep longing, Lord",
+                    "section": ""}],
         "slide_index": 0,
         "deck_id": 1,
     }
-    state = DisplayState()
-    state.publish_live(original, live_data, None, False)
-    slides._display = state
+    original = decks._build_payload(
+        live_data["text"], "Deep Calls to Deep", "", output_id="4",
+        slide_format=None, deck_id=1)
+    assert original["content"] == "slide"
+    assert original["theme"] == "slides"
+    decks._display.publish_live(original, live_data, None, False)
+    decks._broadcast_to_ws(original, live_data)
 
     sent = _capture_broadcasts(monkeypatch)
-    slides._broadcast_to_ws(original, live_data)
+    # Cloak and uncloak, pressed in the SCRIPTURE tab this time.
+    scripture._display.set_cloaked(True)
+    scripture._cloak_now()
+    scripture._on_clear_recall()
+
     themed = [(payload, target) for payload, target in sent
               if payload.get("action") != "clear"]
-    assert sorted(target for _, target in themed) == ["1", "2"]
-    assert all(payload["theme"] == "slides" for payload, _target in themed)
-    # Prioritized default: the other sets cloak alongside the broadcast.
-    assert sorted(target for payload, target in sent
-                  if payload.get("action") == "clear") == [
-        "1", "10", "2", "3", "7", "8", "9"]
-    assert set(state.live_output_payloads) == {"1", "2"}
-    assert set(state.matching_live_output_payloads()) == {"1", "2"}
-    sent.clear()
-    state.set_cloaked(True)
-    assert set(state.matching_live_output_payloads()) == {"1", "2"}
-
-    scripture = PresentationTab.__new__(PresentationTab)
-    scripture._display = state
-    scripture._themes_by_output = {"1": "fullscreen", "2": "fullscreen"}
-    scripture._current_theme = "fullscreen"
-
-    renders = []
-    slot = lambda payload: renders.append(dict(payload))
-    state.live_changed.connect(slot)
-    try:
-        scripture._on_clear_recall()
-    finally:
-        try:
-            state.live_changed.disconnect(slot)
-        except Exception:
-            pass
-        state.set_cloaked(False)
-
-    assert state.cloaked is False
-    assert renders, "uncloak must re-render live"
-    restored = state.live_payload
-    assert restored["content"] == "slide"
-    assert renders[-1]["theme"] == "slides"
-    assert restored["theme"] == "slides"
-    assert restored["theme_data"]["slide"]["show_title"] is False
-    assert sent, "uncloak must rebroadcast live"
-    themed = [(payload, target) for payload, target in sent
-              if payload.get("action") != "clear"]
-    assert [(payload["theme"], target) for payload, target in themed] == [
-        ("slides", "1"), ("slides", "2")
-    ]
-    assert all(payload.get("deck_id") == 1 for payload, _target in themed)
+    assert themed, "uncloak must rebroadcast the live screen"
+    targets = sorted(target for _p, target in themed)
+    assert targets and set(targets) <= {"4", "5", "6"}, targets
+    assert all(payload["theme"] == "slides" for payload, _t in themed), (
+        "a slide must not come back wearing scripture's theme")
+    assert all(payload.get("deck_id") == 1 for payload, _t in themed)
+    assert decks._display.live_payload["theme"] == "slides"

@@ -29,6 +29,15 @@ class _FakeDisplay:
 
     def publish_preview(self, payload, verse_dict):
         self.published_preview.append((payload, verse_dict))
+    # Step routing / preview replay: this stub steps locally and holds no
+    # stored preview payload (the real DisplayState routes a step to the
+    # tab owning the displayed content, and replays preview pushes).
+    def dispatch_step(self, delta):
+        return False
+
+    def matching_preview_payload(self):
+        return None
+
 
 
 def _tab(**overrides):

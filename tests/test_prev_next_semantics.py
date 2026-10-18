@@ -49,6 +49,14 @@ class _FakeDisplay:
     providing that one collaborator by hand.
     """
 
+    # Step routing / preview replay: this stub steps locally and has no
+    # stored preview payload (the real DisplayState routes by content owner
+    # and replays preview pushes — see core/display_state.py).
+    def dispatch_step(self, delta):
+        return False
+
+    def matching_preview_payload(self):
+        return None
     def __init__(self):
         self.live_data = None
         self.live_sched_uid = None

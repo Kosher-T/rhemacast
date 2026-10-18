@@ -56,6 +56,23 @@ def clear_tab_outputs(tab_key: str) -> bool:
     return sent
 
 
+def clear_all_outputs() -> bool:
+    """Blank every active output — for a SHARED live screen.
+
+    Cloaking in prioritized mode hides one screen, so every set has to go
+    blank; a tab that only cleared its own set left the other tab's output
+    on air with stale content behind the "cover".
+    """
+    from core.websocket_server import broadcast_display
+    from core.outputs import TAB_OUTPUTS, active_outputs
+    did = False
+    for tab_key in TAB_OUTPUTS:
+        for output_id in active_outputs(tab_key):
+            if _run(broadcast_display({"action": "clear"}, target=str(output_id))):
+                did = True
+    return did
+
+
 def clear_output(output_id: str) -> bool:
     """Blank ONE output id.
 
@@ -102,6 +119,24 @@ def cloak_other_tabs(tab_key: str) -> bool:
 
 def broadcast_tab_payload(tab_key: str, themed_outputs: dict | None) -> bool:
     """One tab gesture, fully routed: cloak the other sets first (a no-op
-    unless prioritized), then fan out to this tab's own outputs."""
+    unless prioritized), then fan out to this tab's own outputs.
+
+    The payload map is SCOPED to the tab's own active outputs. A restore
+    path rebuilds the map from stored per-output snapshots, and those keys
+    follow whatever produced the content — a scripture displayed in
+    Scriptures is stored under 1/2/3, so a Decks uncloak used to send that
+    scripture back out to scripture's screens as well as the deck's. A tab
+    may only ever write to its own set; this is the choke point where that
+    holds no matter how the map was built.
+    """
     cloak_other_tabs(tab_key)
-    return fan_out(themed_outputs)
+    if not themed_outputs:
+        return False
+    from core.outputs import active_outputs
+    allowed = {str(oid) for oid in active_outputs(tab_key)}
+    scoped = {oid: payload for oid, payload in themed_outputs.items()
+              if str(oid) in allowed}
+    dropped = len(themed_outputs) - len(scoped)
+    if dropped:
+        logger.debug(f"{tab_key} broadcast dropped {dropped} foreign output(s)")
+    return fan_out(scoped)

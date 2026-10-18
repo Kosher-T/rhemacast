@@ -406,8 +406,6 @@ def test_cloak_uncloak_never_broadcasts_off_set(qapp, tmp_path, monkeypatch):
     from core.outputs import (MODE_SIMULTANEOUS, active_outputs,
                               set_output_mode)
     from core.display_state import follow_output_mode
-    set_output_mode(MODE_SIMULTANEOUS)
-    follow_output_mode()
 
     sent = []
 
@@ -427,20 +425,28 @@ def test_cloak_uncloak_never_broadcasts_off_set(qapp, tmp_path, monkeypatch):
                         lambda coro, loop: coro.close())
 
     tab = _tab(qapp, tmp_path)
+    # AFTER _tab(): it re-initializes the database, which would wipe a mode
+    # set earlier — this test needs simultaneous mode for real.
+    set_output_mode(MODE_SIMULTANEOUS)
+    follow_output_mode()
     deck = {"id": 1, "title": "# T",
             "slides": [{"text": "l1", "section": ""}], "format": None}
     tab._show_slide(deck, 0, live=True)
 
     sent.clear()
     tab._on_clear_recall()   # cloak
+    # Simultaneous mode: each tab screens for itself, so the deck's cloak
+    # stays on the deck's set. (In prioritized mode the live screen is
+    # shared, so the cover blanks every set — see
+    # test_a_shared_cloak_blanks_every_output.)
     cloak_targets = {t for _a, t in sent}
-    tab._on_clear_recall()   # uncloak
+    assert cloak_targets == set(active_outputs("SLIDES")), cloak_targets
+
     sent.clear()
-    tab._on_clear_recall()   # uncloak again (restore replays snapshots)
+    tab._on_clear_recall()   # uncloak (restore replays snapshots)
     targets = {t for _a, t in sent}
 
     deck_set = set(active_outputs("SLIDES"))
     assert deck_set == {"4", "5", "6"}
-    assert cloak_targets == deck_set, cloak_targets
     assert targets == deck_set, f"deck restore leaked: {targets - deck_set}"
     assert set(tab._display.live_output_payloads) <= deck_set

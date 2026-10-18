@@ -47,6 +47,9 @@ class SlidesTab(QWidget):
         from core.display_state import display_state_for
         self._display = display_state_for("SLIDES")
 
+        self._display.register_owner_op("SLIDES", "step", self._step_displayed)
+        self._display.register_owner_op("SLIDES", "uncloak", self._uncloak_now)
+
         from core.database import get_setting
         from core.outputs import (DECK_OUTPUTS, SCRIPTURE_OUTPUTS,
                                   active_outputs, main_output_for_tab)
@@ -280,7 +283,9 @@ class SlidesTab(QWidget):
 
     def _build_payload(self, text: str, ref: str, version: str = "",
                        output_id: str | None = None, slide_format: dict | None = None,
-                       is_slide: bool = True, deck_id: int | None = None) -> dict:
+                       is_slide: bool = True, deck_id: int | None = None,
+                       book: str = "", chapter: str = "",
+                       verse: str = "") -> dict:
         from core.theme_loader import resolve_theme
         output_id = output_id or self._main_output_id()
         if is_slide:
@@ -291,15 +296,26 @@ class SlidesTab(QWidget):
         else:
             theme_name = self._verse_themes_by_output.get(output_id, "default")
             theme_name, theme_data = resolve_theme(theme_name)
+        # The citation line is the BARE reference. `ref` already carries the
+        # translation prefix ("[NKJV] Genesis 1:9"), and the renderer prints
+        # the translation separately — sending ref as the reference put
+        # "[NKJV] Genesis 1:9 NKJV" on the screen.
+        if not is_slide and book and chapter and verse:
+            reference = f"{book} {chapter}:{verse}"
+        else:
+            reference = ref
         payload = {
             "action": "display",
             "text": text,
             "ref": ref,
-            "reference": ref,
+            "reference": reference,
             "translation": get_display_name(version) if version else "",
-            "book": "",
-            "chapter": "",
-            "verse": "",
+            # Verses displayed here keep their scripture parts: the inline
+            # verse number and the full reference are rendered from these,
+            # so blanking them left OBS with bare text + translation.
+            "book": book or "",
+            "chapter": str(chapter or ""),
+            "verse": str(verse or ""),
             "content": "slide" if is_slide else "verse",
             "theme": theme_name,
             "theme_data": theme_data,
@@ -327,6 +343,9 @@ class SlidesTab(QWidget):
         return self._build_payload(
             data.get("text", ""), ref, data.get("version", ""), output_id,
             is_slide=False,
+            book=data.get("book", ""),
+            chapter=data.get("chapter", ""),
+            verse=data.get("verse_num", data.get("verse", "")),
         )
 
     def _main_output_id(self) -> str:
@@ -406,7 +425,8 @@ class SlidesTab(QWidget):
         return bool(self._cloak) and payload.get("action") != "clear"
 
     def _broadcast_to_ws(self, payload: dict, data: dict | None = None,
-                           preserve_theme: bool = False) -> bool:
+                           preserve_theme: bool = False,
+                           scope_all: bool = False) -> bool:
         from core.database import log_live_payload
         is_slide = data is not None and data.get("item_type") == "slide"
         # History: anything hitting live gets documented (display + clear),
@@ -433,6 +453,9 @@ class SlidesTab(QWidget):
                             slide_format=(data.get("slide_format") if is_slide else None),
                             is_slide=is_slide,
                             deck_id=deck_id,
+                            book=payload.get("book", ""),
+                            chapter=payload.get("chapter", ""),
+                            verse=payload.get("verse", ""),
                         )
             else:
                 themed_outputs = {}
@@ -448,6 +471,11 @@ class SlidesTab(QWidget):
                         slide_format=(data.get("slide_format") if is_slide else None),
                         is_slide=is_slide,
                         deck_id=deck_id,
+                        # Scripture parts ride along, or a verse shown on
+                        # this tab's outputs loses its number and reference.
+                        book=payload.get("book", ""),
+                        chapter=payload.get("chapter", ""),
+                        verse=payload.get("verse", ""),
                     )
                 # Even a muted/behind-cloak push advances the model, so its
                 # per-output themes become the next restore's authority.
@@ -461,7 +489,11 @@ class SlidesTab(QWidget):
             if self._obs_gated(payload):
                 return False  # cloaked: OBS holds its blank, model advances.
             if payload.get("action") == "clear":
-                clear_tab_outputs("SLIDES")
+                if scope_all:
+                    from core.output_router import clear_all_outputs
+                    clear_all_outputs()
+                else:
+                    clear_tab_outputs("SLIDES")
             else:
                 broadcast_tab_payload("SLIDES", themed_outputs)
             return True
@@ -576,10 +608,23 @@ class SlidesTab(QWidget):
             logger.info(f"Slide preview: {ref}")
 
     def _show_verse(self, ref: str, text: str, version: str, live: bool,
-                    sched_data: dict | None = None, uncloak: bool = False):
-        """Show a schedule verse item on preview or live (scripture theme)."""
+                    sched_data: dict | None = None, uncloak: bool = False,
+                    parts: dict | None = None):
+        """Show a schedule verse item on preview or live (scripture theme).
+
+        `parts` carries book/chapter/verse when the caller has them (a
+        schedule item, a preview push): the renderer draws the inline verse
+        number and the full reference from those, so they must survive.
+        """
         data = {"item_type": "verse", "text": text, "ref": ref, "version": version}
-        payload = self._build_payload(text, ref, version, is_slide=False)
+        if isinstance(parts, dict):
+            for key in ("book", "chapter", "verse_num", "translation"):
+                if parts.get(key):
+                    data[key] = parts[key]
+        payload = self._build_payload(
+            text, ref, version, is_slide=False,
+            book=data.get("book", ""), chapter=data.get("chapter", ""),
+            verse=data.get("verse_num", ""))
         if live:
             self._song_nav_active = False
             self._song_nav_index = None
@@ -865,55 +910,107 @@ class SlidesTab(QWidget):
                  "slides": data.get("slides", []), "format": data.get("slide_format")},
                 data.get("slide_index", 0), live=True, uncloak=True,
             )
-        else:
-            self._show_verse(data.get("ref", ""), data.get("text", ""),
-                             data.get("version", ""), live=True, uncloak=True)
+            return
+
+        # Verse preview: REPLAY the stored payload when it still describes
+        # this preview. It is the same gesture as uncloak — the content
+        # was already rendered once, with its verse number, scripture
+        # reference and theme. Rebuilding from the navigation dict threw
+        # those away and OBS came back with bare text + translation.
+        stored = self._display.matching_preview_payload()
+        if stored is not None:
+            self._song_nav_active = False
+            self._song_nav_index = None
+            self._current_display = data
+            self._set_cloak(False)
+            self._display.publish_live(
+                stored, data, self._display.live_sched_uid,
+                self._display.live_from_schedule)
+            self._broadcast_to_ws(stored, data)
+            logger.info(f"Verse preview pushed to live (replayed): {stored.get('ref', '')}")
+            return
+
+        self._show_verse(data.get("ref", ""), data.get("text", ""),
+                         data.get("version", ""), live=True, uncloak=True,
+                         parts=data)
 
     def _on_clear_recall(self):
         if not self._cloak:
-            # Cloak on: blank OBS + operator live views only. Model,
-            # operator preview and strips stay exactly as they are —
-            # everything keeps working underneath the cover. Uncloak
-            # shows whatever is current THEN (never a stale recall),
-            # so no recall memory is kept.
-            self._set_cloak(True)
-            # set_cloaked already emitted cleared (operator views blank);
-            # OBS takes its blank here (originating tab broadcasts).
-            self._broadcast_to_ws({"action": "clear"}, self._current_display)
-            logger.info("Display cloaked")
-        else:
-            # Cloak off: show whatever is underneath NOW (it may have
-            # advanced while covered — never stale recall).
-            self._set_cloak(False)
-            stored = self._display.matching_live_output_payload()
-            if stored is not None and self._current_display:
-                # Replaying beats rebuilding: the stored payload carries the
-                # originating output theme, so a verse cloaked in SCRIPTURE
-                # does not come back wearing this tab's slide/verse map.
-                payload = stored
-                self._display.publish_live(
-                    payload, self._current_display,
-                    self._display.live_sched_uid,
-                    self._display.live_from_schedule)
-                self._broadcast_to_ws(payload, self._current_display,
-                                      preserve_theme=True)
-            elif self._current_display:
-                payload = self._payload_for_display(self._current_display)
-                self._display.publish_live(
-                    payload, self._current_display,
-                    self._display.live_sched_uid,
-                    self._display.live_from_schedule)
-                self._broadcast_to_ws(payload, self._current_display)
-            if self._current_display:
-                logger.info("Display uncloaked")
+            self._cloak_now()
+            return
+        # Uncloak restores the live screen, so the tab that OWNS the
+        # displayed content must do it: a deck slide uncloaked here would
+        # otherwise be rebuilt with scripture themes and sent to scripture
+        # outputs.
+        if self._display.dispatch_to_owner("uncloak"):
+            return
+        self._uncloak_now()
+
+    def _cloak_now(self):
+        """Blank the live screen. The model, preview and strips stay
+        exactly as they are — everything keeps working underneath."""
+        self._set_cloak(True)
+        # set_cloaked already blanked the operator live views; OBS takes
+        # its blank here. Shared display -> one live screen, so EVERY set
+        # must blank (leaving another tab's outputs on air is how a cloaked
+        # deck still showed scripture).
+        from core.outputs import shared_display_enabled
+        self._broadcast_to_ws({"action": "clear"}, self._current_display,
+                              scope_all=shared_display_enabled())
+        logger.info("Display cloaked")
+
+    def _uncloak_now(self):
+        """Reveal whatever is current NOW (never a stale recall).
+
+        Replays the stored payload rather than rebuilding it: the stored
+        one carries the originating output theme, so a verse cloaked in
+        SCRIPTURE does not come back wearing this tab's slide/verse map.
+        """
+        self._set_cloak(False)
+        stored = self._display.matching_live_output_payload()
+        if stored is not None and self._current_display:
+            payload = stored
+            self._display.publish_live(
+                payload, self._current_display,
+                self._display.live_sched_uid,
+                self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, self._current_display,
+                                  preserve_theme=True)
+        elif self._current_display:
+            payload = self._payload_for_display(self._current_display)
+            self._display.publish_live(
+                payload, self._current_display,
+                self._display.live_sched_uid,
+                self._display.live_from_schedule)
+            self._broadcast_to_ws(payload, self._current_display)
+        if self._current_display:
+            logger.info("Display uncloaked")
 
     # ── Prev / Next ─────────────────────────────────────────────────────────
 
     def _on_prev(self):
-        self._step_live(-1)
+        """Entry point for prev: the DISPLAY state routes it.
+
+        A scripture displayed while the operator stands here steps the
+        scripture, a deck steps the deck — whichever tab owns the content,
+        so the on-screen arrows and the global hotkeys agree.
+        """
+        if self._display.dispatch_step(-1):
+            return
+        self._step_displayed(-1)
 
     def _on_next(self):
-        self._step_live(1)
+        if self._display.dispatch_step(1):
+            return
+        self._step_displayed(1)
+
+    def _step_displayed(self, delta: int):
+        """This tab's own step (the registered stepper): decks only.
+
+        Verses are stepped by the scripture tab — this tab has no verse
+        neighbours, and in shared mode the scripture tab holds the queue.
+        """
+        return self._step_live(delta)
 
     def _step_live(self, delta: int):
         """Step within the displayed deck only.

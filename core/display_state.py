@@ -36,6 +36,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 import copy
 import logging
+import weakref
 
 logger = logging.getLogger(__name__)
 
@@ -118,31 +119,61 @@ class DisplayState(QObject):
                 remembered[str(output_id)] = copy.deepcopy(payload)
         self.live_output_payloads = remembered
 
-    def _stored_live_payload_matches(self, payload: object) -> bool:
-        """Whether a stored payload still describes the current live data.
+    def _stored_payload_matches(self, payload: object, data=None) -> bool:
+        """Whether a stored payload still describes the given navigation data.
 
         Restore paths must not resurrect deleted/replaced content. Content
         and text identity are checked; the theme itself is deliberately not
         part of the match because preserving it is the point.
         """
+        if data is None:
+            data = self.live_data
         if not isinstance(payload, dict):
             return False
         if payload.get("action") != "display":
             return False
         if not payload.get("theme") or not isinstance(payload.get("theme_data"), dict):
             return False
-        if not isinstance(self.live_data, dict):
+        if not isinstance(data, dict):
             return False
-        if self.live_data.get("item_type") == "slide":
+        if data.get("item_type") == "slide":
             return (
                 payload.get("content") == "slide"
-                and payload.get("text") == self.live_data.get("text")
-                and payload.get("deck_id") == self.live_data.get("deck_id")
+                and payload.get("text") == data.get("text")
+                and payload.get("deck_id") == data.get("deck_id")
             )
         return (
             payload.get("content") == "verse"
-            and payload.get("text") == self.live_data.get("text")
+            and payload.get("text") == data.get("text")
         )
+
+    def _stored_live_payload_matches(self, payload: object) -> bool:
+        return self._stored_payload_matches(payload, self.live_data)
+
+    def dispatch_to_owner(self, op: str, *args) -> bool:
+        """A bare scope has no cross-tab routing: it owns everything, so
+        the caller always performs the operation itself.
+
+        Tabs hold a DisplayStateHandle (which can route to the tab that
+        owns the displayed content); this keeps the same call meaningful —
+        and a no-op — when a scope is used directly.
+        """
+        return False
+
+    def matching_preview_payload(self) -> dict | None:
+        """The stored PREVIEW payload, if it still describes the previewed
+        content.
+
+        Preview -> live is a REPLAY, not a rebuild. The stored payload
+        carries the inline verse number, the full scripture reference and
+        the theme its output rendered it with; a payload rebuilt from the
+        navigation dict alone drops all three (the OBS screen came back
+        with bare text and a translation).
+        """
+        payload = self.preview_payload
+        if self._stored_payload_matches(payload, self.preview_data):
+            return copy.deepcopy(payload)
+        return None
 
     def matching_live_output_payload(self, output_id: str | None = None) -> dict | None:
         """Authoritative stored payload for one output, if it is still current.
@@ -320,6 +351,19 @@ def _scope_for(tab_key: str) -> DisplayState:
     if tab_key not in _scoped_states:
         _scoped_states[tab_key] = DisplayState()
     return _scoped_states[tab_key]
+
+
+TAB_STEPPER_KEYS = ("SCRIPTURE", "SLIDES")
+# tab key -> {operation: that tab's implementation}. Module level, NOT per
+# handle: any tab's handle may be the one asked to act (they all point at
+# the same screen in shared mode), and the answer must not depend on which
+# handle was asked.
+#
+# Held WEAKLY. A registry holding bound methods keeps destroyed tabs alive
+# and routes actions into closed windows — the tab that answers must be one
+# that still exists. The newest registration for a key wins, so a rebuilt
+# tab takes over cleanly.
+_owner_ops: dict = {}
 
 
 class DisplayStateHandle(QObject):
@@ -534,6 +578,66 @@ class DisplayStateHandle(QObject):
     def matching_live_output_payloads(self) -> dict[str, dict]:
         return self._scope.matching_live_output_payloads()
 
+    def matching_preview_payload(self) -> dict | None:
+        return self._scope.matching_preview_payload()
+
+    # ── Stepping ownership ──────────────────────────────────────────────────
+    def register_owner_op(self, tab_key: str, op: str, fn) -> None:
+        """Register this tab's implementation of an owner-only operation.
+
+        Ops are things that must be performed by the tab that owns the
+        displayed content, never by whichever tab the operator is standing
+        in: "step" (prev/next) and "uncloak" (restore the live screen).
+        """
+        ops = _owner_ops.setdefault(tab_key, {})
+        try:
+            ops[op] = weakref.WeakMethod(fn)
+        except TypeError:
+            ops[op] = fn                     # plain callable (tests)
+
+    def dispatch_to_owner(self, op: str, *args) -> bool:
+        """Run the owning tab's implementation of `op`.
+
+        False when no owner is registered, so the caller can do the work
+        locally instead.
+        """
+        entry = (_owner_ops.get(self.content_owner_key()) or {}).get(op)
+        if entry is None:
+            return False
+        fn = entry() if isinstance(entry, weakref.WeakMethod) else entry
+        if fn is None:
+            # The owning tab is gone: drop it and let the caller act.
+            _owner_ops.get(self.content_owner_key(), {}).pop(op, None)
+            return False
+        fn(*args)
+        return True
+
+    def content_owner_key(self) -> str:
+        """Which tab owns the DISPLAYED content.
+
+        Shared display: the live screen belongs to whoever produced it — a
+        deck stepped from the scripture tab must keep the deck's semantics
+        and theme. Simultaneous: each tab has its own screen, so the owner
+        is simply the tab you are standing in.
+        """
+        if self._tab_key not in TAB_STEPPER_KEYS:
+            return self._tab_key
+        from core.outputs import shared_display_enabled
+        if not shared_display_enabled():
+            return self._tab_key
+        data = self.scope.live_data
+        return ("SLIDES" if isinstance(data, dict)
+                and data.get("item_type") == "slide" else "SCRIPTURE")
+
+    def dispatch_step(self, delta: int) -> bool:
+        """Run the owning tab's step. False when nothing is registered.
+
+        Both entry points go through here — the global hotkeys and each
+        panel's arrow buttons — so stepping follows the content no matter
+        which interface the operator used.
+        """
+        return self.dispatch_to_owner("step", delta)
+
     def add_live_data_hook(self, fn) -> None:
         self._hooks.append(fn)
         self._scope.add_live_data_hook(fn)
@@ -589,6 +693,7 @@ def reset_display_states() -> None:
     """Drop every scope and handle (tests / hard resets)."""
     global display_state, _authority
     _authority = None
+    _owner_ops.clear()
     for handle in list(_handles.values()):
         handle._unwire()
         handle._hooks.clear()
