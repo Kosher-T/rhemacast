@@ -242,7 +242,12 @@ def test_wide_outline_is_not_clipped_to_a_thin_one(rendered, renderer):
     # Compared in CSS px (the width attribute) because the preview scales
     # its whole DOM.
     grew = wide["svgs"][0]["attrW"] - narrow["svgs"][0]["attrW"]
-    assert grew == 2 * (OUTLINE_MAX_PX - 6), (narrow["svgs"][0], wide["svgs"][0])
+    # Tolerant by 1px: each row's viewport is ceil(ink advance + 2 * pad) and
+    # the two rows are measured independently, so sub-pixel rasterization
+    # noise in the advance can push one ceil across an integer boundary.
+    # A collapse to the thin outline (~0) or a missing clamp (~38) still fails.
+    assert abs(grew - 2 * (OUTLINE_MAX_PX - 6)) <= 1, (
+        narrow["svgs"][0], wide["svgs"][0])
     # ...and the stroke itself is the full max (2x half-width).
     assert wide["svgs"][0]["stroke"] == str(2 * OUTLINE_MAX_PX), wide["svgs"][0]
     assert narrow["svgs"][0]["stroke"] == "12", narrow["svgs"][0]
