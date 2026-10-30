@@ -85,10 +85,15 @@ windows_update/
 # --- TRACKED BELOW (commented out): project sources, docs, tests, user decks ---
 # tests/
 # /docs/
-# data/slides/
-# AGENTS.md
-# checklist_audit.md
-# /temp/
-# /local/
-# /ui_draft/
-# /windows/
+
+
+# --- Miscellaneous (personal, temporary, or heavy) ---
+data/slides/
+AGENTS.md
+checklist_audit.md
+/temp/
+/local/
+/ui_draft/
+/windows/
+.winignore
+make_windows_update.sh
