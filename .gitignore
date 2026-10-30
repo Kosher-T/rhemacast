@@ -75,12 +75,12 @@ ENV/
 Thumbs.db
 opencode.json
 .opencode/
+.freebuff/
 
 # --- Mobile file back-and-forths (do not want to use Github)
 mobile_version/
+windows_update/
 
-# --- Temp Harness
-ocv/
 
 # --- TRACKED BELOW (commented out): project sources, docs, tests, user decks ---
 # tests/
