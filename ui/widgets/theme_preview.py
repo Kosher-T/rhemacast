@@ -77,7 +77,7 @@ class ThemePreview(QWidget):
         if label:
             lbl = QLabel(label)
             lbl.setStyleSheet(
-                "color: " + TEXT_MUTED + "; font-size: 9px; font-weight: 700; "
+                "color: " + TEXT_MUTED + "; font-size: 12px; font-weight: 700; "
                 "letter-spacing: 1px; text-transform: uppercase; background: transparent;"
             )
             lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)

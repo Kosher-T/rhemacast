@@ -1,6 +1,6 @@
 """Minimal thin-stroke SVG icon set — one size everywhere.
 
-22 icons, 24px grid, 1.8px round strokes in near-white (#f4f4f5) for
+23 icons, 24px grid, 1.8px round strokes in near-white (#f4f4f5) for
 contrast on the dark chrome. Text abbreviations (B/I/U, REC, RTL, …)
 stay text — they are labels, not pictographs.
 """

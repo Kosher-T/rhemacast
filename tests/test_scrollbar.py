@@ -1,8 +1,8 @@
 """
 tests/test_scrollbar.py
 
-Shared minimal scrollbar (lite-designer spec): permanently reserved
-lane, flat thumb, no arrows — identical behavior on every scroll area.
+Shared minimal scrollbar (ui.tokens spec): permanently reserved lane,
+flat thumb, no arrows — identical behaviour on every scroll area.
 """
 
 import os
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QScrollArea, QListWidget
 from PyQt6.QtCore import Qt
 import pytest
 
+from ui import tokens
 from ui.styles import apply_minimal_scrollbar, MINIMAL_SCROLLBAR_CSS
 
 
@@ -33,7 +34,7 @@ def test_policies_and_rules(qapp):
     sheet = area.styleSheet()
     assert "QScrollArea { background: transparent; }" in sheet
     assert "QScrollBar:vertical" in sheet
-    assert "width: 6px" in sheet
+    assert f"width: {tokens.SCROLLBAR_THICKNESS}px" in sheet
 
 
 def test_idempotent_and_widget_generic(qapp):

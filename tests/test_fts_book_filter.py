@@ -63,8 +63,6 @@ def _panel(tmp_path, monkeypatch, books=None, cap=10 ** 9):
                 for i, b in enumerate(books)]
 
     monkeypatch.setattr(mod, "fts_search", fake_hybrid)
-    monkeypatch.setattr(
-        mod, "keyword_search", lambda query, limit=30: ([], 0.0, "KJV"))
     panel = mod.FtsSearchPanel()
     panel._paint_per_frame = cap
     panel.show()

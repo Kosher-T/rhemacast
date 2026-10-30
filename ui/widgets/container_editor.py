@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QScrollArea, QSizePolicy, QColorDialog, QComboBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPointF
+from ui.popups import install_combo
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QMouseEvent
 
 from ui.styles import (
@@ -49,8 +50,8 @@ DEFAULT_CONTAINER = {
 # ─── Styles ───────────────────────────────────────────────────────────────────
 
 _SECTION_STYLE = (
-    "color: " + SLATE_600 + ";"
-    "font-size: 9px;"
+    "color: " + TEXT_FAINT + ";"
+    "font-size: 12px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
     "letter-spacing: 0.08em;"
@@ -61,7 +62,7 @@ _SECTION_STYLE = (
 
 _LABEL_STYLE = (
     "color: " + TEXT_FAINT + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
     "font-weight: 600;"
     "background: transparent;"
     "border: none;"
@@ -75,7 +76,7 @@ _INPUT_STYLE = (
     "  border-radius: 4px;"
     "  padding: 3px 6px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  font-family: 'Consolas', monospace;"
     "}"
     "QLineEdit:focus {"
@@ -90,7 +91,7 @@ _COMBO_STYLE = (
     "  border-radius: 4px;"
     "  padding: 3px 6px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "}"
     "QComboBox:focus {"
     "  border: 1px solid " + SELECTION_BORDER + ";"
@@ -184,6 +185,7 @@ class _PropCombo(QWidget):
         layout.addWidget(lbl)
 
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.setStyleSheet(_COMBO_STYLE)
         self._combo.addItems(options)
         self._combo.currentTextChanged.connect(lambda _: self.value_changed.emit(self.get_value()))
@@ -649,11 +651,6 @@ class ContainerPropertiesPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 5px; }"
-            "QScrollBar::handle:vertical {"
-            "  background: rgba(255,255,255,0.1);"
-            "  border-radius: 2px;"
-            "}"
         )
 
         content = QWidget()

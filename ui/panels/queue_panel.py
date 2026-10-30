@@ -16,7 +16,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ui.styles import (
     PANEL_BODY_STYLE, QUEUE_ITEM_STYLE, SHOW_BTN_STYLE, REJECT_BTN_STYLE,
-    SLATE_300, SLATE_500, SLATE_600,
+    SLATE_300, SLATE_600,
+)
+from ui.tokens import (
+    TEXT_MUTED, TYPE_CAPTION, WEIGHT_SEMIBOLD,
 )
 from core.queues import db_write_queue
 from core.bible_service import get_display_name
@@ -48,14 +51,14 @@ class QueueItemWidget(QFrame):
         conf = data.get("confidence", 0)
         dot_color = CYAN_400 if conf >= 85 else SLATE_600
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {dot_color}; font-size: 8px;")
+        dot.setStyleSheet(f"color: {dot_color}; font-size: 12px;")
         dot.setFixedWidth(12)
         layout.addWidget(dot)
 
         # Verse ref
         ref_text = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref_text)
-        ref_label.setStyleSheet(f"color: {SLATE_300}; font-size: 11px; font-weight: 700;")
+        ref_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 700;")
         ref_label.setToolTip(data.get("text", ""))
         layout.addWidget(ref_label)
 
@@ -63,7 +66,7 @@ class QueueItemWidget(QFrame):
 
         # Confidence %
         conf_label = QLabel(f"{conf:.0f}%")
-        conf_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px; font-weight: 600;")
+        conf_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 600;")
         conf_label.setToolTip("Confidence threshold: verses above this go to the review queue")
         layout.addWidget(conf_label)
 
@@ -159,7 +162,8 @@ class QueuePanel(QWidget):
         # Item count rides the row's right edge (queue page only).
         self.count_label = QLabel("0")
         self.count_label.setStyleSheet(
-            f"color: {SLATE_500}; font-size: 9px; font-weight: 600;")
+            f"color: {TEXT_MUTED}; font-size: {TYPE_CAPTION}px;"
+            f" font-weight: {WEIGHT_SEMIBOLD};")
         tab_row.layout().addWidget(self.count_label)
         layout.addWidget(tab_row)
 

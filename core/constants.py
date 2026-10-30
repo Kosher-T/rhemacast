@@ -28,6 +28,31 @@ TOP_OF_QUEUE_THRESHOLD = 85
 DISCARD_THRESHOLD = 40
 
 
+# ─── Network / Display Links ─────────────────────────────────────────────────
+
+# How often the LAN-address watcher re-reads the machine's preferred source
+# address (milliseconds). It emits only when the address CHANGES, so a stable
+# network costs one cheap UDP route lookup per tick and no UI work. Short
+# enough that joining a different Wi-Fi mid-service updates the display URL
+# before the operator can reach for a phone.
+NETWORK_WATCH_INTERVAL_MS = 2000
+
+# WebSocket keepalive for browser display clients. The server pings every
+# client on this interval and drops it when no pong arrives within the
+# timeout. websockets' defaults (20 s / 20 s) leave a pulled cable invisible
+# for up to ~40 s; 2 s / 2 s detects a silent drop within a few seconds while
+# adding negligible LAN traffic. The close cap matters as much as the ping:
+# websockets waits close_timeout (default 10 s) for a dead peer to acknowledge
+# the Close frame, and the client count only drops when the handler returns.
+WS_PING_INTERVAL_S = 2.0
+WS_PING_TIMEOUT_S = 2.0
+WS_CLOSE_TIMEOUT_S = 1.0
+
+# How often the shared connection monitor re-reads the client count. The
+# status-bar badge and the Live border update from the same tick.
+WS_STATUS_POLL_MS = 1000
+
+
 # ─── Hardware & Thermal Limits ───────────────────────────────────────────────
 
 # Temperature (°C) at which the GPU will be aggressively throttled to prevent crashing
@@ -86,16 +111,34 @@ KEYWORD_COVERAGE_MIX = 0.5
 # bm25 over the stemmed index.
 KEYWORD_POOL_LIMIT = 400
 
-# How many query words may contribute a partial-match top-up when the
-# strict AND comes back thin.
+# Partial-match recall for the FTS lane.
 #
-# This is the FTS lane's whole latency knob. Each probe is a prefix scan
-# over 548k verses, and cost grew with query LENGTH because every word
-# got probed: "for we walk by faith not by sight" spent 145ms on the AND
-# (1 row) and then ~700ms more on seven probes. Probing the longest
-# stems first fixes the ordering — "sight" and "walk" discriminate, "we"
-# and "for" match nearly every verse and buy almost no recall — and the
-# cap makes cost independent of how much the operator has typed.
+# When the strict AND comes back thin, one OR sweep over the query's most
+# discriminating words fills the candidate pool. Longer stems
+# discriminate ("mountain", "church"); two- and three-letter function
+# words ("we", "by", "for") match nearly every verse and only make the
+# scan bigger, so they seed the pool only when the query has too few
+# long words to stand on their own. The cap keeps cost independent of how
+# much the operator has typed.
+FTS_PARTIAL_MIN_STEM = 4
+FTS_PARTIAL_TERMS = 6
+FTS_PARTIAL_POOL = 240
+
+# Over-fetch the strict AND before the adjacency tie-break.
+#
+# bm25's top `limit` is not the final top `limit`: a verse holding the
+# query as an exact phrase can sit just below the cutoff and never get the
+# tie-break that would promote it ("ten commandments" ranks 11th for a
+# six-row request; the literal phrase is at 11, the tent/commandment
+# scatter above it). These are full-coverage rows, so the extra pool costs
+# one slightly larger fetch, not another scoring pass.
+FTS_AND_POOL_EXTRA = 20
+
+# How many query words may contribute a final per-term top-up when even
+# the OR pool comes back short (a query made mostly of rare words).
+#
+# Each probe is a prefix scan over 548k verses, so this stays a last
+# resort filler rather than the main partial-match path.
 FTS_TOPUP_TERMS = 3
 
 # ─── Verse popularity (operator learning) ───────────────────────────────
@@ -143,6 +186,18 @@ SEARCH_HISTORY_IDLE_MS = 2000
 
 # Session-sized cap per search box (entries, newest first).
 SEARCH_HISTORY_MAX_ENTRIES = 50
+
+
+# ─── Search auto-run delay ────────────────────────────────────────────────
+
+# How long the Keyword lane waits after the last keystroke before it
+# searches (search.auto_delay_ms). 0 = every keystroke. Read live on each
+# keystroke, so a change in Settings applies without a restart.
+SEARCH_AUTO_DELAY_MS_DEFAULT = 100
+
+# Selectable slots (ms) offered in Settings, 80 ms up to 700 ms. 0 is the
+# "every keystroke" option and is prepended by the UI, not stored here.
+SEARCH_AUTO_DELAY_MS_SLOTS = (80, 100, 150, 200, 250, 300, 400, 500, 600, 700)
 
 
 # ─── Queue Depths & Backpressure ─────────────────────────────────────────────

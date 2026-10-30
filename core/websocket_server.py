@@ -18,12 +18,25 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 from aiohttp import web
 
+from .constants import (
+    WS_CLOSE_TIMEOUT_S, WS_PING_INTERVAL_S, WS_PING_TIMEOUT_S,
+)
 from .queues import queue_a, queue_b, db_write_queue, operator_queue
 
 logger = logging.getLogger(__name__)
 
 # Server event loop — set when start_servers() runs; used by broadcast_display
 _server_loop: Optional[asyncio.AbstractEventLoop] = None
+
+# True once both listeners are accepting connections. The UI uses this to
+# tell "no browser has connected yet" (idle) from "the display server could
+# not start" (caution) — both have a client count of zero.
+_server_ready = False
+
+# Counts every accepted client, including one that connects and drops between
+# UI polls. Lets the connection monitor tell "nothing has ever connected"
+# apart from "the display link was lost".
+_clients_seen = 0
 
 # Per-output state: {oid: {websocket, ...}} — built from the output
 # registry (core/outputs.py), so new display tabs only extend the map.
@@ -50,6 +63,34 @@ def get_connected_client_count() -> int:
 def get_output_client_counts() -> Dict[str, int]:
     """Per-output client counts."""
     return {oid: len(clients) for oid, clients in connected_clients.items()}
+
+
+def is_server_ready() -> bool:
+    """True once the WebSocket and HTTP servers are accepting connections."""
+    return _server_ready
+
+
+def has_seen_client() -> bool:
+    """True once any browser display client has connected this run."""
+    return _clients_seen > 0
+
+
+def _ws_server_options() -> Dict[str, Any]:
+    """websockets.serve options, kept in one place for the keepalive test.
+
+    The short ping interval is what makes a silently dropped connection
+    (pulled cable, Wi-Fi loss) visible within seconds instead of the
+    library's 20 s / 20 s defaults. ``close_timeout`` caps the second wait:
+    after a ping timeout the server still asks the dead peer to acknowledge
+    the Close frame, and the handler (which removes the client from
+    ``connected_clients``) doesn't return until that wait ends.
+    """
+    return {
+        "max_size": 1024,
+        "ping_interval": WS_PING_INTERVAL_S,
+        "ping_timeout": WS_PING_TIMEOUT_S,
+        "close_timeout": WS_CLOSE_TIMEOUT_S,
+    }
 
 
 def sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,6 +136,8 @@ async def broadcast_display(payload: Dict[str, Any], target: Optional[str] = Non
 
 async def ws_handler(websocket):
     """Handles new WebSocket connections. Parses ?output=N from URL."""
+    global _clients_seen
+
     # Parse output ID from request path (e.g., /?output=1)
     output_id = "1"
     try:
@@ -111,6 +154,7 @@ async def ws_handler(websocket):
         output_id = "1"
 
     connected_clients[output_id].add(websocket)
+    _clients_seen += 1
     total = get_connected_client_count()
     logger.info(f"WS client connected to output {output_id}. Total: {total}")
 
@@ -158,7 +202,7 @@ async def _no_cache_middleware(request: web.Request, handler) -> web.StreamRespo
 
 async def start_servers():
     """Starts both the WebSocket and HTTP Health servers."""
-    global _server_loop
+    global _server_loop, _server_ready
     _server_loop = asyncio.get_running_loop()
 
     ws_host = "0.0.0.0"
@@ -168,7 +212,8 @@ async def start_servers():
     http_port = 8766
 
     logger.info(f"Starting WebSocket server on ws://{ws_host}:{ws_port}")
-    ws_server = await websockets.serve(ws_handler, ws_host, ws_port, max_size=1024)
+    ws_server = await websockets.serve(
+        ws_handler, ws_host, ws_port, **_ws_server_options())
 
     logger.info(f"Starting Health HTTP server on http://{http_host}:{http_port}/health")
     app = web.Application(middlewares=[_no_cache_middleware])
@@ -182,12 +227,17 @@ async def start_servers():
 
     logger.info(f"Serving display files from {DISPLAY_DIR} on http://{http_host}:{http_port}/")
 
+    _server_ready = True
     await asyncio.Future()
 
 
 def run_server_thread():
     """Entry point for the thread running the asyncio event loop."""
-    asyncio.run(start_servers())
+    global _server_ready
+    try:
+        asyncio.run(start_servers())
+    finally:
+        _server_ready = False
 
 
 def clear_display():

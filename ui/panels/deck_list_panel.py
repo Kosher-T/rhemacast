@@ -17,7 +17,7 @@ import tempfile
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QFileDialog, QMessageBox, QMenu, QStackedWidget,
+    QLineEdit, QFileDialog, QMenu, QStackedWidget,
     QListView, QStyledItemDelegate, QAbstractItemView, QStyle,
 )
 from PyQt6.QtCore import (
@@ -28,25 +28,29 @@ from PyQt6.QtGui import (
     QDesktopServices, QColor, QFont, QFontMetrics, QPainter, QPen,
 )
 
+from ui import dialogs
+from ui.popups import menu_qss
 from ui.styles import (
     SLATE_950, SLATE_800, SLATE_700,
     SLATE_600, SLATE_500, SLATE_400,
     WHITE, SELECTION_BG, SELECTION_BORDER,
     BORDER_SUBTLE, CYAN_400, MENU_BG, apply_minimal_scrollbar,
     ACCENT,
+    TEXT_FAINT,
 )
 from ui.widgets.text_nav import install_line_edit_nav
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DECK_TITLE_SIZE = 12
+DEFAULT_DECK_TITLE_SIZE = 13
 
 
 def _deck_title_size() -> int:
     """Deck-list title size from settings (meta line runs 3px smaller)."""
     from core.database import get_setting
     try:
-        return int(get_setting("slides.deck_font_size", str(DEFAULT_DECK_TITLE_SIZE)))
+        return int(get_setting("slides.deck_font_size",
+                               str(DEFAULT_DECK_TITLE_SIZE)))
     except (TypeError, ValueError):
         return DEFAULT_DECK_TITLE_SIZE
 
@@ -261,19 +265,7 @@ class DeckListPanel(QWidget):
         # QTextEdit is what produced the selection and caret bugs.
         install_line_edit_nav(self.search_box)
         self.search_box.setPlaceholderText("Search title or lyrics…")
-        self.search_box.setStyleSheet(f"""
-            QLineEdit {{
-                background: {SLATE_800};
-                color: {WHITE};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 12px;
-            }}
-            QLineEdit:focus {{
-                border-color: {CYAN_400};
-            }}
-        """)
+        self.search_box.setStyleSheet(self._search_box_style())
         self.search_box.textChanged.connect(
             lambda: self._on_search(self.search_box.text()))
         decks_layout.addWidget(self.search_box)
@@ -317,7 +309,7 @@ class DeckListPanel(QWidget):
         self._empty = QLabel("No decks yet.\nImport a .txt file or an\nEasyWorship library to begin.")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet(
-            f"color: {SLATE_600}; font-size: 11px; background: transparent; padding-top: 24px;"
+            f"color: {TEXT_FAINT}; font-size: 12px; background: transparent; padding-top: 24px;"
         )
         self._empty.hide()
         decks_layout.addWidget(self._empty, 1)
@@ -355,6 +347,11 @@ class DeckListPanel(QWidget):
         footer.addLayout(row0)
 
         decks_layout.addLayout(footer)
+
+        # Settings → Interface: the deck search box (placeholder included)
+        # reads the same group as the deck cards.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
 
         self.refresh()
 
@@ -400,6 +397,36 @@ class DeckListPanel(QWidget):
             resolve_font_family(get_setting("slides.deck_font_family", "")),
             resolve_font_weight(get_setting("slides.deck_font_weight", ""),
                                 700))
+
+    # ── Settings-backed type ────────────────────────────────────────────────
+
+    def _search_box_style(self) -> str:
+        """Search-box QSS — family/weight/size from "slides.deck".
+
+        Unset keeps today's 13px / 500; the placeholder inherits it too.
+        """
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("slides.deck", 13, 500, size_min=9, size_max=18,
+                         family_key="slides.deck_font_family",
+                         weight_key="slides.deck_font_weight",
+                         size_key="slides.deck_font_size")
+        return f"""
+            QLineEdit {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 8px 12px;
+                {font_qss(spec)}
+            }}
+            QLineEdit:focus {{
+                border-color: {CYAN_400};
+            }}
+        """
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "slides.deck":
+            self.search_box.setStyleSheet(self._search_box_style())
 
     # ── Internals ──────────────────────────────────────────────────────────
 
@@ -499,22 +526,7 @@ class DeckListPanel(QWidget):
 
     @staticmethod
     def _menu_style() -> str:
-        return f"""
-            QMenu {{
-                background: {MENU_BG};
-                color: {WHITE};
-                border: 1px solid rgba(255, 255, 255, 20);
-                border-radius: 6px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 20px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background: {SELECTION_BG};
-            }}
-        """
+        return menu_qss()
 
     def _on_search(self, text: str):
         from core.slide_service import list_deck_summaries, search_decks
@@ -561,7 +573,7 @@ class DeckListPanel(QWidget):
         self.refresh(keep_selection=False)
         if failed:
             detail = "\n\n".join(f"{p}\n{err}" for p, err in failed)
-            QMessageBox.warning(self, "Import Failed", f"Some files could not be imported:\n\n{detail}")
+            dialogs.warning(self, "Import Failed", f"Some files could not be imported:\n\n{detail}")
 
     def _on_export_list(self):
         """Write every deck (title, slide count, date) to a txt inventory file."""
@@ -572,7 +584,7 @@ class DeckListPanel(QWidget):
                            key=lambda d: d.get("title", "").lower())
         except Exception as e:
             logger.error(f"Deck list export failed: {e}")
-            QMessageBox.critical(self, "Export Failed", f"Could not read decks:\n\n{e}")
+            dialogs.critical(self, "Export Failed", f"Could not read decks:\n\n{e}")
             return
         lines = [
             f"RhemaCast Deck Library — {date.today().isoformat()}",
@@ -596,7 +608,7 @@ class DeckListPanel(QWidget):
                 f.write("\n".join(lines))
         except OSError as e:
             logger.error(f"Deck list export failed: {e}")
-            QMessageBox.critical(self, "Export Failed", f"Could not write file:\n\n{e}")
+            dialogs.critical(self, "Export Failed", f"Could not write file:\n\n{e}")
             return
         logger.info(f"Exported {len(decks)} decks to {path}")
 
@@ -607,17 +619,18 @@ class DeckListPanel(QWidget):
         Returns "skip", "overwrite", or None (cancelled). Skip is the
         default: it never touches the operator's current decks.
         """
-        box = QMessageBox()
+        box = dialogs.MessageDialog(self)
+        box.setIcon("question")
         box.setWindowTitle("EasyWorship Import")
         box.setText(
             f"{existing} of {total} songs are already in your library.\n\n"
             "Skip them, or overwrite them with the imported versions?"
         )
         skip_btn = box.addButton(
-            "Skip existing", QMessageBox.ButtonRole.ActionRole)
+            "Skip existing", dialogs.ButtonRole.ActionRole)
         overwrite_btn = box.addButton(
-            "Overwrite existing", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
+            "Overwrite existing", dialogs.ButtonRole.ActionRole)
+        box.addButton(dialogs.Cancel)
         box.setDefaultButton(skip_btn)
         box.exec()
         clicked = box.clickedButton()
@@ -637,7 +650,7 @@ class DeckListPanel(QWidget):
         if not data_dir:
             return
         if not os.path.isfile(os.path.join(data_dir, "Songs.db")):
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "EasyWorship Import",
                 f"No Songs.db found in:\n{data_dir}\n\n"
                 "Select the folder that contains Songs.db and SongWords.db "
@@ -651,7 +664,7 @@ class DeckListPanel(QWidget):
             existing, total = count_existing_easyworship(data_dir)
         except Exception as e:
             logger.error(f"EasyWorship import failed: {e}")
-            QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
+            dialogs.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
             return
         on_existing = "overwrite"
         if existing > 0:
@@ -665,7 +678,7 @@ class DeckListPanel(QWidget):
                 data_dir=data_dir, on_existing=on_existing)
         except Exception as e:
             logger.error(f"EasyWorship import failed: {e}")
-            QMessageBox.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
+            dialogs.critical(self, "Import Failed", f"EasyWorship import failed:\n\n{e}")
             return
         finally:
             QApplication.restoreOverrideCursor()
@@ -681,20 +694,20 @@ class DeckListPanel(QWidget):
         if failed:
             detail = "\n".join(f"{t}: {err}" for t, err in failed[:5])
             more = f"\n… and {len(failed) - 5} more" if len(failed) > 5 else ""
-            QMessageBox.warning(self, "EasyWorship Import", f"{msg}\n\nFailed:\n{detail}{more}")
+            dialogs.warning(self, "EasyWorship Import", f"{msg}\n\nFailed:\n{detail}{more}")
         else:
-            QMessageBox.information(self, "EasyWorship Import", msg)
+            dialogs.information(self, "EasyWorship Import", msg)
 
     def _on_delete(self):
         if not self._current_deck:
             return
         deck = self._current_deck
-        confirm = QMessageBox.question(
+        confirm = dialogs.question(
             self, "Delete Deck",
             f"Delete \"{deck.get('title') or '(untitled)'}\"?\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            dialogs.Yes | dialogs.No,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if confirm != dialogs.Yes:
             return
         from core.slide_service import delete_deck
         deleted_id = deck["id"]
@@ -717,33 +730,22 @@ class DeckListPanel(QWidget):
 
     def open_slide_editor(self, deck_id: int, index: int):
         """Modal raw-text editor for one slide. No-ops on cancel/empty."""
-        from PyQt6.QtWidgets import QDialog, QPlainTextEdit, QDialogButtonBox
         from core.slide_service import get_deck, update_slide
         deck = get_deck(deck_id)
         if not deck or not (0 <= index < len(deck.get("slides", []))):
             return
         slide = deck["slides"][index]
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Edit Slide {index + 1} — {deck.get('title') or '(untitled)'}")
-        dlg.setMinimumSize(480, 320)
-        layout = QVBoxLayout(dlg)
         section = slide.get("section")
-        info = QLabel(f"Section: {section or '—'}    ·    Raw text ([markers] preserved)")
-        info.setStyleSheet(f"color: {SLATE_500}; font-size: 10px; background: transparent;")
-        layout.addWidget(info)
-        edit = QPlainTextEdit(dlg)
-        edit.setPlainText(slide.get("text", ""))
-        layout.addWidget(edit, 1)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        layout.addWidget(buttons)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        new_text, accepted = dialogs.edit_text(
+            self,
+            f"Edit Slide {index + 1} — {deck.get('title') or '(untitled)'}",
+            f"Section: {section or '—'}    ·    Raw text ([markers] preserved)",
+            slide.get("text", ""),
+        )
+        if not accepted:
             return
-        new_text = edit.toPlainText()
         if not new_text.strip():
-            QMessageBox.warning(
+            dialogs.warning(
                 self, "Empty Slide",
                 "Slide text can't be empty — keeping the previous version.\n"
                 "(Restructure slides via Edit as Text… in the deck menu.)")
@@ -751,10 +753,10 @@ class DeckListPanel(QWidget):
         try:
             updated = update_slide(deck_id, index, new_text)
         except (IndexError, ValueError) as e:
-            QMessageBox.critical(self, "Edit Failed", str(e))
+            dialogs.critical(self, "Edit Failed", str(e))
             return
         if updated is None:
-            QMessageBox.critical(self, "Edit Failed", "Deck no longer exists.")
+            dialogs.critical(self, "Edit Failed", "Deck no longer exists.")
             return
         self.refresh(keep_selection=True)
         self.deck_slide_updated.emit(deck_id, index)
@@ -920,7 +922,7 @@ class DeckListPanel(QWidget):
         if not parse_slide_txt(raw)["slides"]:
             if not sess["warned_empty"]:
                 sess["warned_empty"] = True
-                QMessageBox.warning(
+                dialogs.warning(
                     self, "No Slides Found",
                     "The edited text contains no slides — keeping the previous version.\n"
                     "Add some lyric lines and save again.",

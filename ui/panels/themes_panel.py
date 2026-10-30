@@ -7,39 +7,78 @@ Outputs can be added/removed per tab (see core/outputs.py).
 """
 
 import logging
-import socket
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QFrame, QMenu, QMessageBox,
-)
-from PyQt6.QtCore import Qt, pyqtSignal
+    QFrame, QMenu, )
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QCursor
 
-from ui.styles import (
-    PANEL_BODY_STYLE,
-    CYAN_400, SLATE_300, SLATE_400, SLATE_500, WHITE, SELECTION_BG,
-    TEXT_MUTED, ACCENT_BORDER,
+from ui.popups import menu_qss
+from ui.styles import PANEL_BODY_STYLE
+from ui.tokens import (
+    ACCENT_BORDER, ACCENT_TEXT, OPTION_OBJECT_NAME, RADIUS_MD,
+    SELECTED_BAR_WIDTH, SPACE_12, SPACE_16, SPACE_24, SPACE_4, SPACE_8,
+    TEXT_MUTED, TEXT_PRIMARY, TYPE_CAPTION, WEIGHT_SEMIBOLD,
+    ghost_button_qss, option_row_qss,
 )
+from ui.widgets.output_links import OutputLinksPopup, OutputLinksPreview
 
 logger = logging.getLogger(__name__)
 
 HTTP_PORT = 8766
 
+# Group captions (MAIN / OUTPUT 2 / OUTPUT 3) — same voice as the panel
+# captions elsewhere (caption size, semibold, tracked out, muted). They are
+# buttons now: hover previews the display links, click opens the copy card.
+# The 4px pill padding is why the header's left inset is 12 - 4.
+_GROUP_BUTTON_QSS = ghost_button_qss(
+    font_css=(
+        f"font-size: {TYPE_CAPTION}px;"
+        f" font-weight: {WEIGHT_SEMIBOLD};"
+        " letter-spacing: 0.8px;"
+        " text-align: left;"),
+    padding="2px 4px",
+)
+
+# Ghost close button: no border, no fill at rest, a quiet surface on hover.
+# The glyph is 16px so the mark matches the caption's visual weight inside
+# the 24x24 hit area (the area itself is unchanged).
+_GHOST_CLOSE_QSS = ghost_button_qss(
+    font_css="font-size: 16px; font-weight: " + str(WEIGHT_SEMIBOLD) + ";")
+
 
 def _get_lan_ip() -> str:
-    """Detect the LAN IP address (non-loopback)."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.5)
-        s.connect(("10.255.255.255", 1))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+    """LAN IP address, falling back to loopback (legacy helper).
+
+    Callers that must distinguish "offline" from "localhost" should use
+    core.network_watcher.detect_lan_ip(), which returns None instead of
+    inventing an address.
+    """
+    from core.network_watcher import detect_lan_ip
+    return detect_lan_ip() or "127.0.0.1"
+
+
+def output_display_urls(output_id: str,
+                        lan_ip: str | None) -> tuple[str, str | None]:
+    """(local, network) display URLs for one output.
+
+    Network is None when the machine is offline, so the UI can say "Not
+    connected" rather than print a loopback address that no phone can reach.
+    """
+    local = f"http://127.0.0.1:{HTTP_PORT}/display.html?output={output_id}"
+    if not lan_ip:
+        return local, None
+    return local, f"http://{lan_ip}:{HTTP_PORT}/display.html?output={output_id}"
 
 
 class ThemeCard(QFrame):
-    """Compact theme card — no description text."""
+    """One theme option row — the whole row is the click target.
+
+    No indicator and no swatch. These are text-rendering themes, so a 24px
+    colour chip previewed nothing (all five are transparent with white
+    text) — it was a constant square, and the last blue in the UI. The row
+    itself carries every state: surface, hover wash, and the accent bar.
+    """
 
     theme_selected = pyqtSignal(str)
     theme_double_clicked = pyqtSignal(str)
@@ -49,51 +88,68 @@ class ThemeCard(QFrame):
         super().__init__(parent)
         self.theme_name = theme["name"]
         self._active = False
+        self._label_text = theme.get("label", theme["name"])
 
-        accent = "#3b82f6"
-        container = theme.get("container", {})
-        border = container.get("border", "")
-        if "rgba(" in border:
-            try:
-                parts = border.split("solid")[1].strip().rstrip(")")
-                accent = parts
-            except (IndexError, ValueError):
-                pass
-
-        bg = container.get("background", "rgba(15, 23, 42, 0.6)")
-
-        self.setStyleSheet(f"""
-            QFrame {{ background: transparent; border: none; }}
-            QFrame:hover {{ background: rgba(255, 255, 255, 5); }}
-        """)
+        self.setObjectName(OPTION_OBJECT_NAME)
+        # A QWidget subclass ignores QSS background/border without this.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", False)
+        # Qt does not evaluate :hover on an ancestor selector, so the row
+        # tracks the pointer itself (see option_row_qss).
+        self.setProperty("hovered", False)
+        self.setStyleSheet(option_row_qss())
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(self._label_text)
+        self.setAccessibleDescription(
+            "Display theme. Click to use it, double-click to push it live.")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(8)
+        # The 12px visual inset includes the 3px bar, so checking a row
+        # cannot shift its label.
+        layout.setContentsMargins(
+            SPACE_12 - SELECTED_BAR_WIDTH, SPACE_8, SPACE_12, SPACE_8)
+        layout.setSpacing(0)
 
-        swatch = QLabel()
-        swatch.setFixedSize(24, 24)
-        swatch.setStyleSheet(f"""
-            background: {bg};
-            border: 2px solid {accent};
-            border-radius: 5px;
-        """)
-        layout.addWidget(swatch)
-
-        name_label = QLabel(theme.get("label", theme["name"]))
-        name_label.setStyleSheet(f"color: {WHITE}; font-size: 11px; font-weight: 700; background: transparent;")
-        layout.addWidget(name_label)
+        self._label = QLabel(self._label_text)
+        # The row is the hit target: a label that swallowed the pointer
+        # would break both the hover wash and click-anywhere selection.
+        self._label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(self._label)
         layout.addStretch()
+
+    def _repolish(self):
+        """Re-evaluate the property rules for the row *and* its label.
+
+        A property selector re-polishes the widget it matches, not its
+        descendants — the label needs its own pass for the text colour.
+        """
+        for widget in (self, self._label):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def _set_hovered(self, hovered: bool):
+        if bool(self.property("hovered")) == hovered:
+            return
+        self.setProperty("hovered", hovered)
+        self._repolish()
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._set_hovered(True)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        # Moving onto a child fires Leave on the frame; keep the row lit
+        # while the pointer is still anywhere inside it.
+        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            self._set_hovered(False)
 
     def set_active(self, active: bool):
         self._active = active
-        if active:
-            self.setStyleSheet(f"QFrame {{ background: {SELECTION_BG}; border: none; }}")
-        else:
-            self.setStyleSheet(f"""
-                QFrame {{ background: transparent; border: none; }}
-                QFrame:hover {{ background: rgba(255, 255, 255, 5); }}
-            """)
+        self.setProperty("selected", active)
+        self._repolish()
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -107,6 +163,7 @@ class ThemeCard(QFrame):
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        menu.setStyleSheet(menu_qss())
         edit_action = menu.addAction("Quick Edit")
         edit_action.triggered.connect(lambda: self.theme_edit_requested.emit(self.theme_name))
         menu.exec(event.globalPos())
@@ -145,70 +202,136 @@ class OutputColumn(QWidget):
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(4)
+        self._layout.setSpacing(SPACE_8)
 
         # ── Header: label + optional remove button ──
         header = QWidget()
         header.setStyleSheet("background: transparent; border: none;")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(8, 2, 8, 2)
-        header_layout.setSpacing(4)
+        # The row's 3px bar sits outside its own contents, so its text
+        # starts 12px in: the caption takes the same inset, minus the
+        # button's own 4px pill padding, and shares the labels' left edge.
+        header_layout.setContentsMargins(
+            SPACE_12 - SPACE_4, SPACE_4, SPACE_12, SPACE_4)
+        header_layout.setSpacing(SPACE_8)
 
-        label = QLabel(title or f"Output {output_id}")
-        label.setStyleSheet(f"color: {SLATE_300}; font-size: 10px; font-weight: 700; background: transparent;")
+        self._title = title or f"Output {output_id}"
+        # Qt has no text-transform for labels: uppercase here, keep the
+        # original string for the link card's title and accessible names.
+        self._link_button = QPushButton(self._title.upper())
+        self._link_button.setObjectName("outputNameButton")
+        self._link_button.setStyleSheet(_GROUP_BUTTON_QSS)
+        self._link_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._link_button.setCheckable(True)
+        self._link_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self._link_button.setAccessibleName(f"{self._title} display links")
+        self._link_button.setAccessibleDescription(
+            "Hover for the addresses, click to open the copy card")
+        self._link_button.clicked.connect(self._toggle_display_links)
+        self._link_button.installEventFilter(self)
 
-        # Build tooltip with local + network URLs
-        lan_ip = _get_lan_ip()
-        local_url = f"http://127.0.0.1:{HTTP_PORT}/display.html?output={output_id}"
-        network_url = f"http://{lan_ip}:{HTTP_PORT}/display.html?output={output_id}"
-        label.setToolTip(
-            f"<span style='color:{TEXT_MUTED}'>Local:</span> {local_url}<br><br>"
-            f"<span style='color:{TEXT_MUTED}'>Network:</span> {network_url}"
-        )
-        label.setCursor(Qt.CursorShape.WhatsThisCursor)
-        header_layout.addWidget(label)
+        from core.network_watcher import network_watcher
+        # Hover preview (cursor-anchored, read-only) and the persistent
+        # copy card share one live link set.
+        self._link_preview = OutputLinksPreview(self)
+        self._link_popup = OutputLinksPopup(self)
+        self._link_popup.closed.connect(
+            lambda: self._link_button.setChecked(False))
+        self._lan_address = network_watcher().current()
+        self._refresh_display_links()
+        network_watcher().address_changed.connect(
+            self._on_network_address_changed)
+
+        header_layout.addWidget(self._link_button)
         header_layout.addStretch()
 
         self._remove_btn = None
         if show_remove:
-            rm_btn = QPushButton()
+            # Text glyph, not the SVG icon: the icon set is drawn in
+            # near-white and QSS cannot tint a QIcon, so a ghost button
+            # that colours with the tokens has to own its glyph.
+            rm_btn = QPushButton("\u00d7")
             rm_btn.setToolTip("Remove this output")
-            from ui.icons import apply_button
-            apply_button(rm_btn, "close")
-            rm_btn.setFixedSize(18, 18)
+            rm_btn.setAccessibleName(f"Remove {self._title}")
+            rm_btn.setFixedSize(SPACE_24, SPACE_24)
             rm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            rm_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {SLATE_400};
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 13px;
-                    font-weight: 700;
-                }}
-                QPushButton:hover {{
-                    color: #ef4444;
-                    background: rgba(239, 68, 68, 0.1);
-                }}
-                QPushButton:disabled {{
-                    color: {SLATE_500};
-                    background: transparent;
-                }}
-            """)
+            rm_btn.setStyleSheet(_GHOST_CLOSE_QSS)
             rm_btn.clicked.connect(lambda: self.remove_clicked.emit(self.output_id))
             header_layout.addWidget(rm_btn)
             self._remove_btn = rm_btn
 
         self._layout.addWidget(header)
 
-        # ── Theme cards: compact grid, stacked down the panel ──
+        # ── Theme rows: compact grid, stacked down the panel ──
         self._grid = QGridLayout()
-        self._grid.setContentsMargins(4, 0, 4, 4)
-        self._grid.setHorizontalSpacing(4)
-        self._grid.setVerticalSpacing(2)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(SPACE_12)
+        self._grid.setVerticalSpacing(SPACE_8)
         self._layout.addLayout(self._grid)
 
         self._load_themes()
+
+    # ── Display links (hover preview + click card) ───────────────────────
+    def _refresh_display_links(self):
+        """Recompute this output's URLs and push them into both cards."""
+        self._local_url, self._network_url = output_display_urls(
+            self.output_id, self._lan_address or None)
+        self._link_preview.set_links(self._local_url, self._network_url)
+        self._link_popup.set_links(
+            self._local_url, self._network_url, title=self._title)
+
+    def _on_network_address_changed(self, address: str):
+        """Watcher signal: the machine joined/left a network mid-service."""
+        address = address or ""
+        if address == self._lan_address:
+            return
+        self._lan_address = address
+        self._refresh_display_links()
+
+    def _card_open(self) -> bool:
+        """True while any output's persistent card is up on this panel."""
+        parent = self.parentWidget()
+        if parent is None:
+            return self._link_popup.isVisible()
+        return any(popup.isVisible()
+                   for popup in parent.findChildren(OutputLinksPopup))
+
+    def _toggle_display_links(self):
+        """Click pins the copy card; a second click dismisses it."""
+        if self._link_popup.isVisible():
+            self._link_popup.hide()
+            return
+        self._link_preview.cancel_show()
+        self._link_preview.hide()
+        # One card at a time across the three outputs.
+        parent = self.parentWidget()
+        if parent is not None:
+            for popup in parent.findChildren(OutputLinksPopup):
+                if popup is not self._link_popup:
+                    popup.hide()
+        self._link_button.setChecked(True)
+        self._link_popup.show_persistent(self._link_button)
+
+    def eventFilter(self, obj, event):
+        """Hovering the output name previews its addresses; leaving hides
+        the preview. The click card is opened by the button's clicked
+        signal, so keyboard activation works too."""
+        if obj is self._link_button:
+            kind = event.type()
+            if kind == QEvent.Type.Enter:
+                if not self._card_open():
+                    self._link_preview.schedule_show(self._link_button)
+            elif kind == QEvent.Type.Leave:
+                self._link_preview.cancel_show()
+                self._link_preview.hide()
+        return super().eventFilter(obj, event)
+
+    def hideEvent(self, event):
+        # Switching sub-pages/tabs must not leave a floating card behind.
+        self._link_preview.cancel_show()
+        self._link_preview.hide()
+        self._link_popup.hide()
+        super().hideEvent(event)
 
     def set_remove_enabled(self, enabled: bool):
         """A tab must keep at least one output: the last X is disabled."""
@@ -315,7 +438,7 @@ class ThemesPanel(QWidget):
         self._columns_container.setStyleSheet("background: transparent; border: none;")
         self._columns_layout = QVBoxLayout(self._columns_container)
         self._columns_layout.setContentsMargins(0, 0, 0, 0)
-        self._columns_layout.setSpacing(8)
+        self._columns_layout.setSpacing(SPACE_16)
         self._root_layout.addWidget(self._columns_container, 1)
 
         # ── Add-output row (only while the set is below its size) ──
@@ -324,17 +447,17 @@ class ThemesPanel(QWidget):
         self._add_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {SLATE_400};
+                color: {TEXT_MUTED};
                 border: 1px dashed {ACCENT_BORDER};
-                border-radius: 6px;
+                border-radius: {RADIUS_MD}px;
                 padding: 6px 8px;
-                font-size: 11px;
-                font-weight: 700;
+                font-size: {TYPE_CAPTION}px;
+                font-weight: {WEIGHT_SEMIBOLD};
                 text-align: left;
             }}
             QPushButton:hover {{
-                color: {WHITE};
-                border-color: {CYAN_400};
+                color: {TEXT_PRIMARY};
+                border-color: {ACCENT_TEXT};
             }}
         """)
         self._add_btn.clicked.connect(self._on_add_output)

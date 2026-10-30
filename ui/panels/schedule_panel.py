@@ -21,21 +21,42 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QFrame, QAbstractItemView, QMenu, QLineEdit, QSizePolicy, QApplication,
-    QFileDialog, QMessageBox, QPushButton
+    QFileDialog, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
 
+from ui import dialogs
+from ui.popups import menu_qss
 from ui.styles import (
-    PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE,
-    PANEL_BODY_STYLE, SLATE_400, SLATE_500, WHITE, BORDER_SUBTLE,
-    TEXT_MUTED, ACCENT, ACCENT_SOFT, ACCENT_BORDER,
+    PANEL_HEADER_STYLE, panel_header_label_style,
+    PANEL_BODY_STYLE, WHITE,
     SELECTION_BG, SELECTION_BORDER, MENU_BG,
     apply_minimal_scrollbar,
+)
+from ui.tokens import (
+    BG_CARD, CARD_OBJECT_NAME, SPACE_4, SPACE_8, SPACE_12,
+    SELECTED_BAR_WIDTH, BADGE_BORDER_WIDTH, BADGE_PAD_Y, TEXT_PRIMARY,
+    TRANSLATION_COLORS, TRANSLATION_FALLBACK, TRANSLATION_LABELS,
+    BUTTON_HEIGHT, badge_qss, button_qss, card_qss,
 )
 
 logger = logging.getLogger(__name__)
 
 _DOUBLE_CLICK_THRESHOLD_MS = 400
+
+# Schedule card type: one group (family/weight/size) for the row's
+# reference, translation badge and rename field. Per-label defaults keep
+# the existing hierarchy (ref 600, badge 400) until the operator overrides
+# it.
+_SCHEDULE_CARD_SIZE_MIN = 8
+_SCHEDULE_CARD_SIZE_MAX = 24
+
+
+def _schedule_card_font(size_default: int, weight_default: int) -> dict:
+    from ui.app_theme import area_font
+    return area_font("schedule.cards", size_default, weight_default,
+                     size_min=_SCHEDULE_CARD_SIZE_MIN,
+                     size_max=_SCHEDULE_CARD_SIZE_MAX)
 
 
 def _grouped_themes():
@@ -54,21 +75,9 @@ def _grouped_themes():
 # Schedules directory
 _SCHEDULES_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "schedules"
 
-# Small button style for schedule header
-_header_btn_style = f"""
-    QPushButton {{
-        background: transparent;
-        color: {SLATE_400};
-        border: 1px solid {BORDER_SUBTLE};
-        border-radius: 3px;
-        padding: 2px 6px;
-        font-size: 11px;
-    }}
-    QPushButton:hover {{
-        background: rgba(255, 255, 255, 0.05);
-        color: {WHITE};
-    }}
-"""
+# Small button style for schedule header — ghost variant of the shared
+# button language (text until hovered, same height/radius as every button).
+_header_btn_style = button_qss("ghost", padding=f"0 {SPACE_8}px")
 
 # ─── Color coding for schedule items ──────────────────────────────────────────
 # 8 base colors, one per book group. Different chapters get different shades.
@@ -84,7 +93,7 @@ _BOOK_COLORS = [
     ("#4a3030", "#705050", "#382424"),  # 7: wine
 ]
 
-_DEFAULT_BG = "rgba(255, 255, 255, 8)"
+_DEFAULT_BG = BG_CARD
 
 
 class ScheduleItem(QFrame):
@@ -115,65 +124,76 @@ class ScheduleItem(QFrame):
             # no slide count — just the title.
             display = data.get("name") or ref or "(untitled)"
         else:
-            from core.bible_service import get_display_name
-            display_name = get_display_name(translation) if translation else ""
-            display = f"[{display_name}] {ref}" if display_name else ref
+            # The translation now lives in its own badge on the right.
+            display = data.get("name") or ref
 
-        # Use property-based styling for selected state
+        # Property-based styling keeps selection/hover in QSS. Object-name
+        # scoping matters: QLabel inherits QFrame, so a bare `QFrame {}` rule
+        # would pad the child labels too.
+        self.setObjectName(CARD_OBJECT_NAME)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", False)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {_DEFAULT_BG};
-                padding: 6px;
-            }}
-            QFrame[selected="true"] {{
-                background: {SELECTION_BG};
-            }}
-            QFrame:hover {{
-                background: {ACCENT_SOFT};
-            }}
-            QFrame[selected="true"]:hover {{
-                background: {SELECTION_BG};
-            }}
-        """)
+        self.setStyleSheet(card_qss())
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setContentsMargins(
+            SPACE_12 - SELECTED_BAR_WIDTH, SPACE_8, SPACE_12, SPACE_8)
+        layout.setSpacing(SPACE_8)
 
         self._ref_label = QLabel(display)
-        self._ref_label.setStyleSheet(f"color: {WHITE}; font-size: 11px; font-weight: 600; background: transparent;")
+        # Let the card own hover/press across its whole surface.
+        self._ref_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._ref_label)
         layout.addStretch()
 
-        theme_label = self._theme_display_name(data.get("theme", "default"))
-        self._theme_label = QLabel(theme_label)
-        self._theme_label.setStyleSheet(f"color: {SLATE_500}; font-size: 8px; background: transparent;")
-        layout.addWidget(self._theme_label)
+        # Translation badge replaces the old theme tag: the theme is already
+        # visible on every output, while the translation is not.
+        self._translation_badge = None
+        if not is_slide and translation:
+            canonical = str(translation).upper()
+            badge_name = TRANSLATION_LABELS.get(canonical, canonical)
+            self._translation_badge = QLabel(badge_name)
+            self._translation_badge.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            layout.addWidget(self._translation_badge)
 
         self._edit = QLineEdit()
+        self._edit.setVisible(False)
+        self._edit.returnPressed.connect(self._finish_rename)
+        self._edit.editingFinished.connect(self._finish_rename)
+        layout.addWidget(self._edit)
+        self.apply_card_fonts()
+
+    def apply_card_fonts(self):
+        """Re-read the "schedule.cards" group (family / weight / size)."""
+        from ui.app_theme import font_qss
+
+        ref_font = _schedule_card_font(12, 600)
+        badge_font = _schedule_card_font(12, 400)
+        edit_font = _schedule_card_font(13, 400)
+        self._ref_label.setStyleSheet(
+            f"color: {TEXT_PRIMARY};{font_qss(ref_font)} background: transparent;")
+        if self._translation_badge is not None:
+            translation = str(self._data.get("translation", "")).upper()
+            border = TRANSLATION_COLORS.get(translation, TRANSLATION_FALLBACK)
+            self._translation_badge.setStyleSheet(
+                badge_qss(border, font_qss(badge_font)))
+        # Uniform row height: reserve the badge's height even on cards that
+        # have no translation (slide decks), so mixed schedules stay aligned.
+        self._ref_label.ensurePolished()
+        badge_height = (self._ref_label.fontMetrics().height()
+                        + 2 * BADGE_PAD_Y + 2 * BADGE_BORDER_WIDTH)
+        self.setMinimumHeight(badge_height + 2 * SPACE_8)
         self._edit.setStyleSheet(f"""
             QLineEdit {{
                 background: rgba(0, 0, 0, 80);
                 color: {WHITE};
                 border: 1px solid {SELECTION_BORDER};
                 border-radius: 4px;
-                padding: 2px 6px;
-                font-size: 12px;
+                padding: 2px 6px;{font_qss(edit_font)}
             }}
         """)
-        self._edit.setVisible(False)
-        self._edit.returnPressed.connect(self._finish_rename)
-        self._edit.editingFinished.connect(self._finish_rename)
-        layout.addWidget(self._edit)
-
-    @staticmethod
-    def _theme_display_name(theme_name: str) -> str:
-        """Return the human-readable label for a theme, falling back to the name."""
-        from core.theme_loader import get_theme
-        theme = get_theme(theme_name)
-        if theme:
-            return theme.get("label", theme.get("name", theme_name))
-        return theme_name
 
     @property
     def data(self) -> dict:
@@ -184,38 +204,28 @@ class ScheduleItem(QFrame):
         self._ref_label.setText(name)
 
     def set_theme(self, theme: str):
+        # The card no longer renders the theme; every output already shows it.
         self._data["theme"] = theme
-        self._theme_label.setText(self._theme_display_name(theme))
 
     def set_selected(self, selected: bool):
         """Update the selected visual state."""
         self.setProperty("selected", selected)
-        # Secondary label brightens on selection so it stays readable
-        # against the dark selection wash.
-        self._theme_label.setStyleSheet(
-            f"color: {TEXT_MUTED if selected else SLATE_500}; "
-            f"font-size: 8px; background: transparent;")
+        # Keep the settings-backed type across the property re-polish.
+        self.apply_card_fonts()
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def row_size_hint(self):
+        """Size hint for the QListWidgetItem: the layout's hint, but never
+        shorter than the uniform card minimum."""
+        hint = self.sizeHint()
+        hint.setHeight(max(hint.height(), self.minimumHeight()))
+        return hint
 
     def set_background(self, color: str):
         """Set the item background color dynamically."""
         self._bg_color = color
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {color};
-                padding: 6px;
-            }}
-            QFrame[selected="true"] {{
-                background: {SELECTION_BG};
-            }}
-            QFrame:hover {{
-                background: {ACCENT_SOFT};
-            }}
-            QFrame[selected="true"]:hover {{
-                background: {SELECTION_BG};
-            }}
-        """)
+        self.setStyleSheet(card_qss(color))
 
     def start_rename(self):
         self._editing = True
@@ -278,22 +288,7 @@ class ScheduleItem(QFrame):
             return
             
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {MENU_BG};
-                color: {WHITE};
-                border: 1px solid rgba(255, 255, 255, 20);
-                border-radius: 6px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 20px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background: {SELECTION_BG};
-            }}
-        """)
+        menu.setStyleSheet(menu_qss())
 
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(self.rename_requested.emit)
@@ -364,12 +359,13 @@ class SchedulePanel(QWidget):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 6, 12, 6)
         self._title_label = QLabel("Schedule")
-        self._title_label.setStyleSheet(PANEL_HEADER_LABEL_STYLE)
+        self._title_label.setStyleSheet(panel_header_label_style())
         header_layout.addWidget(self._title_label)
         header_layout.addStretch()
 
         # Save button
         self._save_btn = QPushButton("Save")
+        self._save_btn.setFixedHeight(BUTTON_HEIGHT)
         self._save_btn.setStyleSheet(_header_btn_style)
         self._save_btn.setToolTip("Save schedule to file")
         self._save_btn.clicked.connect(lambda: self.save_schedule())
@@ -382,7 +378,8 @@ class SchedulePanel(QWidget):
         self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_widget.setDragEnabled(True)
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.list_widget.setSpacing(2)
+        # QListWidget spacing is per-side: 4 yields the 8 px card gap.
+        self.list_widget.setSpacing(SPACE_4)
         self.list_widget.setStyleSheet("QListWidget { padding: 4px; }")
         apply_minimal_scrollbar(self.list_widget)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -412,27 +409,9 @@ class SchedulePanel(QWidget):
         self._color_toggle = QPushButton("Color Code")
         self._color_toggle.setCheckable(True)
         self._color_toggle.setChecked(self._color_enabled)
-        self._color_toggle.setFixedHeight(22)
+        self._color_toggle.setFixedHeight(BUTTON_HEIGHT)
         self._color_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._color_toggle.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {SLATE_400};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 3px;
-                padding: 2px 8px;
-                font-size: 10px;
-            }}
-            QPushButton:hover {{
-                background: rgba(255, 255, 255, 0.05);
-                color: {WHITE};
-            }}
-            QPushButton:checked {{
-                background: {ACCENT_SOFT};
-                color: {ACCENT};
-                border-color: {ACCENT_BORDER};
-            }}
-        """)
+        self._color_toggle.setStyleSheet(button_qss("secondary"))
         self._color_toggle.clicked.connect(self._toggle_color_coding)
         bottom_layout.addWidget(self._color_toggle)
         bottom_layout.addStretch()
@@ -464,6 +443,26 @@ class SchedulePanel(QWidget):
         if SchedulePanel._instances is None:
             SchedulePanel._instances = _weakref.WeakSet()
         SchedulePanel._instances.add(self)
+        # Settings → Interface changes land while the app is running.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+
+    # ── Settings-backed type ──────────────────────────────────────────────
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "panel.labels":
+            self._title_label.setStyleSheet(panel_header_label_style())
+        elif prefix == "schedule.cards":
+            self.apply_card_fonts()
+
+    def apply_card_fonts(self):
+        """Push the schedule-card font group onto every live row."""
+        for i in range(self.list_widget.count()):
+            li = self.list_widget.item(i)
+            widget = li.data(Qt.ItemDataRole.UserRole + 1) if li else None
+            if widget is not None and hasattr(widget, "apply_card_fonts"):
+                widget.apply_card_fonts()
+                li.setSizeHint(widget.row_size_hint())
 
     # ── Model-backed view ──────────────────────────────────────────────────
 
@@ -505,7 +504,7 @@ class SchedulePanel(QWidget):
 
         list_item = QListWidgetItem()
         list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-        list_item.setSizeHint(item_widget.sizeHint())
+        list_item.setSizeHint(item_widget.row_size_hint())
         # Uid only — Qt copies UserRole values; the widget holds the live dict
         list_item.setData(Qt.ItemDataRole.UserRole, data.get("_sched_uid"))
         list_item.setData(Qt.ItemDataRole.UserRole + 1, item_widget)
@@ -807,22 +806,7 @@ class SchedulePanel(QWidget):
             return
         
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {MENU_BG};
-                color: {WHITE};
-                border: 1px solid rgba(255, 255, 255, 20);
-                border-radius: 6px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 20px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background: {SELECTION_BG};
-            }}
-        """)
+        menu.setStyleSheet(menu_qss())
 
         # Show current theme of first selected item as checked (for reference)
         first_widget = selected_items[0].data(Qt.ItemDataRole.UserRole + 1)
@@ -901,7 +885,7 @@ class SchedulePanel(QWidget):
 
         saved = self._model.save(file_path)
         if saved is None:
-            QMessageBox.critical(self, "Save Error", f"Could not save schedule:\n{file_path}")
+            dialogs.critical(self, "Save Error", f"Could not save schedule:\n{file_path}")
             return False
         return True
 
@@ -916,7 +900,7 @@ class SchedulePanel(QWidget):
                 return False  # User cancelled
 
         if not self._model.load(file_path):
-            QMessageBox.critical(self, "Load Error", f"Could not load schedule:\n{file_path}")
+            dialogs.critical(self, "Load Error", f"Could not load schedule:\n{file_path}")
             return False
         self.schedule_loaded.emit(file_path)
         return True
@@ -924,13 +908,13 @@ class SchedulePanel(QWidget):
     def clear_all(self, silent: bool = False):
         """Clear all schedule items."""
         if not silent and self._model.is_modified:
-            reply = QMessageBox.question(
+            reply = dialogs.question(
                 self, "Unsaved Changes",
                 "The current schedule has unsaved changes. Clear anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
+                dialogs.Yes | dialogs.No,
+                dialogs.No
             )
-            if reply == QMessageBox.StandardButton.No:
+            if reply == dialogs.No:
                 return
 
         self._model.clear()

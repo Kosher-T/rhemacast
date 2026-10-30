@@ -124,8 +124,8 @@ Conversion must run **only post-theme, post-layout, post-unhide**:
   implementation beds in). Separate ribbon controls for each. The ribbon exposes
   exactly two outline knobs (thickness spin + color) and five shadow knobs
   (size, opacity, distance, angle spins + color); colors come from an inline
-  swatch grid + hex field, never a modal dialog (the designer is a Popup and
-  a modal `QColorDialog` deactivates + closes it on every click).
+  swatch grid + hex field, never a modal dialog (a `QColorDialog` would
+  take focus away from the editor for a click-only choice).
 - Theme `text_outline` and deck `outline=` are the same knob: the deck
   broadens/overrides, `outline=none` switches the theme's off. A legacy hard
   `text_shadow` (zero blur, one color) converts to an outline value; real

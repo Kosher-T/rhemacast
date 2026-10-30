@@ -95,8 +95,6 @@ def test_fts_row_selection_highlight(tmp_path, monkeypatch):
                  "confidence": 90.0 - i} for i in range(3)]
 
     monkeypatch.setattr(mod, "fts_search", fake_hybrid)
-    monkeypatch.setattr(
-        mod, "keyword_search", lambda query, limit=30: ([], 0.0, "KJV"))
     panel = mod.FtsSearchPanel()
     panel._paint_per_frame = 10 ** 9
     panel.show()
@@ -151,11 +149,17 @@ def test_schedule_item_selection_uses_theme():
     try:
         assert app_theme.color("selection_bg") in item.styleSheet()
         _sel = QColor(app_theme.color("selection_bg")).getRgb()[:3]
+        _accent = QColor(app_theme.color("accent")).getRgb()[:3]
         _img = item.grab().toImage()
-        px = _img.pixelColor(2, item.rect().center().y()).getRgb()[:3]
+        y = item.rect().center().y()
+        # 3 px accent bar on the left…
+        px = _img.pixelColor(1, y).getRgb()[:3]
+        assert all(abs(a - b) <= 20 for a, b in zip(px, _accent)), (px, _accent)
+        # …and the selection wash across the card body.
+        px = _img.pixelColor(6, y).getRgb()[:3]
         assert all(abs(a - b) <= 20 for a, b in zip(px, _sel)), (px, _sel)
-        # Secondary label brightens on selection for readability.
-        assert "a1a1aa" in item._theme_label.styleSheet().lower()
+        # Translation badge keeps the shared secondary text colour.
+        assert "a1a1aa" in item._translation_badge.styleSheet().lower()
     finally:
         item.close()
         item.deleteLater()

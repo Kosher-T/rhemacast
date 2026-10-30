@@ -149,7 +149,7 @@ class LoadingScreen(QWidget):
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setStyleSheet(f"""
             color: {TEXT_MUTED};
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 600;
             letter-spacing: 5px;
         """)
@@ -171,7 +171,7 @@ class LoadingScreen(QWidget):
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_label.setStyleSheet(f"""
             color: {TEXT_FAINT};
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 600;
             letter-spacing: 1.5px;
             text-transform: uppercase;
@@ -277,7 +277,7 @@ class LoadingScreen(QWidget):
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setStyleSheet(f"""
             color: {TEXT_MUTED};
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 600;
             letter-spacing: 5px;
         """)
@@ -299,7 +299,7 @@ class LoadingScreen(QWidget):
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_label.setStyleSheet(f"""
             color: {TEXT_FAINT};
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 600;
             letter-spacing: 1.5px;
             text-transform: uppercase;

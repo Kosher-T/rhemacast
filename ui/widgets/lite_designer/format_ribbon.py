@@ -24,6 +24,8 @@ from PyQt6.QtGui import (QTextCharFormat, QTextCursor, QTextBlockFormat,
                          QFont, QColor, QBrush, QTextFormat, QAction,
                          QImage, QPainter, QPen)
 from PyQt6.QtCore import Qt, pyqtSignal
+from ui import dialogs
+from ui.popups import install_combo, menu_qss
 import math
 from contextlib import contextmanager
 
@@ -36,6 +38,7 @@ from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, SLATE_300, SLATE_600,
     BG_RAISED, ACCENT, SELECTION_BG, SELECTION_BORDER, CHROME_SOFT,
     TEXT_SELECTION,
+    TEXT_FAINT, ACCENT_TEXT,
 )
 
 _PT_PER_PX = 0.75
@@ -45,15 +48,15 @@ _SPACINGS = [("Single", 1.0), ("1.15", 1.15), ("1.5", 1.5), ("Double", 2.0)]
 _RIBBON_STYLE = (
     "QWidget { background: " + CHROME_SOFT + "; color: " + TEXT_PRIMARY + "; }"
     "QToolButton { background: transparent; border: 1px solid transparent;"
-    "  border-radius: 4px; padding: 3px 7px; font-size: 12px; font-weight: 700;"
+    "  border-radius: 4px; padding: 3px 7px; font-size: 13px; font-weight: 700;"
     "  color: " + SLATE_300 + "; }"
     "QToolButton:hover { background: rgba(255,255,255,0.08); color: " + TEXT_PRIMARY + "; }"
     "QToolButton:checked { background: " + SELECTION_BG + ";"
-    "  border-color: " + SELECTION_BORDER + "; color: " + ACCENT + "; }"
-    "QToolButton:disabled { color: " + SLATE_600 + "; }"
+    "  border-color: " + SELECTION_BORDER + "; color: " + ACCENT_TEXT + "; }"
+    "QToolButton:disabled { color: " + TEXT_FAINT + "; }"
     "QComboBox { background: rgba(0,0,0,0.3); color: " + TEXT_PRIMARY + ";"
     "  border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;"
-    "  padding: 2px 6px; font-size: 11px; }"
+    "  padding: 2px 6px; font-size: 12px; }"
     "QComboBox QAbstractItemView { background: " + BG_RAISED + "; color: " + TEXT_PRIMARY + ";"
     "  selection-background-color: " + TEXT_SELECTION + "; }"
 )
@@ -334,6 +337,11 @@ class FormatRibbon(QWidget):
     def __init__(self, parent=None, recent_store=None):
         super().__init__(parent)
         self._edit: QTextEdit | None = None
+        # (edit, doc, revision, pos, fmt) for a format applied at a bare
+        # caret. Qt's typing format is one per WIDGET and survives card
+        # switches, so at a block start it is NOT evidence of the run
+        # under the caret — only this marker is (see _run_char_format).
+        self._typing_fmt = None
         # Deck-wide fan-out (set by the designer while the whole deck is
         # selected): _merge routes char formats here instead of the editor.
         self.fan_out = None
@@ -359,8 +367,8 @@ class FormatRibbon(QWidget):
         self._shadow_distance_px = 0
         self._shadow_angle_deg = 45
         self._deck_spacing: float | None = None
-        # Inline color picking (never a window: the designer is a Popup and a
-        # modal QColorDialog would deactivate + close it on every click).
+        # Inline color picking (never a second window: the picker belongs
+        # in the ribbon and the choice must not disturb editor focus).
         self._color_target: str | None = None
         self._pending_color: str | None = None
         self._text_chip_color: str | None = None
@@ -431,6 +439,7 @@ class FormatRibbon(QWidget):
 
     def _build_row1(self, row: QHBoxLayout):
         self._font_combo = QFontComboBox()
+        install_combo(self._font_combo)
         self._font_combo.setToolTip("Font family")
         self._font_combo.setMaximumWidth(150)
         self._font_combo.currentFontChanged.connect(self._on_font_family)
@@ -440,6 +449,7 @@ class FormatRibbon(QWidget):
         self._size_minus.clicked.connect(lambda: self._step_size(-1))
         row.addWidget(self._size_minus)
         self._size_combo = QComboBox()
+        install_combo(self._size_combo)
         self._size_combo.setEditable(True)
         self._size_combo.setToolTip("Font size (px)")
         self._size_combo.setMaximumWidth(58)
@@ -641,6 +651,7 @@ class FormatRibbon(QWidget):
 
         self._spacing_btn = self._btn("↕", "Paragraph spacing", icon="spacing")
         self._spacing_menu = QMenu(self)
+        self._spacing_menu.setStyleSheet(menu_qss())
         self._spacing_actions = {}
         for label, value in _SPACINGS:
             act = QAction(label, self, checkable=True)
@@ -690,7 +701,12 @@ class FormatRibbon(QWidget):
 
     # ─── editor binding ─────────────────────────────────────────────────
 
+    def clear_typing_format(self):
+        """Forget the pending typing format (call when the card changes)."""
+        self._typing_fmt = None
+
     def set_editor(self, edit: QTextEdit | None):
+        self._typing_fmt = None
         if self._edit is not None:
             try:
                 self._edit.cursorPositionChanged.disconnect(self.refresh_state)
@@ -731,6 +747,11 @@ class FormatRibbon(QWidget):
                 cursor.mergeCharFormat(fmt)
             else:
                 self._edit.mergeCurrentCharFormat(fmt)
+                self._typing_fmt = (
+                    self._edit, self._edit.document(),
+                    self._edit.document().revision(),
+                    self._edit.textCursor().position(),
+                    self._edit.currentCharFormat())
             self.format_applied.emit()
             self.refresh_state()
 
@@ -784,6 +805,38 @@ class FormatRibbon(QWidget):
         fmt.setProperty(FONT_PROP, font.family())
         self._merge(fmt)
 
+    def _current_font_family(self) -> str:
+        """Effective family: run prop, then deck, then theme ("" = none)."""
+        if self._edit is not None:
+            cf = self._run_char_format()
+            if cf.hasProperty(FONT_PROP):
+                family = str(cf.property(FONT_PROP) or "").strip()
+                if family:
+                    return family
+        for source in (self._deck_format, self._theme_defaults):
+            try:
+                family = str(source.get("font") or "").strip()
+            except AttributeError:
+                family = ""
+            if family:
+                return family
+        return ""
+
+    def _sync_font_combo(self, family: str):
+        """Mirror the effective family without re-applying it.
+
+        QFontComboBox emits currentFontChanged on programmatic changes, so
+        the sync is signal-blocked; otherwise simply selecting a run would
+        stamp a font onto it.
+        """
+        if not family or self._font_combo.currentFont().family() == family:
+            return
+        self._font_combo.blockSignals(True)
+        try:
+            self._font_combo.setCurrentFont(QFont(family))
+        finally:
+            self._font_combo.blockSignals(False)
+
     def _current_size_px(self) -> int:
         """Effective nominal size: run, deck, theme, 20px fallback."""
         if self._edit is not None:
@@ -816,10 +869,10 @@ class FormatRibbon(QWidget):
         self._merge(fmt)
 
     def _step_size(self, delta: int):
-        px = self._current_size_px()
-        steps = sorted(set(_SIZES_PX + [px]))
-        idx = steps.index(px)
-        self._apply_size_px(steps[min(len(steps) - 1, max(0, idx + delta))])
+        # One unit per click — the preset ladder belongs to the dropdown,
+        # not to the steppers (a stepper that jumped preset-to-preset
+        # made fine adjustment impossible).
+        self._apply_size_px(max(1, self._current_size_px() + delta))
 
     def _on_size_combo(self):
         try:
@@ -1270,11 +1323,20 @@ class FormatRibbon(QWidget):
         """
         if self._edit is None:
             return None
+        if (self._typing_fmt is not None
+                and self._typing_fmt[1] is not self._edit.document()):
+            self._typing_fmt = None
         cur = self._edit.textCursor()
         if cur.hasSelection():
             return cur.charFormat()
         block = cur.block()
         if cur.position() == block.position():
+            mark = self._typing_fmt
+            if (mark is not None and mark[0] is self._edit
+                    and mark[1] is self._edit.document()
+                    and mark[2] == self._edit.document().revision()
+                    and mark[3] == cur.position()):
+                return mark[4]
             probe = QTextCursor(self._edit.document())
             probe.setPosition(cur.position())
             return probe.charFormat()
@@ -1415,8 +1477,7 @@ class FormatRibbon(QWidget):
             act.setChecked(v == value)
 
     def _on_spacing_custom(self):
-        from PyQt6.QtWidgets import QInputDialog
-        value, ok = QInputDialog.getDouble(self, "Custom spacing",
+        value, ok = dialogs.get_double(self, "Custom spacing",
                                            "Line spacing (0.5 – 3.0):",
                                            self._deck_spacing or 1.0,
                                            0.5, 3.0, 2)
@@ -1602,6 +1663,7 @@ class FormatRibbon(QWidget):
                 self._outline_size.blockSignals(False)
             for key, btn in self._align_btns.items():
                 btn.setChecked(key == self._eff_align())
+            self._sync_font_combo(self._current_font_family())
             return
         cursor = self._edit.textCursor()
         cf = self._run_char_format()
@@ -1714,3 +1776,4 @@ class FormatRibbon(QWidget):
         import re as _re
         self._btn_numbers.setChecked(bool(_re.match(r"^\d+\.\s+", text)))
         self._size_combo.setCurrentText(str(self._current_size_px()))
+        self._sync_font_combo(self._current_font_family())

@@ -96,6 +96,16 @@ function themeContainer(theme, name) {
     return (keys.length && typeof ct[keys[0]] === "object") ? ct[keys[0]] : {};
 }
 
+// The deck's explicit text size from the latest applyTheme call. Auto-fit
+// normally picks any size between the theme's min/max, which would silently
+// swallow a deck-level `size=` the operator just set. The deck nominal is
+// authorial intent, so it becomes the fit CEILING: the text starts at that
+// size, grows never, and shrinks only when it genuinely overflows (floored
+// by the effective min). Cleared on every theme re-apply so a plain theme
+// switch (slideFormat absent) falls back to the free fit. Read by
+// autoFitText, which always follows applyTheme in the update sequence.
+let _deckTextSize = null;
+
 function applyTheme(theme, slideFormat) {
     if (!theme) return;
     resetTheme();
@@ -185,6 +195,12 @@ function applyTheme(theme, slideFormat) {
 
     // Deck-level slide format overrides theme text (cascade: theme < deck).
     const f = slideFormat || {};
+    // Key ABSENT (applyTheme(theme) alone — e.g. a pure theme re-apply)
+    // leaves the deck size that the on-screen content still carries;
+    // key PRESENT re-measures (null clears it: verses get the free fit).
+    if (slideFormat !== undefined) {
+        _deckTextSize = (f.size_nominal != null) ? f.size_nominal : null;
+    }
     if (f.color) root.style.setProperty("--rc-text-color", f.color);
     if (f.size_nominal != null) root.style.setProperty("--rc-text-size", f.size_nominal + "px");
     if (f.size_min != null) root.style.setProperty("--rc-text-min-size", f.size_min + "px");
@@ -294,9 +310,32 @@ function autoFitText() {
 
     // Get min/max font size from theme (defaults: min 40px, max 55px for fullscreen)
     const minFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-min-size')) || 4;
-    const maxFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-max-size')) || 300;
-
+    let maxFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-max-size')) || 300;
+    // A deck's explicit size is the fit ceiling AND the opener: measure at
+    // the exact intent first (the plain binary search would floor a
+    // converging lo just under it, giving 41px for a 42 setting); on
+    // genuine overflow the search runs below the deck size instead.
+    // (Deck min/max of `size=n,m` ride the SAME vars above, so they need
+    // no separate handling.)
+    if (_deckTextSize != null && _deckTextSize > 0) {
+        maxFontSize = _deckTextSize;
+    }
     let lo = minFontSize, hi = maxFontSize;
+    if (_deckTextSize != null && _deckTextSize > 0) {
+        verseText.style.fontSize = _deckTextSize + 'px';  // exact intent
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
+        if (totalH <= containerH) {
+            lo = hi = _deckTextSize;        // fits: exact, no search
+        } else {
+            hi = _deckTextSize;
+            // Shrink inside the box, but never chase a floor ABOVE the
+            // deck size (a 20px deck on a 40px-min theme stays 20px over
+            // budget — the operator's explicit size may overflow by
+            // intent; auto-fit only fills when unbounded).
+            lo = Math.min(minFontSize, hi);
+        }
+    }
     while (hi - lo > 0.5) {
         const mid = (lo + hi) / 2;
         verseText.style.fontSize = mid + 'px';

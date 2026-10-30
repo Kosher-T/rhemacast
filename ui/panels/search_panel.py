@@ -21,13 +21,17 @@ from ui.styles import (
     PANEL_BODY_STYLE, SHOW_BTN_STYLE,
     ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
     SLATE_300, SLATE_400, SLATE_500, SLATE_600,
-    SLATE_800, WHITE, BORDER_SUBTLE
+    SLATE_800, WHITE, BORDER_SUBTLE,
+    ACCENT_TEXT,
 )
 
 logger = logging.getLogger(__name__)
 
-# Delay (ms) to distinguish single-click from double-click
-_CLICK_DELAY = 250
+
+def _click_interval() -> int:
+    """System double-click interval (honors Windows/RDP/accessibility timing)."""
+    app = QApplication.instance()
+    return app.doubleClickInterval() if app else 400
 
 
 class _SearchResultsList(QListWidget):
@@ -66,11 +70,11 @@ class _TabButton(QPushButton):
             self.setStyleSheet(f"""
                 QPushButton {{
                     background: {ACCENT_SOFT};
-                    color: {ACCENT};
+                    color: {ACCENT_TEXT};
                     border: 1px solid {ACCENT_BORDER};
                     border-radius: 4px;
                     padding: 3px 8px;
-                    font-size: 9px;
+                    font-size: 12px;
                     font-weight: 600;
                 }}
             """)
@@ -82,7 +86,7 @@ class _TabButton(QPushButton):
                     border: 1px solid transparent;
                     border-radius: 4px;
                     padding: 3px 8px;
-                    font-size: 9px;
+                    font-size: 12px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
@@ -93,7 +97,14 @@ class _TabButton(QPushButton):
 
 
 class _TransBadge(QLabel):
-    """Translation badge that emits separate signals for single and double clicks."""
+    """Translation badge that emits separate signals for single and double clicks.
+
+    Single fires only when no second click lands within the system
+    double-click interval: double detection is Qt's own mouse-double-click
+    synthesis, not a fixed timer window, so slow double clicks (long system
+    interval, RDP, accessibility settings) still register as doubles instead
+    of two stray singles.
+    """
 
     single_clicked = pyqtSignal(str, dict)   # version, verse_data
     double_clicked = pyqtSignal(str, dict)   # version, verse_data
@@ -104,17 +115,19 @@ class _TransBadge(QLabel):
         self._verse_data = verse_data
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(_CLICK_DELAY)
+        self._click_timer.setInterval(_click_interval())
         self._click_timer.timeout.connect(self._on_single_click)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self._click_timer.isActive():
-                self._click_timer.stop()
-                self.double_clicked.emit(self._version, self._verse_data)
-            else:
-                self._click_timer.start()
+        if event.button() == Qt.MouseButton.LeftButton and not self._click_timer.isActive():
+            # Arm the delayed single; Qt's double-click synthesis cancels it.
+            self._click_timer.start()
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        self._click_timer.stop()
+        self.double_clicked.emit(self._version, self._verse_data)
 
     def _on_single_click(self):
         self.single_clicked.emit(self._version, self._verse_data)
@@ -134,7 +147,7 @@ class SearchResultWidget(QFrame):
         self.data = data
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(_CLICK_DELAY)
+        self._click_timer.setInterval(_click_interval())
         self._click_timer.timeout.connect(self._on_single_click)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("selected", False)
@@ -176,7 +189,7 @@ class SearchResultWidget(QFrame):
             badge_color = SLATE_600
         conf_label.setStyleSheet(f"""
             color: {badge_color};
-            font-size: 9px;
+            font-size: 12px;
             font-weight: 700;
             background: rgba(255, 255, 255, 0.05);
             border-radius: 3px;
@@ -191,7 +204,7 @@ class SearchResultWidget(QFrame):
         ref = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref)
         from ui.app_theme import area_font, font_qss
-        ref_font = area_font("search.ref", 10, 700,
+        ref_font = area_font("search.ref", 12, 700,
                                   family_key="search.ref_font_family",
                                   weight_key="search.ref_font_weight",
                                   size_key="search.ref_font_size")
@@ -200,7 +213,7 @@ class SearchResultWidget(QFrame):
 
         verse_text = data.get("text", "")
         text_label = QLabel(verse_text)
-        text_font = area_font("search.result", 9,
+        text_font = area_font("search.result", 13,
                                     family_key="search.result_font_family",
                                     weight_key="search.result_font_weight",
                                     size_key="search.result_font_size")
@@ -226,7 +239,7 @@ class SearchResultWidget(QFrame):
             self._trans_badge = _TransBadge(version, get_display_name(version), data)
             self._trans_badge.setStyleSheet(f"""
                 color: {SLATE_500};
-                font-size: 8px;
+                font-size: 12px;
                 font-weight: 600;
                 background: rgba(255, 255, 255, 0.05);
                 border-radius: 2px;
@@ -237,24 +250,27 @@ class SearchResultWidget(QFrame):
         # Send to Schedule button
         send_btn = QPushButton("Send")
         send_btn.setStyleSheet(SHOW_BTN_STYLE)
-        send_btn.setFixedWidth(44)
-        send_btn.setFixedHeight(18)
+        send_btn.setFixedWidth(56)
+        send_btn.setFixedHeight(24)
         send_btn.setToolTip("Add this verse to the schedule")
         send_btn.clicked.connect(lambda: self.send_to_schedule.emit(self.data))
         layout.addWidget(send_btn)
 
     def mousePressEvent(self, event):
         """Handle single/double click on the result row (excluding badge area)."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            # Ignore clicks on the translation badge — it has its own handler
-            if self._trans_badge and self._trans_badge.underMouse():
-                return
-            if self._click_timer.isActive():
-                self._click_timer.stop()
-                self.live_requested.emit(self.data)
-            else:
-                self._click_timer.start()
+        # Presses on the translation badge stay with the badge (it handles
+        # ignoring them); geometry check, not underMouse, so a mid-click
+        # cursor drift cannot re-target the row.
+        if self._trans_badge and self._trans_badge.geometry().contains(event.pos()):
+            super().mousePressEvent(event)
+            return
+        if event.button() == Qt.MouseButton.LeftButton and not self._click_timer.isActive():
+            self._click_timer.start()
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        self._click_timer.stop()
+        self.live_requested.emit(self.data)
 
     def _on_single_click(self):
         self.navigate_requested.emit(self.data)
@@ -312,19 +328,7 @@ class SearchPanel(QWidget):
         self.query_input.setPlaceholderText("e.g., describe it: jesus walks on water...")
         self.query_input.setAccessibleName("Semantic search query")
         self.query_input.setAccessibleDescription("Type a natural language description to find Bible verses")
-        self.query_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {SLATE_800};
-                color: {WHITE};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 12px;
-            }}
-            QLineEdit:focus {{
-                border-color: {ACCENT};
-            }}
-        """)
+        self.query_input.setStyleSheet(self._query_input_style())
         self.query_input.returnPressed.connect(self._on_search)
         input_row.addWidget(self.query_input)
 
@@ -334,11 +338,11 @@ class SearchPanel(QWidget):
         self.search_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT_SOFT};
-                color: {ACCENT};
+                color: {ACCENT_TEXT};
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 6px;
                 padding: 8px 16px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
@@ -371,11 +375,11 @@ class SearchPanel(QWidget):
 
         # Result count labels
         self.verse_count_label = QLabel("")
-        self.verse_count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px;")
+        self.verse_count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         tab_row.addWidget(self.verse_count_label)
 
         self.topic_count_label = QLabel("")
-        self.topic_count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 9px;")
+        self.topic_count_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         tab_row.addWidget(self.topic_count_label)
 
         layout.addLayout(tab_row)
@@ -397,19 +401,6 @@ class SearchPanel(QWidget):
                 outline: 2px solid {ACCENT};
                 outline-offset: -2px;
             }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {SLATE_600};
-                border-radius: 3px;
-                min-height: 30px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
         """)
         layout.addWidget(self.results_list, 1)
 
@@ -427,7 +418,7 @@ class SearchPanel(QWidget):
         # ── Status / latency label ──
         self.status_label = QLabel("")
         self.status_label.setAccessibleName("Search status")
-        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         layout.addWidget(self.status_label)
 
         # History: record which result the operator picks (self-connection).
@@ -442,6 +433,39 @@ class SearchPanel(QWidget):
         self.verse_to_schedule.connect(self._on_pop_schedule)
         self.verse_to_live.connect(self._on_pop_live)
         self.trans_badge_to_live.connect(self._on_pop_live)
+
+        # Settings → Interface: the query box (placeholder included) reads
+        # the same group as the result text.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+
+    def _query_input_style(self) -> str:
+        """Query-box QSS — family/weight/size from "search.result".
+
+        Unset keeps today's 13px / 500; the placeholder inherits it too.
+        """
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("search.result", 13, 500, size_min=8, size_max=16,
+                         family_key="search.result_font_family",
+                         weight_key="search.result_font_weight",
+                         size_key="search.result_font_size")
+        return f"""
+            QLineEdit {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 8px 12px;
+                {font_qss(spec)}
+            }}
+            QLineEdit:focus {{
+                border-color: {ACCENT};
+            }}
+        """
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "search.result":
+            self.query_input.setStyleSheet(self._query_input_style())
 
     def _switch_tab(self, tab: str):
         """Switch between All / Verses / Topics views."""

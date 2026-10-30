@@ -83,7 +83,7 @@ def test_slides_body_to_txt_carries_markers():
         {"section": "V1", "text": "b", "marker": False},
     ]
     body = slides_body_to_txt(slides)
-    assert body == "*V1\na\n\n\nb"
+    assert body == "*V1\na\n\n---\n\nb"
     reparsed = parse_slide_txt(f"# T\n\n\n{body}\n")["slides"]
     assert [(s["section"], s["text"]) for s in reparsed] == [
         ("V1", "a"), ("V1", "b")]
@@ -367,3 +367,100 @@ def test_owns_marker_falls_back_to_value_change():
     raw = deck_to_txt("T", slides)
     assert raw.count("*V") == 1
     assert [line for line in raw.splitlines() if line.strip() == "*"] == ["*"]
+
+
+# ── `---` divider format (txt is the source of truth) ─────────────────────
+
+
+def _texts(raw: str) -> list[str]:
+    return [s["text"] for s in parse_slide_txt(raw)["slides"]]
+
+
+def test_divider_accepts_extra_padding():
+    for raw in (
+        "# T\n\nA\n\n---\n\nB\n",
+        "# T\n\nA\n\n\n\n---\n\n\n\nB\n",
+        "# T\n\nA\n\n\n---\n\n\nB\n",
+        "# T\n\nA\n \n---\n \nB\n",
+    ):
+        assert _texts(raw) == ["A", "B"], raw
+
+
+def test_divider_requires_blank_padding():
+    # No blank line before or after: not a boundary, stays content.
+    raw = "# T\n\nA\n---\nB\n"
+    assert _texts(raw) == ["A\n---\nB"]
+
+
+def test_spacing_inside_a_slide_is_preserved():
+    raw = "# T\n\nA\n\nB\n\n\nC\n\n---\n\nD\n"
+    assert _texts(raw) == ["A\n\nB\n\n\nC", "D"]
+    slides = parse_slide_txt(raw)["slides"]
+    assert _texts(deck_to_txt("T", slides)) == ["A\n\nB\n\n\nC", "D"]
+
+
+def test_empty_slides_between_dividers_and_at_edges():
+    assert _texts("# T\n\nA\n\n---\n\n\n\n---\n\nB\n") == ["A", "", "B"]
+    assert _texts("# T\n\n\n---\n\nA\n") == ["", "A"]
+    # A trailing divider at EOF is an end-marker, not an empty last slide.
+    assert _texts("# T\n\nA\n\n---\n\n") == ["A"]
+
+
+def test_indent_survives_round_trip():
+    raw = "# T\n\n\n    indented\n\tTabbed\nplain\n"
+    slides = parse_slide_txt(raw)["slides"]
+    assert slides[0]["text"] == "    indented\n\tTabbed\nplain"
+    assert parse_slide_txt(deck_to_txt("T", slides))["slides"][0]["text"] == slides[0]["text"]
+
+
+def test_legacy_single_blank_is_content_but_double_blank_splits():
+    assert _texts("# T\n\nA\n\nB\n") == ["A\n\nB"]
+    assert _texts("# T\n\nA\n\n\nB\n") == ["A", "B"]
+
+
+def test_legacy_section_still_starts_a_slide():
+    slides = parse_slide_txt("# T\n\n*V1\nA\n\n\n*V2\nB\n")["slides"]
+    assert [(s["section"], s["text"]) for s in slides] == [
+        ("V1", "A"), ("V2", "B")]
+
+
+def test_bordered_section_marker_does_not_split():
+    slides = parse_slide_txt(
+        "# T\n\n*V1\nA\n\n---\n\n*Chorus\nB\n")["slides"]
+    assert [(s["section"], s["text"], s["marker"]) for s in slides] == [
+        ("V1", "A", True), ("Chorus", "B", True)]
+
+
+def test_bordered_bare_star_clears_section_without_splitting():
+    slides = parse_slide_txt(
+        "# T\n\n*V1\nA\n\n---\n\n*\nB\n")["slides"]
+    assert slides[1] == {"section": None, "text": "B", "marker": True}
+
+
+def test_bordered_round_trip_with_empty_and_spaced_slides():
+    slides = [
+        {"section": "V", "text": "a\n\nb", "marker": True},
+        {"section": None, "text": "", "marker": True},
+        {"section": "C", "text": "c", "marker": True},
+    ]
+    assert parse_slide_txt(deck_to_txt("T", slides))["slides"] == slides
+
+
+def test_single_slide_serializes_as_bordered_for_lossless_spacing():
+    raw = "# T\n\nA\n\nB\n\n\nC\n\n---\n"
+    slides = parse_slide_txt(raw)["slides"]
+    assert len(slides) == 1
+    out = deck_to_txt("T", slides)
+    assert out.rstrip().endswith("---")
+    assert parse_slide_txt(out)["slides"][0]["text"] == "A\n\nB\n\n\nC"
+
+
+def test_prune_empty_slides_keeps_section_only_cards():
+    from core.slide_parser import prune_empty_slides
+    slides = [
+        {"section": None, "text": "", "marker": False},
+        {"section": None, "text": "  \n\n ", "marker": False},
+        {"section": "V", "text": "", "marker": True},
+        {"section": "V", "text": "a", "marker": False},
+    ]
+    assert prune_empty_slides(slides) == [slides[2], slides[3]]

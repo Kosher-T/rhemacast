@@ -21,11 +21,14 @@ from PyQt6.QtCore import Qt, QEvent, QRectF, QObject
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QApplication, QFrame, QWidget
 from PyQt6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
+
+from ui.tokens import ACCENT as ACCENT_ROLE
+
 RING_WIDTH = 1
 RING_RADIUS = 8
-# Opaque accent reads as a heavy band on dark panels; a softened stroke
-# keeps the full 2px footprint while sitting lighter on the background.
-RING_ALPHA = 185
+# A focus ring is chrome, not text: the accent at ~40% reads as a lit edge
+# without becoming the loudest thing in the window (it was 73%).
+RING_ALPHA = 102
 
 
 class FocusRingOverlay(QFrame):
@@ -37,7 +40,7 @@ class FocusRingOverlay(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._color = QColor("#a855f7")
+        self._color = QColor(ACCENT_ROLE)
         self.hide()
 
     def set_color(self, hex_color: str):
@@ -95,9 +98,8 @@ def install_focus_ring(widget: QWidget, manual: bool = False) -> None:
     if getattr(widget, "_focus_ring_installed", False):
         return
     try:
-        from ui.styles import ACCENT
         overlay = FocusRingOverlay(widget)
-        overlay.set_color(ACCENT)
+        overlay.set_color(ACCENT_ROLE)
         widget._focus_ring_overlay = overlay
     except Exception:
         return

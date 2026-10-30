@@ -15,12 +15,14 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from ui.popups import install_combo
 from PyQt6.QtGui import QColor
 
 from ui.styles import SLATE_500, SLATE_400, WHITE, BLUE_500
 from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, ACCENT, SELECTION_BG, SELECTION_BORDER,
     SLATE_600, TEXT_SELECTION,
+    ACCENT_TEXT,
 )
 
 
@@ -32,14 +34,14 @@ _INPUT_STYLE = (
     "border-radius: 4px;"
     "padding: 2px 6px;"
     "color: " + TEXT_PRIMARY + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
     "color: " + TEXT_FAINT + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
 )
@@ -51,7 +53,7 @@ _COMBO_STYLE = (
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "}"
     "QComboBox::drop-down {"
     "  border: none;"
@@ -220,6 +222,7 @@ class FontRow(QWidget):
         layout.addWidget(lbl)
 
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.setFixedHeight(22)
         self._combo.addItems(self.FONTS)
         self._combo.setStyleSheet(_COMBO_STYLE)
@@ -266,6 +269,7 @@ class WeightRow(QWidget):
         layout.addWidget(lbl)
 
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.setFixedHeight(22)
         for label, _ in self.WEIGHTS:
             self._combo.addItem(label)
@@ -300,8 +304,8 @@ class SectionLabel(QLabel):
         self.setStyleSheet(
             "background: transparent;"
             "border: none;"
-            "color: " + SLATE_600 + ";"
-            "font-size: 9px;"
+            "color: " + TEXT_FAINT + ";"
+            "font-size: 12px;"
             "font-weight: 700;"
             "text-transform: uppercase;"
             "letter-spacing: 1px;"
@@ -342,7 +346,7 @@ class ElementToggle(QFrame):
             "background: transparent;"
             "border: none;"
             "color: " + TEXT_MUTED + ";"
-            "font-size: 10px;"
+            "font-size: 12px;"
             "font-weight: 600;"
         )
         layout.addWidget(self._label)
@@ -414,7 +418,7 @@ class ElementToggle(QFrame):
                 "background: transparent;"
                 "border: none;"
                 "color: " + TEXT_PRIMARY + ";"
-                "font-size: 10px;"
+                "font-size: 12px;"
                 "font-weight: 600;"
             )
         else:
@@ -430,15 +434,15 @@ class ElementToggle(QFrame):
                     "background: transparent;"
                     "border: none;"
                     "color: " + TEXT_MUTED + ";"
-                    "font-size: 10px;"
+                    "font-size: 12px;"
                     "font-weight: 600;"
                 )
             else:
                 self._label.setStyleSheet(
                     "background: transparent;"
                     "border: none;"
-                    "color: " + SLATE_600 + ";"
-                    "font-size: 10px;"
+                    "color: " + TEXT_FAINT + ";"
+                    "font-size: 12px;"
                     "font-weight: 600;"
                 )
 
@@ -543,11 +547,6 @@ class ThemePropertiesPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 5px; }"
-            "QScrollBar::handle:vertical {"
-            "  background: rgba(255,255,255,0.1);"
-            "  border-radius: 2px;"
-            "}"
         )
 
         self._content = QWidget()
@@ -577,10 +576,10 @@ class ThemePropertiesPanel(QWidget):
             return (
                 "QPushButton {"
                 "  background: " + SELECTION_BG + ";"
-                "  color: " + ACCENT + ";"
+                "  color: " + ACCENT_TEXT + ";"
                 "  border: none;"
                 "  border-radius: 4px;"
-                "  font-size: 10px;"
+                "  font-size: 12px;"
                 "  font-weight: 700;"
                 "  padding: 0 12px;"
                 "}"
@@ -591,7 +590,7 @@ class ThemePropertiesPanel(QWidget):
                 "  color: " + TEXT_FAINT + ";"
             "  border: none;"
             "  border-radius: 4px;"
-            "  font-size: 10px;"
+            "  font-size: 12px;"
             "  font-weight: 700;"
             "  padding: 0 12px;"
             "}"

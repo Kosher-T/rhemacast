@@ -28,12 +28,13 @@ size=35, 25, 35; bold=true; color=#66ff00; italics=false; case=origin
 Lyric line one
 Lyric line two with a [colored run (color=#ff6600; bold=true)] inside
 
+---
 
 *Next Section
 More lyrics
 ```
 
-Blank lines, markers, and the format line are never displayed.
+Blank lines, markers, dividers, and the format line are never displayed.
 
 Paragraph example (gap renders at 12px instead of the text size):
 
@@ -61,10 +62,25 @@ Second paragraph after the gap
   Clearing a chip merges the slide into the run above (or section-less
   when nothing owns above). Dicts without the `marker` key (imports, old
   DB rows) fall back to the value-change rule and group as before.
-- **Slides:** one or more non-empty lines. Single `\n` = line break *within*
-  a slide. Single blank line = ignored spacing. **Double blank line
-  (`\n\n\n`) = slide boundary.** Five+ blanks + a title = NEW SONG split
-  (multi-song file) — never emit 5+ consecutive newlines unintentionally.
+- **Slides (v3, current):** slides are separated by a **divider line** —
+  a line containing exactly `---`, blank-padded (a blank line before and
+  after; start/end of file count as blank). Extra blank lines around the
+  divider are fine and trimmed. Everything else — including any number of
+  blank lines — is slide content and is preserved verbatim. A deck with a
+  single slide ends with a trailing `\n\n---` end-marker so it still
+  declares the v3 format (blank-line spacing round-trips losslessly);
+  a trailing divider at EOF is a terminator, not an empty slide.
+- **Slides (v2 legacy, read-only fallback):** applies only when the file
+  has **no** divider. Single `\n` and single blank lines are preserved as
+  content; **double blank line (`\n\n\n`) = slide boundary**; `*Name`
+  starts a new slide. Old app-written decks therefore still load exactly
+  as before; save them once through the Lite Designer to upgrade them to
+  v3 (dividers). Five+ blanks + a title = NEW SONG split (multi-song
+  file) — never emit 5+ consecutive newlines unintentionally.
+- **Sections in v3:** `*Name` no longer splits a slide; it sets the
+  section for the rest of that slide and stays sticky across dividers.
+- **Empty slides:** allowed transiently in the editor (placeholder card);
+  saving a deck drops all empty cards (`prune_empty_slides`).
 - **Inline runs:** `[display text (param=value; param=value)]`. The params
   group must be the **final** `(...)` before `]`. Text may contain `(` `)`.
   `[brackets]` never nest. Unknown/invalid params are skipped; a bracket
@@ -82,9 +98,8 @@ Second paragraph after the gap
 
 | Key | Values | Deck line | Inline run |
 |-----|--------|-----------|------------|
-| `size` | numbers, `px` suffix ok | `size=nominal, min, max` — missing parts inherit theme | `size=##` — single absolute px, first number wins |
-| `bold` | `true` / `false` | → weight 800 / 400 | → `font-weight:700` / `400` |
-| `color` | `#rgb` / `#rrggbb` | text color | span color |
+| `size` | numbers, `px` suffix ok | `size=nominal, min, max` — missing parts inherit theme; the **set nominal renders exactly as set** — auto-fit never grows past it and only shrinks inside the box when it truly overflows | `size=##` — single absolute px, first number wins |
+| `bold` | `true` / `false` | → weight 800 / 400 | → `font-weight:700` / `400` || `color` | `#rgb` / `#rrggbb` | text color | span color |
 | `italics` | `true` / `false` | `font-style:italic` / `normal` | same, per span |
 | `case` | `upper` / `lower` / `origin` | `text-transform` (`origin` = as written) | same, per span (`origin` resets to none) |
 | `underline` | `true` / `false` | deck-wide underline / none | span underline / none |
@@ -120,7 +135,8 @@ Unset = inherit from the level below. Example: theme normal + deck
 
 1. Keep the format line (if any) as the **first non-blank line(s)**.
 2. Preserve `#` title, `*` section markers (one per section — repeat only
-   on change), and double-blank slide boundaries.
+   on change), and blank-padded `---` slide dividers (v3); legacy files
+   without dividers keep double-blank boundaries.
 3. Never emit 5+ consecutive newlines unless splitting songs.
 4. Inline params last in brackets; verify every `[` has a matching `]`.
 5. After editing, re-parse mentally: title correct? sections sticky as
@@ -143,18 +159,23 @@ never merged into one section: each owns its slide (the Lite Designer
 shows each name in its chip), the serializer re-emits every marker as a
 repeated `*Name` line, and re-parse reproduces the split losslessly.
 
-## Slide format v3 (DRAFT — not implemented)
+## Slide format v3 (implemented)
 
-Everything below is a documented direction. Only v3-format sources get
-this behavior; **v2 remains the default** for any raw text pasted into the
-Lite Designer or imported from a txt file.
+v3 is the current format; there is no opt-in flag. A file is treated as v3
+when it contains at least one divider: a line that is exactly `---` with a
+blank line before and after (start/end of file count as blank). Everything
+from v2 carries forward **except** slide boundaries:
 
-- Files opt in with the text `v3` at the top of the txt file.
-- Everything from v2 carries into v3, **except** slide boundaries: v3
-  denotes them with the specific pattern `\n\n---\n\n` instead of `\n\n\n`.
-  Anything else — including multiple consecutive newlines — is slide
-  content, barring new section syntax, of course.
-- The v2 section rule above is taken forward into v3 unchanged.
+- Dividers are the only slide boundaries. Multiple consecutive newlines
+  inside a slide are content and are preserved. `*Name` sets the section
+  for the remainder of that slide (sticky across dividers) and does not
+  split.
+- A file with no divider is parsed with the v2 fallback above (old decks
+  keep working). Saving through the Lite Designer writes v3.
+- In the Lite Designer: **Ctrl+Enter** inserts `\n\n---\n\n` at the
+  caret (a new card below); **Ctrl+Ins** / **Ctrl+Down** add a card and
+  continue editing there; Enter / Shift+Enter are soft line breaks; Tab
+  indents a paragraph. Empty cards are pruned on save.
 - Future element syntax (tables and friends) will borrow from markdown
   syntax. Table rendering does not exist yet; do not author tables
   expecting them to display.

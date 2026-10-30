@@ -640,8 +640,8 @@ def _outline_color_at(edit, pos=0):
 
 
 def test_outline_color_button_opens_inline_picker_not_a_dialog(qapp):
-    """The designer is a Popup: a modal QColorDialog would deactivate and
-    close it on every click, so picking must never open a window."""
+    """Picking a color must never open a second window: the inline bar
+    keeps editor focus and the working selection intact."""
     from ui.widgets.lite_designer.format_ribbon import FormatRibbon
     r = _ribbon()
     e = _editor()

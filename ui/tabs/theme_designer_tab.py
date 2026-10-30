@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from ui.popups import install_combo
 from PyQt6.QtGui import QFont
 
 from ui.widgets.theme_properties_panel import ThemePropertiesPanel
@@ -27,6 +28,7 @@ from ui.widgets.container_editor import ContainerEditor
 from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, SLATE_300, BG_RAISED,
     ACCENT, ACCENT_HOVER, SELECTION_BG, CHROME_SOFT, TEXT_SELECTION,
+    ACCENT_TEXT,
 )
 import core.theme_loader
 
@@ -43,7 +45,7 @@ _JSON_EDITOR_STYLE = (
     "  border-radius: 8px;"
     "  color: " + SLATE_300 + ";"
     "  font-family: 'Consolas', 'Courier New', monospace;"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  padding: 8px;"
     "  selection-background-color: " + TEXT_SELECTION + ";"
     "}"
@@ -56,7 +58,7 @@ _TOOLBAR_BTN_STYLE = (
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 6px;"
     "  padding: 5px 12px;"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  font-weight: 600;"
     "}"
     "QPushButton:hover {"
@@ -72,7 +74,7 @@ _TOOLBAR_BTN_PRIMARY = (
     "  border: none;"
     "  border-radius: 6px;"
     "  padding: 5px 14px;"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"
@@ -90,7 +92,7 @@ _TOOLBAR_BTN_SECONDARY = (
     "  border: 1px solid rgba(255, 255, 255, 0.1);"
     "  border-radius: 6px;"
     "  padding: 5px 12px;"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  font-weight: 600;"
     "}"
     "QPushButton:hover {"
@@ -106,7 +108,7 @@ _TOOLBAR_BTN_GHOST = (
     "  border: none;"
     "  border-radius: 6px;"
     "  padding: 5px 10px;"
-    "  font-size: 11px;"
+    "  font-size: 12px;"
     "  font-weight: 600;"
     "}"
     "QPushButton:hover {"
@@ -118,10 +120,10 @@ _TOOLBAR_BTN_GHOST = (
 _TAB_BTN_ACTIVE = (
     "QPushButton {"
     "  background: " + SELECTION_BG + ";"
-    "  color: " + ACCENT + ";"
+    "  color: " + ACCENT_TEXT + ";"
     "  border: none;"
     "  border-radius: 4px;"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  font-weight: 700;"
     "  padding: 0 12px;"
     "}"
@@ -133,7 +135,7 @@ _TAB_BTN_INACTIVE = (
     "  color: " + TEXT_FAINT + ";"
     "  border: none;"
     "  border-radius: 4px;"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  font-weight: 700;"
     "  padding: 0 12px;"
     "}"
@@ -147,7 +149,7 @@ _THEME_COMBO_STYLE = (
     "  border-radius: 6px;"
     "  padding: 4px 10px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 12px;"
+    "  font-size: 13px;"
     "  font-weight: 600;"
     "  min-width: 120px;"
     "}"
@@ -347,6 +349,7 @@ class ThemeDesignerTab(QWidget):
 
         # Theme selector combo
         self._theme_combo = QComboBox()
+        install_combo(self._theme_combo)
         self._theme_combo.setStyleSheet(_THEME_COMBO_STYLE)
         self._theme_combo.currentTextChanged.connect(self._on_combo_changed)
         layout.addWidget(self._theme_combo)
@@ -362,7 +365,7 @@ class ThemeDesignerTab(QWidget):
         # Description
         self._desc_label = QLabel("")
         self._desc_label.setStyleSheet(
-            "color: " + TEXT_FAINT + "; font-size: 10px; background: transparent; "
+            "color: " + TEXT_FAINT + "; font-size: 12px; background: transparent; "
             "padding: 0 4px;"
         )
         self._desc_label.setSizePolicy(
@@ -480,7 +483,7 @@ class ThemeDesignerTab(QWidget):
         json_header.setSpacing(4)
         lbl = QLabel("Theme JSON")
         lbl.setStyleSheet(
-            "color: " + TEXT_MUTED + "; font-size: 10px; font-weight: 700; "
+            "color: " + TEXT_MUTED + "; font-size: 12px; font-weight: 700; "
             "text-transform: uppercase; letter-spacing: 1px; background: transparent;"
         )
         json_header.addWidget(lbl)
@@ -578,6 +581,27 @@ class ThemeDesignerTab(QWidget):
 
         # Update JSON display
         self._update_json_display()
+
+    # ── Unload contract (see MainWindow._unload_tab) ─────────────────────
+
+    def is_dirty(self) -> bool:
+        """True when the working copy differs from the last loaded/saved one."""
+        return bool(self._working_theme) and self._working_theme != self._original_theme
+
+    def can_unload(self):
+        if self.is_dirty():
+            return False, (
+                "Theme Designer has unsaved changes. Save or discard them "
+                "before unloading the tab.")
+        return True, ""
+
+    def current_state(self) -> dict:
+        return {"theme": self._theme_name}
+
+    def restore_state(self, state: dict) -> None:
+        name = state.get("theme")
+        if name:
+            self.set_theme(name)
 
     # ─── Signal handlers ──────────────────────────────────────────────────────
 

@@ -57,8 +57,6 @@ def _panel(tmp_path, monkeypatch):
                  "confidence": 9.0}]
 
     monkeypatch.setattr(mod, "fts_search", fake_hybrid)
-    monkeypatch.setattr(
-        mod, "keyword_search", lambda query, limit=30: ([], 0.0, "KJV"))
     panel = mod.FtsSearchPanel()
     panel._paint_per_frame = 10 ** 9  # deterministic: paint all at once
     panel.show()
@@ -139,8 +137,6 @@ def test_sweep_runs_off_gui_thread(tmp_path, monkeypatch):
         return []
 
     monkeypatch.setattr(mod, "fts_search", fake_hybrid)
-    monkeypatch.setattr(
-        mod, "keyword_search", lambda query, limit=30: ([], 0.0, "KJV"))
     panel.query_input.setText("thread check")
     panel._debounce_timer.stop()
     panel._execute_search()
@@ -254,8 +250,6 @@ def test_pop_boost_lifts_repeat_pick(tmp_path, monkeypatch):
                  "confidence": 50.0}]
 
     monkeypatch.setattr(mod, "fts_search", fake_hybrid)
-    monkeypatch.setattr(
-        mod, "keyword_search", lambda query, limit=30: ([], 0.0, "KJV"))
     panel = mod.FtsSearchPanel()
     panel._paint_per_frame = 10 ** 9
     panel.show()

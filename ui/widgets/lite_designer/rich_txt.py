@@ -263,11 +263,18 @@ def txt_to_doc(text: str) -> QTextDocument:
         fresh = True  # current block untouched by this line so far
 
         # Literal list prefixes persist as text; the indent is editor-only.
-        line = line.strip()
+        # Leading whitespace is paragraph indent — part of the txt, so it
+        # must survive the load (Tab indent round-trips through save).
+        raw_line = line
+        line = raw_line.strip()
+        leading = raw_line[:len(raw_line) - len(raw_line.lstrip(" \t"))]
         if _list_kind(line):
             indent = QTextBlockFormat()
             indent.setIndent(1)
             cursor.mergeBlockFormat(indent)
+        if leading and line:
+            cursor.insertText(leading, QTextCharFormat())
+            fresh = False
 
         # Block keys are line-scoped (last wins); per-run application below.
         parts = list(_iter_inline_parts(line))
@@ -307,6 +314,12 @@ def txt_to_doc(text: str) -> QTextDocument:
                               if params.get(k) is not None}
                 if block_keys:
                     _apply_block_props(cursor, block_keys)
+
+        if not parts:
+            # A blank line occupies its own block: the next line must open
+            # a new one. Without this, the blank block is reused and the
+            # empty line silently disappears on the next load.
+            fresh = False
 
     return doc
 
@@ -363,11 +376,14 @@ def txt_to_display_doc(text: str) -> QTextDocument:
             cursor.insertBlock()
         first = False
         stripped = line.strip()
+        leading = line[:len(line) - len(line.lstrip(" \t"))]
         if _list_kind(stripped):
             indent = QTextBlockFormat()
             indent.setIndent(1)
             cursor.mergeBlockFormat(indent)
-        for part, params in _iter_inline_parts(line):
+        if leading and stripped:
+            cursor.insertText(leading, QTextCharFormat())
+        for part, params in _iter_inline_parts(stripped):
             if params is not None and is_hr_run(params):
                 continue  # rule-only: no words to show
             if params is not None and _is_gap_text(part):

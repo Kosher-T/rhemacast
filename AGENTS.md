@@ -10,6 +10,9 @@ RhemaCast is a real-time sermon transcription system that captures live audio, t
 # Run the app (must have venv activated or use venv/bin/python)
 python debug.py
 
+# Dev-only dialog/popup gallery (every dialog kind, combo, menu, tooltip)
+python dev/ui_gallery.py
+
 # Run all tests
 python -m pytest tests/ -v
 
@@ -74,6 +77,7 @@ Shutdown cascade: poison pills pushed through Queue A → B → DB queue.
 - **Events** are dataclasses in `core/events.py` (TranscriptChunk, SearchResult, etc.)
 - **Errors** hierarchy in `core/errors.py` — Continue → Degrade → Failover → Shutdown
 - **Intent classifier** is pure regex from `data/intent_triggers.json` (< 1ms, no ML)
+- **Keyword (FTS) lane** ranks on keyword match only: coverage counted from the verse text (most distinct query words wins) → literal-phrase adjacency → FTS5 bm25. Recall is AND-first; a thin AND set adds one bounded OR sweep over the longest stems (`FTS_PARTIAL_*`), not per-word probes. No semantic blending, no BM25 postings rerank, no typo widening — a verse carrying 5 of 6 words must still beat a 1-of-6 single-word hit
 - **Embedding model** loads with ONNX CPU backend: `backend="onnx", model_kwargs={"provider": "CPUExecutionProvider"}`
 
 ## Themes System
@@ -87,6 +91,20 @@ Shutdown cascade: poison pills pushed through Queue A → B → DB queue.
 - WebSocket payload includes `"theme_data": get_theme(name)` — the full theme dict
 - `display/display.js` applies themes via `applyTheme()` which sets CSS custom properties on `:root`
 - `display/themes.css` uses `var(--rc-*, fallback)` for all styling — transparent background for OBS overlay
+
+## App Typography
+
+- `ui/typography.py` `install(app)` runs in `RhemaCastApp.__init__` (after `QApplication`, before any widget): registers the bundled Inter faces in `ui/assets/fonts/` (Regular/Medium/SemiBold/Bold + `OFL.txt`) and sets the app `QFont` — 13px, weight 500, `PreferAntialias` + full hinting. Never `QApplication.setFont` anywhere else
+- `RHEMA_TEXT_MODE` A/B switch: `full` (default, full hinting), `none` (no hinting), `legacy` (pre-typography: system font, Qt defaults)
+- `install()` verifies the family Qt actually reports (`applicationFontFamilies`) instead of assuming the file name; a missing/corrupt bundle falls back to Inter → Noto → DejaVu → Sans Serif
+- Sizes in code are **defaults, never enforcement**. Per-area type is settings-backed in Settings → Interface; the operator's saved value is used as-is, at whatever size they picked — do not clamp it on read. The 12/13px choices are simply today's defaults
+- Ten font groups, each with `<prefix>.font_family` / `_weight` / `_size` settings keys and a Settings → Interface card: `bible.verse` (13/400), `bible.ref` (12/700), `slides.strip` (13/400), `slides.deck` (13/400), `slides.editor` (13/400), `search.result` (13/400), `search.ref` (12/700), `tabs.names` (12/600 top bar, 12/700 sub-page row), `panel.labels` (13/600; SlideGrid captions default 12/700, LIVE 13/700), `schedule.cards` (ref 12/600, theme 12/400, rename 13/400). Consumers call `area_font(prefix, size_default, weight_default, size_min=..., size_max=...)` + `font_qss()` — never hardcode a size
+- Search/translation/navigator chrome joins the same groups: the translation bar reads `panel.labels` (buttons 12/700, + Add 12/600, and the Add button is not a translation — sorts must leave it pinned after the stretch), the Bible navigator (book/chapter/verse + colon) reads `bible.verse` (fields 13/600, colon 14/500), Keyword/Semantic query boxes and the book filter read `search.result` (13/500), and the Deck List search box reads `slides.deck` (13/500); their placeholders inherit the box font
+- **Navigator numbering is a tandem**: chapter and verse share one fitted lane (`_fit_numeric_fields`, three digits reserved, 48px at the default font) and centre their digits; editing the book resets chapter+verse to 1, editing the chapter resets verse to 1 — on the edit itself, not on the next Space/arrow commit. Programmatic writes (`set_values`, `reset`) hold the rule off via `_tandem_suppressed`, and one edit must produce one `navigate_requested`
+- Chrome that is always on screen (top tab names, text-tab rows, panel headers, schedule rows) re-reads its group live: `subscribe_interface_font_changed(cb)` / `notify_interface_font_changed(prefix)` in `ui/app_theme.py` (lazy QObject bus; Settings saves emit it). New always-visible text should join this path instead of needing an app restart
+- Slide/deck *content* is authored separately in points (`rich_txt.py`, painters) — UI size defaults do not apply there
+- Only three weights are in use: 500 body (the app font default), 600 section labels/emphasis, 700 headings. `accent_text` (not `accent`) is the accent-coloured *text* role; `accent` stays a fill/border
+- Do not re-add `WA_TranslucentBackground` to `MainWindow`: an RGBA top-level surface forces grayscale glyph antialiasing for the whole window
 
 ## Operator Display Behavior
 

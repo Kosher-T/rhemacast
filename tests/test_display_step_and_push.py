@@ -554,10 +554,13 @@ def _cycler_stub(display_keys=("SCRIPTURE", "SLIDES")):
     import ui.main_window as mw
 
     class _Stub:
+        # Display tabs are identified by one class-level tuple in production.
+        _DISPLAY_TAB_KEYS = mw.MainWindow._DISPLAY_TAB_KEYS
+
         def __init__(self):
             self._tabs = {k: object() for k in display_keys}
             self._tabs["SETTINGS"] = object()
-            self._tabs["HISTORY"] = object()
+            self._tabs["LIBRARY"] = object()
             self.stack = _Stack()
             self.cycled = []
 
@@ -604,7 +607,7 @@ def test_ctrl_alt_arrows_cycle_display_tabs_and_wrap():
 
 
 def test_cycle_skips_non_display_tabs():
-    """Settings/History/Library are not display tabs and stay off the path."""
+    """Settings/Library are not display tabs and stay off the path."""
     stub, Qt = _cycler_stub()
     stub.stack.current = _names_for(stub).index("SETTINGS")
     stub.cycled.clear()
@@ -614,7 +617,7 @@ def test_cycle_skips_non_display_tabs():
     stub._maybe_display_tab_chord(_FakeEvent(Qt.Key.Key_Right, ctrl_alt))
     assert stub.cycled == ["SCRIPTURE", "SLIDES"]
     # Left from a core tab continues backward to the nearest display tab.
-    stub.stack.current = _names_for(stub).index("HISTORY")
+    stub.stack.current = _names_for(stub).index("LIBRARY")
     stub.cycled.clear()
     stub._maybe_display_tab_chord(_FakeEvent(Qt.Key.Key_Left, ctrl_alt))
     assert stub.cycled == ["SLIDES"]

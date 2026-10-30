@@ -701,6 +701,84 @@ def _surface_words(text: str) -> list:
 
 _SURFACE_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)?", re.UNICODE)
 
+_GROUP_PART_RE = re.compile(r'"([^"]+)"|([^\W_]+)\*', re.UNICODE)
+
+
+def _group_match_specs(groups: List[str]) -> list:
+    """Decompose MATCH groups into tests the verse text can be scored by.
+
+    Each spec is `(stem_prefixes, raw_phrases)`. A verse carries the
+    group when any of its words stems to a prefix FTS5 would accept for
+    `stem*`, or when a quoted raw alternative appears as a token phrase.
+    This is how coverage is counted from the verse itself instead of
+    inferred from which probe happened to return the row.
+    """
+    specs = []
+    for group in groups:
+        prefixes = []
+        raws = []
+        for match in _GROUP_PART_RE.finditer(group or ""):
+            if match.group(1) is not None:
+                raws.append(tuple(_surface_words(match.group(1))))
+            else:
+                prefixes.append(match.group(2).lower())
+        specs.append((tuple(dict.fromkeys(prefixes)),
+                      tuple(dict.fromkeys(raws))))
+    return specs
+
+
+def _coverage_count(text: str, specs: list, stem_cache: dict) -> int:
+    """How many query groups this verse literally carries.
+
+    Pure prefix matching, mirroring the FTS5 `stem*` rule: one covered
+    group per query word, no partial credit and no proximity weighting.
+    `stem_cache` is shared across the result pool so each surface word is
+    stemmed once.
+    """
+    from core.text_utils import STEMMER
+    words = []
+    for surface in _surface_words(text):
+        words.extend(part for part in surface.split("'") if part)
+    stems = [stem_cache.setdefault(w, STEMMER.stemWord(w)) for w in words]
+    covered = 0
+    for prefixes, raws in specs:
+        if any(stem.startswith(prefix)
+               for stem in stems for prefix in prefixes):
+            covered += 1
+            continue
+        for raw in raws:
+            if not raw:
+                continue
+            if len(raw) == 1:
+                hit = raw[0] in words
+            else:
+                hit = any(tuple(words[i:i + len(raw)]) == raw
+                          for i in range(len(words) - len(raw) + 1))
+            if hit:
+                covered += 1
+                break
+    return covered
+
+
+def _partial_pool_groups(groups: List[str]) -> List[str]:
+    """Groups that seed the partial-match OR pool.
+
+    Longest stems first: they discriminate, and short function words
+    only enlarge the scan. A query with fewer than two long words keeps
+    its short ones, so "noah ark" still probes both terms; the cap keeps
+    the number of OR operands independent of query length.
+    """
+    from core.constants import FTS_PARTIAL_MIN_STEM, FTS_PARTIAL_TERMS
+    chosen = [g for g in groups
+              if len(_group_stem(g)) >= FTS_PARTIAL_MIN_STEM]
+    if len(chosen) < 2:
+        chosen_set = set(chosen)
+        rest = sorted((g for g in groups if g not in chosen_set),
+                      key=lambda g: (-len(_group_stem(g)), g))
+        chosen.extend(rest[:2 - len(chosen)])
+    chosen.sort(key=lambda g: (-len(_group_stem(g)), g))
+    return chosen[:FTS_PARTIAL_TERMS]
+
 
 def _matched_surfaces(text: str, query_stems: set,
                       query_grams: set) -> list:
@@ -871,9 +949,11 @@ def fts_search(query: str, version: str = "KJV",
     Strong's lanes beside this one.
 
     Recall is AND-first: the AND of the query terms is what an operator
-    searching for a phrase actually wants. Only a thin AND set pays for
-    per-term top-ups, so partial matches appear below the full matches
-    instead of burying them.
+    searching for a phrase actually wants. When that set is thin, one
+    bounded OR sweep over the query's most discriminating words fills the
+    pool with partial matches, and coverage is then counted from each
+    verse's own text — so a verse carrying five of six words beats a
+    verse carrying one, even if the operator mistyped the sixth.
     """
     from core.text_utils import split_search_words, STOP_WORDS, tokenize
     words = split_search_words(query)
@@ -894,46 +974,60 @@ def fts_search(query: str, version: str = "KJV",
 
     # FTS5 will not read a parenthesised group as an implicit-AND operand
     # ("a* (b* OR c*)" is a syntax error), so the conjunction is explicit.
-    ranked = _fts_ranked(" AND ".join(groups), version, limit)
-    ids = [rid for rid, _ in ranked]
+    # Over-fetch before the adjacency tie-break: the exact phrase can sit
+    # just below bm25's cutoff and should still be allowed to win.
+    from core.constants import FTS_AND_POOL_EXTRA
+    and_pool = max(limit * 3, limit + FTS_AND_POOL_EXTRA)
+    ranked = _fts_ranked(" AND ".join(groups), version, and_pool)
+    and_ids = [rid for rid, _ in ranked]
+    ids = list(and_ids)
     score = {rid: sc for rid, sc in ranked}
-    coverage = {rid: len(groups) for rid in ids}
 
-    if len(ids) < limit:
-        # Thin AND: top up so a verse carrying only SOME of the words still
-        # surfaces (below every full match, via coverage).
-        #
-        # Bounded on purpose. Every probe is a prefix scan over the whole
-        # verse corpus, and the naive "probe every word" version made
-        # latency grow with query length — the exact complaint from the
-        # field. Probe the longest stems first: "sight" and "walk"
-        # discriminate, "we" and "for" match nearly every verse and buy
-        # almost no recall for a full corpus scan. The cap (see
-        # constants.FTS_TOPUP_TERMS) then makes the cost independent of
-        # how much the operator has typed.
+    if len(groups) > 1 and len(ids) < limit:
+        # Thin AND: one bounded OR sweep so verses carrying MOST of the
+        # words still enter the pool. Without it, a single irrelevant word
+        # ("mountain" where the operator meant "rock") excludes a 5-of-6
+        # verse from the AND set, and per-term probes only surface
+        # single-word hits — the exact miss that buried Matthew 16:18.
+        from core.constants import FTS_PARTIAL_POOL
+        pool = max(FTS_PARTIAL_POOL, limit * 4)
+        pool_groups = _partial_pool_groups(groups)
+        for rid, sc in _fts_ranked(" OR ".join(pool_groups), version, pool):
+            if rid not in score:
+                score[rid] = sc
+                ids.append(rid)
+
+    if len(groups) > 1 and len(ids) < limit:
+        # Still short (rare words): bounded per-term filler. Each probe is
+        # a prefix scan, so this stays a last resort — coverage below does
+        # not depend on which probe happened to return a row.
         from core.constants import FTS_TOPUP_TERMS
         probes = sorted(groups,
                         key=lambda g: (-len(_group_stem(g)), g))[:FTS_TOPUP_TERMS]
         per_term = max(50, (limit - len(ids)) // max(1, len(probes)) + 1)
-        group_sets = []
         for group in probes:
-            hits = _fts_ranked(group, version, per_term)
-            group_sets.append({rid for rid, _ in hits})
-            for rid, sc in hits:
+            for rid, sc in _fts_ranked(group, version, per_term):
                 if rid not in score:
                     score[rid] = sc
                     ids.append(rid)
-        if group_sets:
-            # Coverage from what we actually probed. Only probed groups can
-            # contribute, so an unprobed word is neither credit nor debit:
-            # taking the max with what the AND proved keeps coverage from
-            # ever being understated (it is the primary sort key).
-            for rid in ids:
-                counted = sum(1 for gs in group_sets if rid in gs)
-                coverage[rid] = max(coverage.get(rid, 0), counted)
 
     verses = {v["rowid"]: v for v in _fetch_verse_dicts(version, ids, len(ids))}
     distinct = max(1, len(groups))
+
+    # Coverage is counted from the verse text itself, not inferred from
+    # which probe returned the row. A verbatim 5-of-6 match therefore
+    # outranks a 1-of-6 single-word hit. AND rows are full coverage by
+    # construction: the conjunction proved every group matched.
+    if len(and_ids) >= limit:
+        coverage = {rid: distinct for rid in and_ids}
+    else:
+        specs = _group_match_specs(groups)
+        stem_cache = {}
+        coverage = {rid: _coverage_count(v["text"], specs, stem_cache)
+                    for rid, v in verses.items()}
+        for rid in and_ids:
+            if rid in coverage:
+                coverage[rid] = distinct
 
     # Adjacency: among verses carrying the SAME number of query words, the
     # one holding them side by side ("living water") is a sharper keyword
@@ -942,9 +1036,10 @@ def fts_search(query: str, version: str = "KJV",
     # matching: one extra FTS5 phrase probe, no learned score.
     adjacent = set()
     if len(words) > 1:
-        phrase = " ".join(f'"{w}"' for w in words if w.replace('"', ""))
-        if phrase.strip():
-            adjacent = {rid for rid, _ in _fts_ranked(phrase, version, limit * 4)}
+        # One quoted phrase, not a quote per word: FTS5 reads `"a" "b"`
+        # as an AND of two phrases, which is just the AND we already ran.
+        phrase = '"' + " ".join(words) + '"'
+        adjacent = {rid for rid, _ in _fts_ranked(phrase, version, limit * 4)}
 
     order = sorted(ids, key=lambda rid: (coverage.get(rid, 0),
                                          rid in adjacent,

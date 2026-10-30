@@ -322,7 +322,10 @@ def read_text() -> str:
     else:
         return qt_text
     if _baseline is not None and sys_text == _baseline[0]:
-        return qt_text or sys_text
+        # No outside copy since our write: OUR text is the truth, even
+        # when it is empty (the system still holds the pre-write text;
+        # returning that would resurrect a stale selection).
+        return qt_text
     return sys_text or qt_text
 
 

@@ -10,6 +10,7 @@ SELECTION_*, BG_*) which track the active app theme's roles.
 """
 
 from ui.app_theme import color as _theme_color
+from ui.tokens import scrollbar_qss as _scrollbar_rule
 
 # ─── Semantic tokens (track the active app theme) ──────────────────────────
 BG_APP = _theme_color("bg_app")
@@ -24,6 +25,7 @@ TEXT_FAINT = _theme_color("text_faint")
 TEXT_SELECTED = _theme_color("text_selected")
 
 ACCENT = _theme_color("accent")
+ACCENT_TEXT = _theme_color("accent_text")
 ACCENT_HOVER = _theme_color("accent_hover")
 ACCENT_LIGHT = _theme_color("accent_light")
 ACCENT_SOFT = _theme_color("accent_soft")
@@ -58,7 +60,7 @@ WHITE = TEXT_PRIMARY
 CHROME_BG = _theme_color("chrome_bg")
 CHROME_TAB_ACTIVE = _theme_color("chrome_tab_active")
 
-BLUE_400 = "#c084fc"          # legacy alias: links follow the accent family
+BLUE_400 = ACCENT_TEXT          # legacy alias: links follow the accent family
 BLUE_500 = ACCENT             # legacy alias: was focus/selection blue
 CYAN_400 = ACCENT             # legacy alias: was brand cyan
 AMBER_500 = _theme_color("warning")
@@ -79,8 +81,8 @@ APP_STYLESHEET = f"""
 QWidget {{
     background-color: {SLATE_950};
     color: {WHITE};
-    font-family: 'Nunito', 'Segoe UI', sans-serif;
-    font-size: 10px;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-size: 12px;
     border: none;
 }}
 
@@ -100,40 +102,8 @@ QSplitter::handle:vertical:hover {{
     background: {ACCENT_BORDER};
 }}
 
-/* ── Scroll Bars (Thin, dark) ── */
-QScrollBar:vertical {{
-    width: 5px;
-    background: transparent;
-    margin: 0;
-}}
-QScrollBar::handle:vertical {{
-    background: rgba(255, 255, 255, 25);
-    border-radius: 2px;
-    min-height: 30px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background: rgba(255, 255, 255, 50);
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-    height: 0px;
-    background: transparent;
-}}
-QScrollBar:horizontal {{
-    height: 5px;
-    background: transparent;
-    margin: 0;
-}}
-QScrollBar::handle:horizontal {{
-    background: rgba(255, 255, 255, 25);
-    border-radius: 2px;
-    min-width: 30px;
-}}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-    width: 0px;
-    background: transparent;
-}}
+/* ── Scroll Bars (one spec, ui.tokens) ── */
+{_scrollbar_rule()}
 
 /* ── Push Buttons ── */
 QPushButton {{
@@ -143,7 +113,7 @@ QPushButton {{
     border-radius: 4px;
     padding: 3px 10px;
     font-weight: 600;
-    font-size: 10px;
+    font-size: 12px;
 }}
 QPushButton:hover {{
     background-color: {SLATE_600};
@@ -168,7 +138,7 @@ QLineEdit {{
     border: 1px solid {BORDER_SUBTLE};
     border-radius: 4px;
     padding: 3px 7px;
-    font-size: 10px;
+    font-size: 12px;
     selection-background-color: {TEXT_SELECTION};
 }}
 QLineEdit:focus {{
@@ -214,7 +184,7 @@ QToolTip {{
     color: {WHITE};
     border: 1px solid {BORDER_LIGHT};
     padding: 5px 8px;
-    font-size: 10px;
+    font-size: 12px;
     border-radius: 6px;
 }}
 """
@@ -229,12 +199,19 @@ PANEL_HEADER_STYLE = f"""
     }}
 """
 
-PANEL_HEADER_LABEL_STYLE = f"""
+def panel_header_label_style() -> str:
+    """All-caps panel header QSS — reads the "panel.labels" font group.
+
+    Colour, case and tracking stay fixed; family/weight/size are
+    settings-backed (defaults 13px / 600 — the pre-settings look).
+    """
+    from ui.app_theme import area_font, font_qss
+    spec = area_font("panel.labels", 13, 600, size_min=8, size_max=28)
+    return f"""
     color: {SLATE_400};
-    font-size: 10px;
-    font-weight: 700;
+    {font_qss(spec)}
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 0.8px;
     background: transparent;
 """
 
@@ -271,8 +248,8 @@ MACRO_BTN_AMBER = f"""
         color: {AMBER_900};
         border: none;
         border-radius: 6px;
-        font-weight: 800;
-        font-size: 12px;
+        font-weight: 700;
+        font-size: 13px;
         padding: 4px 10px;
     }}
     QPushButton:hover {{
@@ -290,7 +267,7 @@ MACRO_BTN_CLEAR = f"""
         border: none;
         border-radius: 6px;
         font-weight: 700;
-        font-size: 11px;
+        font-size: 12px;
         padding: 4px 10px;
     }}
     QPushButton:hover {{
@@ -312,36 +289,30 @@ VERSE_SELECTED_BG = SELECTION_BG
 VERSE_HOVER_BG = ACCENT_SOFT
 VERSE_SELECTED_TEXT = SELECTION_TEXT
 
-# Bible panel verse font sizes (user-configurable via Settings → Display)
-VERSE_TEXT_SIZE = 12   # verse text (was 10)
-VERSE_REF_SIZE = 11    # reference text (was 9)
+# Bible panel verse font sizes — DEFAULTS only. The operator overrides them
+# in Settings → Interface ("Bible verses" / "Bible reference"); a saved value
+# is used as-is, at whatever size they picked.
+VERSE_TEXT_SIZE = 13   # verse text (was 12; 10 before that)
+VERSE_REF_SIZE = 12    # reference text (was 11; 9 before that)
 
 # ─── Translation Bar Button ──────────────────────────────────────────────────
-TRANSLATION_BTN_INACTIVE = f"""
-    QPushButton {{
-        background: transparent;
-        color: {SLATE_500};
-        font-size: 10px;
-        font-weight: 700;
-        border: none;
-        border-right: 1px solid {BORDER_SUBTLE};
-        padding: 4px 8px;
-    }}
-    QPushButton:hover {{
-        color: {SLATE_300};
-    }}
-"""
+# One chip language (ui.tokens.chip_qss): the selected version wears the
+# accent wash + 2px accent underline; the rest are quiet text until hover.
+from ui.tokens import chip_qss as _chip_qss
 
-TRANSLATION_BTN_ACTIVE = f"""
-    QPushButton {{
-        background-color: {ACCENT};
-        color: {TEXT_PRIMARY};
-        font-size: 10px;
-        font-weight: 700;
-        border: none;
-        padding: 4px 8px;
-    }}
-"""
+TRANSLATION_BTN_INACTIVE = _chip_qss(False)
+TRANSLATION_BTN_ACTIVE = _chip_qss(True)
+
+
+def translation_btn_style(active: bool) -> str:
+    """Translation-bar QSS — family/weight/size from the "panel.labels" group.
+
+    Unset keeps this bar's original 12px / 700; a saved panel-label value
+    applies to every translation button (the + Add button defaults 12/600).
+    """
+    from ui.app_theme import area_font, font_qss
+    spec = area_font("panel.labels", 12, 700, size_min=8, size_max=28)
+    return _chip_qss(active, font_css=font_qss(spec))
 
 # ─── Show / Reject Buttons ───────────────────────────────────────────────────
 SHOW_BTN_STYLE = f"""
@@ -351,7 +322,7 @@ SHOW_BTN_STYLE = f"""
         border: 1px solid rgba(16, 185, 129, 0.3);
         border-radius: 4px;
         padding: 3px 10px;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 700;
     }}
     QPushButton:hover {{
@@ -366,7 +337,7 @@ REJECT_BTN_STYLE = f"""
         border: 1px solid rgba(239, 68, 68, 0.2);
         border-radius: 4px;
         padding: 3px 10px;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 700;
     }}
     QPushButton:hover {{
@@ -374,31 +345,19 @@ REJECT_BTN_STYLE = f"""
     }}
 """
 
-# ── Minimal scrollbar (lite-designer spec) ──
-MINIMAL_SCROLLBAR_CSS = """
-    QScrollBar:vertical {
-        background: transparent; width: 6px; margin: 0px; border: none;
-    }
-    QScrollBar::handle:vertical {
-        background: rgba(161, 161, 170, 0.35); min-height: 20px;
-        border: none; border-radius: 3px;
-    }
-    QScrollBar::handle:vertical:hover {
-        background: rgba(161, 161, 170, 0.6);
-    }
-    QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {
-        height: 0px; border: none; background: none;
-    }
-    QScrollBar::sub-page:vertical, QScrollBar::add-page:vertical {
-        background: none; border: none;
-    }
-"""
+# ── Minimal scrollbar (token spec) ──
+# One bar everywhere. The lane is still reserved (ScrollBarAlwaysOn) so a
+# list never reflows the moment its content becomes scrollable; only the
+# look and thickness come from ui.tokens, the single place to change them.
+from ui.tokens import scrollbar_qss as _scrollbar_qss
+
+MINIMAL_SCROLLBAR_CSS = _scrollbar_qss()
 
 
 def apply_minimal_scrollbar(view):
-    """Give any scroll area / item view the lite-designer scrollbar:
-    permanently reserved 6px lane (never pops in and shoves content),
-    flat 2D thumb, no arrows. Appends to the widget's own stylesheet."""
+    """Give any scroll area / item view the shared token scrollbar:
+    permanently reserved lane (never pops in and shoves content), flat
+    thumb, no arrows. Appends to the widget's own stylesheet."""
     from PyQt6.QtCore import Qt
     view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

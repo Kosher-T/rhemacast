@@ -1,7 +1,8 @@
 """
 ui/app_theme.py
 
-Single source of truth for RhemaCast application colors.
+Single source of truth for RhemaCast application colors, plus the
+Settings-backed per-area interface font helpers (area_font / font_qss).
 
 THEMES maps a theme name → role → value. Add a new theme by adding one
 dict entry; activate it with set_theme() before UI construction (styles
@@ -16,7 +17,8 @@ Roles:
   Text:
     text_primary, text_muted, text_faint, text_selected
   Accent (purple family):
-    accent, accent_hover, accent_soft, accent_border, accent_text_on
+    accent, accent_text, accent_hover, accent_soft, accent_border,
+    accent_text_on
   Selection (search results, schedule — purple highlight):
     selection_bg, selection_border, selection_text
   Focus:
@@ -44,10 +46,18 @@ THEMES = {
         # Text.
         "text_primary": "#fafafa",
         "text_muted": "#a1a1aa",
-        "text_faint": "#71717a",
+        # Faint text (placeholders, hints, empty states) must still clear
+        # 4.5:1 on the surface it sits on: #8b8b93 is 5.85:1 on bg_app,
+        # 5.70:1 on bg_panel, 4.97:1 on bg_raised, 4.53:1 on selection_bg.
+        # (The previous #71717a was 4.09 / 3.99 / 3.47 / 3.17 — it failed.)
+        "text_faint": "#8b8b93",
         "text_selected": "#f5f3ff",
         # Accent — purple.
+        # `accent` stays the fill/border colour; `accent_text` is the
+        # readable-on-dark variant for accent-coloured *text* (7.49:1 on
+        # bg_app, 6.35:1 on bg_raised — `accent` was 5.00 / 4.24).
         "accent": "#a855f7",
+        "accent_text": "#c084fc",
         "accent_hover": "#9333ea",
         "accent_light": "#c471ed",
         "accent_soft": "#26a855f7",
@@ -92,6 +102,7 @@ _REQUIRED_ROLES = (
     "bg_app bg_panel bg_raised bg_input bg_hover bg_even_row bg_odd_row "
     "text_primary text_muted text_faint text_selected "
     "accent accent_hover accent_light accent_soft accent_border accent_text_on "
+    "accent_text "
     "selection_bg selection_border selection_text text_selection "
     "focus_ring border_subtle border_light chrome_bg chrome_tab_active "
     "menu_bg chrome_soft chrome_strong toolbar_bg "
@@ -176,6 +187,44 @@ INTERFACE_FONT_WEIGHTS = (
 INTERFACE_FONT_PREVIEW_TEXT = (
     "The quick brown fox jumps over the lazy dog 0123456789")
 
+# ─── Live font-change notification ──────────────────────────────────────────
+# Settings → Interface cards save one key per control. Chrome that is always
+# on screen (top tab names, panel headers, schedule rows) re-reads its group
+# from this signal instead of waiting for a restart. The QObject is created
+# lazily so importing this color module never needs Qt.
+
+_font_bus_instance = None
+
+
+def _font_bus():
+    global _font_bus_instance
+    if _font_bus_instance is not None:
+        try:
+            _font_bus_instance.signalsBlocked()   # liveness probe
+        except RuntimeError:
+            # The QApplication that created it is gone (tests build a new
+            # app per case); widgets made under the old app are gone too,
+            # so a fresh signal is the correct replacement.
+            _font_bus_instance = None
+    if _font_bus_instance is None:
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class _InterfaceFontBus(QObject):
+            changed = pyqtSignal(str)   # area prefix, e.g. "panel.labels"
+
+        _font_bus_instance = _InterfaceFontBus()
+    return _font_bus_instance
+
+
+def subscribe_interface_font_changed(callback) -> None:
+    """Call `callback(prefix)` after any interface font control is saved."""
+    _font_bus().changed.connect(callback)
+
+
+def notify_interface_font_changed(prefix: str = "") -> None:
+    """Announce that a settings-backed font group changed."""
+    _font_bus().changed.emit(prefix)
+
 
 def resolve_font_family(value) -> str:
     """A saved family iff it names an installed font, else "" (keep the
@@ -231,7 +280,7 @@ def font_qss(spec: dict) -> str:
 
 
 def build_interface_font(family=None, size=None, weight=None, size_min=7,
-                         size_max=72, size_default=10, weight_default=400):
+                         size_max=72, size_default=13, weight_default=400):
     """QFont from raw settings values, validated with fallbacks.
 
     Unknown family -> system family; out-of-range size -> size_default;

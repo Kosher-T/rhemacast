@@ -13,11 +13,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
+from ui import dialogs
 from ui.styles import (
     SLATE_950, SLATE_900, SLATE_800, SLATE_700, SLATE_600,
     SLATE_500, SLATE_400, SLATE_300, WHITE,
     BLUE_500, BLUE_400, EMERALD_500, EMERALD_400,
     BORDER_SUBTLE, BORDER_LIGHT, SELECTION_BG,
+    TEXT_FAINT,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ class _SideBarItem(QPushButton):
                 border-radius: 6px;
                 padding: 4px 12px;
                 text-align: left;
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 500;
             }}
             QPushButton:hover {{
@@ -65,7 +67,7 @@ class _SideBarItem(QPushButton):
                 color: {SLATE_300};
             }}
             QPushButton:disabled {{
-                color: {SLATE_600};
+                color: {TEXT_FAINT};
             }}
         """)
 
@@ -91,7 +93,7 @@ class _Sidebar(QWidget):
         layout.setSpacing(2)
 
         header = QLabel("RESOURCES")
-        header.setStyleSheet(f"color: {SLATE_500}; font-size: 10px; font-weight: 700; letter-spacing: 1px; padding-left: 4px;")
+        header.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 700; letter-spacing: 1px; padding-left: 4px;")
         layout.addWidget(header)
         layout.addSpacing(6)
 
@@ -105,7 +107,7 @@ class _Sidebar(QWidget):
                 border-radius: 6px;
                 padding: 4px 12px;
                 text-align: left;
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 600;
             }}
         """)
@@ -178,7 +180,7 @@ class _VersionCard(QFrame):
             color: {WHITE};
             border-radius: 10px;
             font-size: 14px;
-            font-weight: 800;
+            font-weight: 700;
         """)
         layout.addWidget(badge)
 
@@ -191,7 +193,7 @@ class _VersionCard(QFrame):
 
         if desc:
             desc_label = QLabel(desc)
-            desc_label.setStyleSheet(f"color: {SLATE_400}; font-size: 11px; background: transparent;")
+            desc_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; background: transparent;")
             text_col.addWidget(desc_label)
 
         text_col.addStretch()
@@ -200,7 +202,7 @@ class _VersionCard(QFrame):
         status = QLabel("INSTALLED")
         status.setStyleSheet(f"""
             color: {EMERALD_400};
-            font-size: 9px;
+            font-size: 12px;
             font-weight: 700;
             letter-spacing: 0.5px;
             background: transparent;
@@ -239,7 +241,7 @@ class _BrowseMoreCard(QFrame):
 
         text = QLabel("Browse 200+ other versions")
         text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        text.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; background: transparent; border: none;")
+        text.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; background: transparent; border: none;")
         layout.addWidget(text)
 
     def mousePressEvent(self, event):
@@ -270,7 +272,7 @@ class _BibleVersionManager(QWidget):
         title.setStyleSheet(f"color: {WHITE}; font-size: 22px; font-weight: 700;")
         header_col.addWidget(title)
         subtitle = QLabel("CONFIGURE AND DOWNLOAD SCRIPTURE DATABASES")
-        subtitle.setStyleSheet(f"color: {SLATE_500}; font-size: 10px; font-weight: 600; letter-spacing: 0.8px;")
+        subtitle.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 600; letter-spacing: 0.8px;")
         header_col.addWidget(subtitle)
         header_row.addLayout(header_col)
         header_row.addStretch()
@@ -374,8 +376,7 @@ class _BibleVersionManager(QWidget):
                 # Hot-refresh the grid to show the new card
                 self._refresh_grid()
             except Exception as e:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.critical(
+                dialogs.critical(
                     self, "Import Failed",
                     f"Could not import the file:\n\n{e}",
                 )
@@ -423,9 +424,9 @@ class LibraryTab(QWidget):
         for text, active in (("Bible Versions", True), ("Songs", False), ("Media", False)):
             btn = QPushButton(text)
             if active:
-                btn.setStyleSheet(f"color: {WHITE}; background: transparent; border: none; font-size: 11px; font-weight: 700; border-bottom: 2px solid {BLUE_500}; padding-bottom: 4px;")
+                btn.setStyleSheet(f"color: {WHITE}; background: transparent; border: none; font-size: 12px; font-weight: 700; border-bottom: 2px solid {BLUE_500}; padding-bottom: 4px;")
             else:
-                btn.setStyleSheet(f"color: {SLATE_500}; background: transparent; border: none; font-size: 11px; font-weight: 500;")
+                btn.setStyleSheet(f"color: {SLATE_500}; background: transparent; border: none; font-size: 12px; font-weight: 500;")
                 btn.setEnabled(False)
             tb_layout.addWidget(btn)
 

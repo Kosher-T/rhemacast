@@ -11,12 +11,14 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from ui.popups import install_combo
 from PyQt6.QtGui import QPainter, QColor, QPen, QLinearGradient
 
 from ui.styles import SLATE_500, SLATE_400, WHITE, BLUE_500
 from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, BG_RAISED, ACCENT, ACCENT_SOFT, SELECTION_BG,
-    SLATE_600, TEXT_SELECTION,
+    SELECTION_BORDER, SLATE_600, TEXT_SELECTION,
+    ACCENT_TEXT,
 )
 
 
@@ -29,7 +31,7 @@ _COMBO_STYLE = (
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  min-height: 20px;"
     "}"
     "QComboBox::drop-down {"
@@ -50,14 +52,14 @@ _INPUT_STYLE = (
     "border-radius: 4px;"
     "padding: 2px 6px;"
     "color: " + TEXT_PRIMARY + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
     "color: " + TEXT_FAINT + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
 )
@@ -65,8 +67,8 @@ _LABEL_STYLE = (
 _SECTION_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: " + SLATE_600 + ";"
-    "font-size: 9px;"
+    "color: " + TEXT_FAINT + ";"
+    "font-size: 12px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
     "letter-spacing: 1px;"
@@ -210,7 +212,7 @@ class BadgeLabel(QLabel):
             "border: none;"
             "border-radius: 4px;"
             "padding: 1px 6px;"
-            "font-size: 9px;"
+            "font-size: 12px;"
             "font-weight: 700;"
             "text-transform: uppercase;"
             "letter-spacing: 0.5px;"
@@ -258,7 +260,7 @@ class AnimationCard(QFrame):
             "background: transparent;"
             "border: none;"
             "color: " + TEXT_PRIMARY + ";"
-            "font-size: 11px;"
+            "font-size: 12px;"
             "font-weight: 700;"
         )
         header.addWidget(title_lbl)
@@ -289,6 +291,7 @@ class AnimationCard(QFrame):
         type_col.addWidget(type_lbl)
 
         self._type_combo = QComboBox()
+        install_combo(self._type_combo)
         self._type_combo.setFixedHeight(24)
         self._type_combo.addItems(self._anim_options)
         self._type_combo.setStyleSheet(_COMBO_STYLE)
@@ -388,7 +391,7 @@ class BetweenSlidesCard(QFrame):
             "background: transparent;"
             "border: none;"
             "color: " + TEXT_PRIMARY + ";"
-            "font-size: 11px;"
+            "font-size: 12px;"
             "font-weight: 700;"
         )
         header.addWidget(title_lbl)
@@ -418,6 +421,7 @@ class BetweenSlidesCard(QFrame):
         out_col.addWidget(out_lbl)
 
         self._out_combo = QComboBox()
+        install_combo(self._out_combo)
         self._out_combo.setFixedHeight(24)
         self._out_combo.addItems(ANIMATION_TYPES["between_slides_out"])
         self._out_combo.setStyleSheet(_COMBO_STYLE)
@@ -432,6 +436,7 @@ class BetweenSlidesCard(QFrame):
         in_col.addWidget(in_lbl)
 
         self._in_combo = QComboBox()
+        install_combo(self._in_combo)
         self._in_combo.setFixedHeight(24)
         self._in_combo.addItems(ANIMATION_TYPES["between_slides_in"])
         self._in_combo.setStyleSheet(_COMBO_STYLE)
@@ -468,6 +473,7 @@ class BetweenSlidesCard(QFrame):
         eas_col.addWidget(eas_lbl)
 
         self._easing_combo = QComboBox()
+        install_combo(self._easing_combo)
         self._easing_combo.setFixedHeight(24)
         self._easing_combo.addItems([
             "ease-in-out", "ease-in", "ease-out", "linear",
@@ -590,8 +596,8 @@ class EasingReference(QWidget):
             name_lbl.setStyleSheet(
                 "background: transparent;"
                 "border: none;"
-                "color: " + ACCENT + ";"
-                "font-size: 10px;"
+                "color: " + ACCENT_TEXT + ";"
+                "font-size: 12px;"
                 "font-weight: 600;"
                 "font-family: 'Courier New', monospace;"
             )
@@ -613,7 +619,7 @@ class EasingReference(QWidget):
                 "background: transparent;"
                 "border: none;"
                 "color: " + TEXT_FAINT + ";"
-                "font-size: 10px;"
+                "font-size: 12px;"
             )
             row.addWidget(desc_lbl, 1)
 

@@ -55,7 +55,7 @@ def test_build_falls_back(qapp, tmpdb):
     assert font.pointSize() == 10
     assert font.weight() == 400
     partial = build_interface_font(None, 0, -5, weight_default=700)
-    assert partial.pointSize() == 10
+    assert partial.pointSize() == 13
     assert partial.weight() == 700
 
 
@@ -121,6 +121,135 @@ def test_browser_panel_applies_saved_fonts(qapp, tmpdb):
         qapp.processEvents()
 
 
+def test_translation_bar_follows_panel_labels(qapp, tmpdb):
+    """Translation buttons + Add read the panel-label group, live."""
+    from PyQt6.QtGui import QFontDatabase
+    from ui.app_theme import notify_interface_font_changed
+    from ui.panels.browser_panel import BrowserPanel
+
+    fam = QFontDatabase.families()[0]
+    db.set_setting("panel.labels.font_family", fam)
+    db.set_setting("panel.labels.font_size", "17")
+
+    panel = BrowserPanel(translations=["KJV", "NIV"])
+    try:
+        btn = panel._translation_buttons["KJV"]
+        qss = btn.styleSheet()
+        assert f"font-family: '{fam}';" in qss
+        assert "font-size: 17px;" in qss
+        assert "font-weight: 700;" in qss
+        # + Add shares the group; its inactive weight default is 600.
+        add_qss = panel._add_btn.styleSheet()
+        assert f"font-family: '{fam}';" in add_qss
+        assert "font-size: 17px;" in add_qss
+        assert "font-weight: 600;" in add_qss
+
+        # Saved change reaches the built bar without a rebuild.
+        db.set_setting("panel.labels.font_size", "19")
+        notify_interface_font_changed("panel.labels")
+        assert "font-size: 19px;" in btn.styleSheet()
+        assert "font-size: 19px;" in panel._add_btn.styleSheet()
+        # Active state repaint keeps the group font.
+        btn.set_active(True)
+        assert "font-size: 19px;" in btn.styleSheet()
+    finally:
+        panel.close()
+        panel.deleteLater()
+        qapp.processEvents()
+
+
+def test_search_inputs_follow_panel_groups(qapp, tmpdb):
+    """Search-box placeholders read their panel groups, live."""
+    from PyQt6.QtGui import QFontDatabase
+    from ui.app_theme import notify_interface_font_changed
+    from ui.panels.search_panel import SearchPanel
+    from ui.panels.fts_search_panel import FtsSearchPanel
+    from ui.panels.deck_list_panel import DeckListPanel
+
+    fam = QFontDatabase.families()[0]
+    db.set_setting("search.result_font_family", fam)
+    db.set_setting("search.result_font_size", "15")
+    db.set_setting("slides.deck_font_family", fam)
+    db.set_setting("slides.deck_font_size", "15")
+
+    sem = SearchPanel()
+    fts = FtsSearchPanel()
+    deck = DeckListPanel()
+    try:
+        qss = sem.query_input.styleSheet()
+        assert f"font-family: '{fam}';" in qss
+        assert "font-size: 15px;" in qss
+        for box in (fts.query_input, fts.filter_input):
+            qss = box.styleSheet()
+            assert f"font-family: '{fam}';" in qss
+            assert "font-size: 15px;" in qss
+        qss = deck.search_box.styleSheet()
+        assert f"font-family: '{fam}';" in qss
+        assert "font-size: 15px;" in qss
+
+        # A saved change repaints the already-built boxes.
+        db.set_setting("search.result_font_size", "16")
+        notify_interface_font_changed("search.result")
+        assert "font-size: 16px;" in sem.query_input.styleSheet()
+        assert "font-size: 16px;" in fts.query_input.styleSheet()
+        assert "font-size: 16px;" in fts.filter_input.styleSheet()
+        db.set_setting("slides.deck_font_size", "17")
+        notify_interface_font_changed("slides.deck")
+        assert "font-size: 17px;" in deck.search_box.styleSheet()
+    finally:
+        for widget in (sem, fts, deck):
+            widget.close()
+            widget.deleteLater()
+        qapp.processEvents()
+
+
+def test_navigator_follows_bible_verse_group(qapp, tmpdb):
+    """Navigator book/chapter/verse + colon read the Bible-verse group."""
+    from PyQt6.QtGui import QFontDatabase
+    from ui.app_theme import notify_interface_font_changed
+    from ui.widgets.predictive_input import PredictiveScriptureInput
+
+    nav = PredictiveScriptureInput()
+    try:
+        # Unset keeps the navigator's own 13/600 fields, 14/500 colon.
+        for field in (nav.book_input, nav.chapter_input, nav.verse_input):
+            qss = field.styleSheet()
+            assert "font-size: 13px;" in qss
+            assert "font-weight: 600;" in qss
+        assert "font-size: 14px;" in nav._separator.styleSheet()
+        assert "font-weight: 500;" in nav._separator.styleSheet()
+
+        width_before = nav.book_input.width()
+        fam = QFontDatabase.families()[0]
+        db.set_setting("bible.verse_font_family", fam)
+        db.set_setting("bible.verse_font_weight", "400")
+        db.set_setting("bible.verse_text_size", "16")
+        notify_interface_font_changed("bible.verse")
+
+        for field in (nav.book_input, nav.chapter_input, nav.verse_input):
+            qss = field.styleSheet()
+            assert f"font-family: '{fam}';" in qss
+            assert "font-size: 16px;" in qss
+            assert "font-weight: 400;" in qss
+        assert "font-size: 16px;" in nav._separator.styleSheet()
+        # Font-metric-fitted widths are refitted for the larger size.
+        assert nav.book_input.width() > width_before
+
+        # A fresh navigator starts already fitted to the saved group.
+        nav2 = PredictiveScriptureInput()
+        try:
+            assert "font-size: 16px;" in nav2.book_input.styleSheet()
+            assert nav2.book_input.width() > width_before
+        finally:
+            nav2.close()
+            nav2.deleteLater()
+            qapp.processEvents()
+    finally:
+        nav.close()
+        nav.deleteLater()
+        qapp.processEvents()
+
+
 def test_settings_interface_groups(qapp, tmpdb):
     from PyQt6.QtGui import QFont, QFontDatabase
     from ui.tabs.settings_tab import SettingsTab
@@ -128,22 +257,33 @@ def test_settings_interface_groups(qapp, tmpdb):
     try:
         qapp.processEvents()
         assert sorted(w._font_groups) == [
-            "bible.ref", "bible.verse", "search.ref", "search.result",
-            "slides.deck", "slides.editor", "slides.strip",
+            "bible.ref", "bible.verse", "panel.labels", "schedule.cards",
+            "search.ref", "search.result", "slides.deck", "slides.editor",
+            "slides.strip", "tabs.names",
         ]
         verse = w._font_groups["bible.verse"]
         assert verse["weight"].currentData() == 400
-        assert verse["size"].value() == 12
+        assert verse["size"].value() == 13
         ref = w._font_groups["bible.ref"]
         assert ref["weight"].currentData() == 700
-        assert ref["size"].value() == 11
+        assert ref["size"].value() == 12
+        # Chrome groups: same defaults as the pre-settings look.
+        labels = w._font_groups["panel.labels"]
+        assert labels["weight"].currentData() == 600
+        assert labels["size"].value() == 13
+        cards = w._font_groups["schedule.cards"]
+        assert cards["weight"].currentData() == 600
+        assert cards["size"].value() == 12
+        tabs = w._font_groups["tabs.names"]
+        assert tabs["weight"].currentData() == 600
+        assert tabs["size"].value() == 12
         # preview tracks the controls, saves land under legacy keys
         sizes, bibles = [], []
         w.font_size_changed.connect(lambda a, b: sizes.append((a, b)))
         w.bible_font_changed.connect(lambda: bibles.append(True))
         verse["size"].setValue(14)
         assert db.get_setting("bible.verse_text_size") == "14"
-        assert sizes == [(14, 11)] and bibles == [True]
+        assert sizes == [(14, 12)] and bibles == [True]
         fams = QFontDatabase.families()
         initial = verse["family"].currentFont().family()
         verse["family"].setCurrentFont(QFont(fams[0]))
@@ -154,4 +294,61 @@ def test_settings_interface_groups(qapp, tmpdb):
     finally:
         w.close()
         w.deleteLater()
+        qapp.processEvents()
+
+
+def test_chrome_groups_apply_and_refresh(qapp, tmpdb):
+    from PyQt6.QtGui import QFontDatabase
+    from PyQt6.QtCore import Qt
+    from ui.app_theme import notify_interface_font_changed
+    from core.schedule_model import ScheduleModel
+    from ui.panels.schedule_panel import SchedulePanel
+    from ui.panels.text_tabs import build_text_tab_row, text_tab_qss
+    from ui.styles import panel_header_label_style
+
+    fam = QFontDatabase.families()[0]
+    db.set_setting("panel.labels.font_family", fam)
+    db.set_setting("panel.labels.font_weight", "700")
+    db.set_setting("panel.labels.font_size", "17")
+    db.set_setting("tabs.names.font_family", fam)
+    db.set_setting("tabs.names.font_size", "15")
+    db.set_setting("schedule.cards.font_size", "16")
+
+    header_qss = panel_header_label_style()
+    assert f"font-family: '{fam}';" in header_qss
+    assert "font-size: 17px;" in header_qss
+    assert "font-weight: 700;" in header_qss
+
+    row, _group, buttons = build_text_tab_row([("a", "Outputs", "x")])
+    model = ScheduleModel()
+    panel = SchedulePanel(model=model)
+    model.add_item({"ref": "JHN 3:16", "translation": "NKJV", "_sched_uid": "u1"})
+    qapp.processEvents()
+    li = panel.list_widget.item(0)
+    item = li.data(Qt.ItemDataRole.UserRole + 1)
+    try:
+        assert f"font-family: '{fam}';" in buttons["a"].styleSheet()
+        assert "font-size: 15px;" in buttons["a"].styleSheet()
+        assert "font-size: 16px;" in item._ref_label.styleSheet()
+        # Selection repaint keeps the card font (colour only changes).
+        item.set_selected(True)
+        assert "font-size: 16px;" in item._translation_badge.styleSheet()
+        # A saved change reaches already-built chrome without a rebuild.
+        db.set_setting("tabs.names.font_size", "18")
+        notify_interface_font_changed("tabs.names")
+        assert "font-size: 18px;" in buttons["a"].styleSheet()
+        assert buttons["a"].styleSheet() == text_tab_qss()
+        db.set_setting("schedule.cards.font_size", "18")
+        notify_interface_font_changed("schedule.cards")
+        assert "font-size: 18px;" in item._ref_label.styleSheet()
+        assert "font-size: 18px;" in item._translation_badge.styleSheet()
+        # The panel header reads the same group.
+        db.set_setting("panel.labels.font_size", "19")
+        notify_interface_font_changed("panel.labels")
+        assert "font-size: 19px;" in panel._title_label.styleSheet()
+    finally:
+        row.close()
+        panel.close()
+        row.deleteLater()
+        panel.deleteLater()
         qapp.processEvents()

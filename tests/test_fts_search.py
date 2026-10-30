@@ -304,6 +304,33 @@ class TestRankingContract:
         # full-coverage verse must not have beaten it
         assert _ref(rows[0]) in [_ref(r) for r in top]
 
+    def test_adjacency_is_a_real_phrase_not_co_occurrence(self):
+        """`"ten" "commandments"` is an AND of two phrases, not a phrase.
+        Only the three verses carrying the literal phrase may take the
+        adjacency tier — not a scattered 'ten days … commanded' verse."""
+        from core.bible_service import fts_search
+        rows = fts_search("ten commandments", "KJV", 6)
+        refs = [_ref(r) for r in rows]
+        assert set(refs[:3]) == {"Deuteronomy 4:13", "Exodus 34:28",
+                                 "Deuteronomy 10:4"}, refs
+
+    def test_partial_pool_prefers_discriminating_words(self):
+        """The OR sweep must not spend its operands on words that match
+        nearly every verse: "we" and "by" buy no recall, they only add
+        rows to rank."""
+        from core.bible_service import _partial_pool_groups
+        chosen = _partial_pool_groups(
+            ["we*", "by*", "mountain*", "church*", "gates*"])
+        assert "we*" not in chosen and "by*" not in chosen, chosen
+        assert chosen[:2] == ["mountain*", "church*"], chosen
+
+    def test_partial_pool_keeps_short_words_when_that_is_all_there_is(self):
+        """A query made of short words still gets a partial sweep —
+        "noah ark" must probe both, not silently drop them."""
+        from core.bible_service import _partial_pool_groups
+        chosen = _partial_pool_groups(["noah*", "ark*"])
+        assert set(chosen) == {"noah*", "ark*"}, chosen
+
     def test_confidence_monotone_in_emitted_order(self):
         """The panel renders confidence as a badge, so it must never
         contradict the row order it is printed next to."""
@@ -483,6 +510,33 @@ class TestQuality:
         rows = fts_search("shepherd psalm", "KJV", limit=5)
         assert any(r["matched"] for r in rows)
 
+    def test_one_absent_word_does_not_bury_a_five_of_six_match(self):
+        """The field regression: the operator typed "mountain" where the
+        verse says "rock". One absent word must not exclude a verse that
+        carries the other five, and coverage must count the text rather
+        than whichever probe happened to return the row."""
+        from core.bible_service import fts_search
+        rows = fts_search("upon mountain build church gates hell", "KJV", 10)
+        assert rows
+        best = rows[0]
+        assert _ref(best) == "Matthew 16:18", [(_ref(r), r["coverage"])
+                                               for r in rows[:5]]
+        assert best["coverage"] == 5, best["coverage"]
+        assert "mountain" not in best["text"].lower()
+        assert best["confidence"] > 80
+
+    def test_partial_coverage_is_counted_from_the_verse_text(self):
+        """A long phrase with one extra word still ranks its source verse
+        first — and reports the near-full coverage the text actually has,
+        not the single word a probe matched."""
+        from core.bible_service import fts_search
+        rows = fts_search(
+            "for we walk by faith not by sight not seen", "KJV", 10)
+        assert rows
+        assert _ref(rows[0]) == "2 Corinthians 5:7", _ref(rows[0])
+        assert rows[0]["coverage"] >= 7
+        assert rows[0]["confidence"] > 80
+
     def test_sweep_timing_table(self):
         """Parallel-sweep wall budget (mirrors the panel worker pool)."""
         import time
@@ -505,8 +559,8 @@ class TestLatencyIsBoundedByQueryLength:
     The naive version probed EVERY query word for partial matches when
     the strict AND came back thin, so each extra word cost another corpus
     scan: an eight-word query spent ~700ms on probes alone. Two bounds
-    hold it down — a cap on how many words may probe, and a cap on how far
-    a misspelling may be widened.
+    hold it down — one capped OR sweep instead of per-word probes, and a
+    cap on how far a misspelling may be widened.
     """
 
     def test_at_most_a_few_words_probe(self, monkeypatch):
@@ -525,6 +579,26 @@ class TestLatencyIsBoundedByQueryLength:
         svc.fts_search("for we walk by faith not by sight not seen", "KJV", 30)
         probes = [q for q in seen if " OR " not in q]
         assert len(probes) <= FTS_TOPUP_TERMS + 2, probes  # +AND +phrase
+
+    def test_one_bounded_or_sweep_feeds_the_partial_pool(self, monkeypatch):
+        """Partial recall is one sweep, not one probe per word — so the
+        cost of a long query stays flat instead of growing word by word."""
+        from core import bible_service as svc
+        from core.constants import FTS_PARTIAL_POOL
+
+        seen = []
+        real = svc._fts_ranked
+
+        def counting(match_q, version, limit, *a, **k):
+            seen.append((match_q, limit))
+            return real(match_q, version, limit, *a, **k)
+
+        monkeypatch.setattr(svc, "_fts_ranked", counting)
+        svc.fts_search(
+            "alpha bravo charlie delta echo foxtrot golf hotel", "KJV", 30)
+        or_probes = [(q, lim) for q, lim in seen if " OR " in q]
+        assert len(or_probes) == 1, or_probes
+        assert or_probes[0][1] >= FTS_PARTIAL_POOL, or_probes
 
     def test_a_word_that_matches_nothing_costs_nothing_extra(self):
         """With rescue gone, a zero-hit word must not trigger any further

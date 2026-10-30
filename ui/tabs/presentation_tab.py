@@ -17,7 +17,7 @@ import threading
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
-    QPushButton, QFrame
+    QPushButton, QFrame, QStackedWidget
 )
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
@@ -26,12 +26,9 @@ from ui.panels.schedule_panel import SchedulePanel
 from ui.panels.queue_panel import QueuePanel
 from ui.panels.browser_panel import BrowserPanel
 from ui.panels.stt_panel import STTPanel
+from ui.panels.scripture_history_panel import ScriptureHistoryPanel
 from ui.panels.live_preview_panel import LivePreviewPanel
 from core.bible_service import get_display_name
-from ui.styles import (
-    MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
-    RED_500, WHITE, SLATE_950, BORDER_SUBTLE
-)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +169,34 @@ class PresentationTab(QWidget):
             l.addWidget(panel)
             return wrapper
 
+        def history_and_stt_stack() -> QWidget:
+            """Right rail: STT monitor + scripture history as sub-tabs.
+
+            One MainPanel body (rounded frame) holds the shared sub-tab row
+            and two stacked pages. STT stays the default page — the tab is
+            the live-service surface; HISTORY is the scripture display log.
+            """
+            from ui.panels.text_tabs import build_text_tab_row
+            body = QWidget()
+            body.setProperty("class", "MainPanel")
+            layout = QVBoxLayout(body)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+
+            stack = QStackedWidget()
+            stack.addWidget(self.stt_panel)                 # page 0: STT
+            stack.addWidget(self.scripture_history_panel)   # page 1: HISTORY
+
+            tab_row, group, tabs = build_text_tab_row(
+                [("stt", "STT", "Transcription monitor"),
+                 ("history", "HISTORY", "Scriptures that hit live")],
+                checked_key="stt")
+            group.idClicked.connect(stack.setCurrentIndex)
+
+            layout.addWidget(tab_row)
+            layout.addWidget(stack, 1)
+            return body
+
         # ── Main Vertical Splitter: Top / Bottom ──
         main_splitter = QSplitter(Qt.Orientation.Vertical)
         main_splitter.setChildrenCollapsible(False)
@@ -183,11 +208,12 @@ class PresentationTab(QWidget):
         self.schedule_panel = SchedulePanel()
         self.live_preview = LivePreviewPanel()
         self.stt_panel = STTPanel()
+        self.scripture_history_panel = ScriptureHistoryPanel()
 
         self._schedule_wrap = wrap_panel(self.schedule_panel)
         top_splitter.addWidget(self._schedule_wrap)
         top_splitter.addWidget(self.live_preview) # Center panel has its own padding/wrapper logic
-        top_splitter.addWidget(wrap_panel(self.stt_panel))
+        top_splitter.addWidget(history_and_stt_stack())
 
         # Center panel gets the most space and cannot be collapsed completely
         top_splitter.setStretchFactor(0, 0)
@@ -253,6 +279,12 @@ class PresentationTab(QWidget):
         app = QApplication.instance()
         if app is not None:
             app.focusChanged.connect(self._enforce_verse_typing_focus)
+
+        # Scripture history: single click navigates, double click re-pushes live
+        self.scripture_history_panel.verse_selected.connect(
+            self._on_history_verse_selected)
+        self.scripture_history_panel.verse_double_clicked.connect(
+            self._on_history_verse_double_clicked)
 
         # Persisted layouts (defaults on first run; saved sizes win after).
         from core.panel_layout import track_splitter
@@ -587,6 +619,7 @@ class PresentationTab(QWidget):
         self._display.publish_live(payload, data, None, False)
 
         self._broadcast_to_ws(payload)
+        self._record_scripture_display(data)
 
 
         logger.info(f"Displaying: {ref}")
@@ -618,6 +651,7 @@ class PresentationTab(QWidget):
         self._display.publish_live(payload, verse_dict, None, False)
         self._display.publish_preview(payload, verse_dict)
 
+        self._record_scripture_display(verse_dict)
         self._broadcast_to_ws(payload)
 
         logger.info(f"Browser broadcast: {ref}")
@@ -655,6 +689,7 @@ class PresentationTab(QWidget):
 
                 payload = self._build_payload(text, ref, version, book, chapter, verse)
                 self._display.publish_live(payload, verse_dict, None, False)
+                self._record_scripture_display(verse_dict)
                 self._broadcast_to_ws(payload)
                 logger.info(f"Translation broadcast (live ref): {ref}")
                 return
@@ -684,6 +719,7 @@ class PresentationTab(QWidget):
         payload = self._build_payload(text, ref, version, book, chapter, verse)
         self._display.publish_live(payload, verse_dict, None, False)
         self._display.publish_preview(payload, verse_dict)
+        self._record_scripture_display(verse_dict)
         self._broadcast_to_ws(payload)
         logger.info(f"Navigator push: {ref}")
 
@@ -766,15 +802,24 @@ class PresentationTab(QWidget):
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
+        self._record_scripture_display(verse_dict)
         logger.info(f"Search → live: {ref} [{version}]")
 
     def _on_trans_badge_to_navigator(self, data: dict):
         """Single-click translation badge → navigate to reference in that translation + update preview."""
-        book = data.get("book", "")
-        chapter = str(data.get("chapter", ""))
-        verse = str(data.get("verse_num", ""))
+        if not isinstance(data, dict):
+            logger.warning("Translation badge click sent no verse data — ignored")
+            return
+        book = str(data.get("book", "")).strip()
+        chapter = str(data.get("chapter", "")).strip()
+        verse = str(data.get("verse_num") or data.get("verse") or "").strip()
+        verse = verse.split(":")[-1] if verse else ""
         text = data.get("text", "")
         version = data.get("version", "")
+        if not (book and chapter and verse):
+            logger.warning("Translation badge click without a usable "
+                           "reference — ignored: %r", data)
+            return
         self.browser_panel.navigate_to_reference(book, chapter, verse, translation=version)
 
         # Also update preview with the verse data in the badge's translation
@@ -792,11 +837,20 @@ class PresentationTab(QWidget):
 
     def _on_trans_badge_to_live(self, data: dict):
         """Double-click translation badge → send to live in that translation."""
-        book = data.get("book", "")
-        chapter = str(data.get("chapter", ""))
-        verse_num = str(data.get("verse_num", ""))
+        if not isinstance(data, dict):
+            logger.warning("Translation badge double-click sent no verse "
+                           "data — ignored")
+            return
+        book = str(data.get("book", "")).strip()
+        chapter = str(data.get("chapter", "")).strip()
+        verse_num = str(data.get("verse_num") or data.get("verse") or "").strip()
+        verse_num = verse_num.split(":")[-1] if verse_num else ""
         text = data.get("text", "")
         version = data.get("version", "")
+        if not (book and chapter and verse_num):
+            logger.warning("Translation badge double-click without a usable "
+                           "reference — ignored: %r", data)
+            return
         ref = f"[{get_display_name(version)}] {book} {chapter}:{verse_num}"
 
         verse_dict = {
@@ -814,7 +868,79 @@ class PresentationTab(QWidget):
         payload = self._build_payload(text, ref, version, book, chapter, verse_num)
         self._display.publish_live(payload, verse_dict, None, False)
         self._broadcast_to_ws(payload)
+        self._record_scripture_display(verse_dict)
         logger.info(f"Badge → live: {ref}")
+
+    def _record_scripture_display(self, verse: dict | None):
+        """Send a verse that hit live to the scripture history panel.
+
+        Only direct display actions call this — deck slides, clears and
+        skin-only re-renders (re-theme, rename, cloak) never reach the
+        history. Null-safe for test harnesses that build the tab without
+        __init__.
+        """
+        try:
+            self.scripture_history_panel.record_display(verse or {})
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _on_history_verse_selected(self, entry: dict):
+        """History single click: navigate the browser to the record's
+        scripture, in the translation it was displayed in."""
+        book = entry.get("book", "")
+        chapter = entry.get("chapter", "")
+        verse = entry.get("verse_num", "")
+        if not (book and chapter and verse):
+            return
+        code = entry.get("version", "") or None
+        self.browser_panel.navigate_to_reference(
+            book, chapter, verse, translation=code)
+        logger.info(f"History → navigator: {book} {chapter}:{verse} [{code}]")
+
+    def _on_history_verse_double_clicked(self, entry: dict):
+        """History double click: push the record live in its translation.
+
+        Mirrors the schedule double-click flow. The push re-records the
+        scripture through the same funnel — except when the double-clicked
+        row is already the newest history entry (that scripture is live;
+        the log gains nothing by repeating it).
+        """
+        book = entry.get("book", "")
+        chapter = str(entry.get("chapter", ""))
+        verse = str(entry.get("verse_num", ""))
+        if not (book and chapter and verse):
+            return
+        code = entry.get("version", "") or self.browser_panel._current_translation
+        from core.bible_service import get_verse
+        try:
+            verse_data = get_verse(code, book, int(chapter), int(verse))
+        except (TypeError, ValueError):
+            verse_data = None
+        if not verse_data:
+            return
+
+        text = verse_data.get("text", "")
+        ref = f"[{get_display_name(code)}] {book} {chapter}:{verse}"
+        verse_dict = {
+            "text": text,
+            "book": book,
+            "chapter": chapter,
+            "verse_num": verse,
+            "version": code,
+        }
+        self._current_sched_data = None
+        self._current_from_schedule = False
+        self._current_display = verse_dict
+        self._is_cleared = False
+        # Double-click push removes the cloak (one of its two exits).
+        self._set_cloak(False)
+
+        payload = self._build_payload(text, ref, code, book, chapter, verse)
+        self._display.publish_live(payload, verse_dict, None, False)
+        self._display.publish_preview(payload, verse_dict)
+        self._broadcast_to_ws(payload)
+        self._record_scripture_display(verse_dict)
+        logger.info(f"History → live: {ref}")
 
     def _on_verse_single_click(self, version: str):
         """Called when operator single-clicks a verse in the browser. Updates preview only."""
@@ -880,6 +1006,7 @@ class PresentationTab(QWidget):
             self._display.publish_live(stored, data,
                                        self._display.live_sched_uid,
                                        self._display.live_from_schedule)
+            self._record_scripture_display(data)
             self._broadcast_to_ws(stored, data)
             logger.info(f"Preview pushed to live (replayed): {stored.get('ref', '')}")
             return
@@ -901,6 +1028,7 @@ class PresentationTab(QWidget):
                                    self._display.live_sched_uid,
                                    self._display.live_from_schedule)
 
+        self._record_scripture_display(data)
         self._broadcast_to_ws(payload)
 
 
@@ -1308,6 +1436,7 @@ class PresentationTab(QWidget):
                                    self._display.live_sched_uid,
                                    self._display.live_from_schedule)
 
+        self._record_scripture_display(self._current_display)
         self._broadcast_to_ws(payload)
 
     def _on_schedule_click(self, data: dict):
@@ -1424,6 +1553,7 @@ class PresentationTab(QWidget):
         self._display.publish_live(payload, self._current_display,
                                    self._display.live_sched_uid,
                                    self._display.live_from_schedule)
+        self._record_scripture_display(self._current_display)
         self._broadcast_to_ws(payload)
         self._arm_schedule_ring()
         logger.info(f"Schedule live: {ref} (theme: {theme})")
@@ -1589,7 +1719,6 @@ class PresentationTab(QWidget):
 
     def _on_schedule_modified(self):
         """Prompt user when schedule has unsaved changes."""
-        from PyQt6.QtWidgets import QMessageBox
         # Just log for now; the panel tracks modification state
         logger.info("Schedule modified — unsaved changes")
 

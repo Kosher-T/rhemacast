@@ -28,7 +28,7 @@
 | `DeckListPanel` | `deck_list_panel.py` | `deck_selected(dict)`, `add_to_schedule_requested(dict)`, `go_live_requested(int)`, `deck_deleted(int)`, `deck_text_updated(int)`, `deck_slide_updated(int,int)` | `refresh()`, `selected_deck()`, `decks()`, `open_slide_editor(deck_id,index)` |
 | `SlideGridPanel` | `slide_grid_panel.py` | `slide_clicked(int)`, `slide_double_clicked(int)`, `slide_edit_requested(deck_id,index)` | `set_deck(deck\|None)`, `set_title(str)`, `set_selected_index(int)`, `selected_index`, `deck`, `update_slide_card(index,text)` |
 | `LivePreviewPanel` | `live_preview_panel.py` | `clear_recall`, `prev_verse`, `next_verse`, `preview_double_clicked`, `preview_clicked`, `live_clicked` | `set_live_payload(dict)`, `set_preview_payload(dict)`, `clear_live()` |
-| `HistoryPreviewPanel` | `history_preview_panel.py` | `navigate_verse_requested(book,chapter,verse,translation)` | `show_verse(ref,text,translation,theme)`, `show_search(query,top_refs,chosen)`, `show_slide(deck_id,ref,text,theme)`, `show_clear()`, `clear()` |
+| `ScriptureHistoryPanel` | `scripture_history_panel.py` | `verse_selected(dict)`, `verse_double_clicked(dict)` | `record_display(verse_dict)` |
 | `BrowserPanel` | `browser_panel.py` | `verse_clicked`, `broadcast_in_version`, `navigator_push`, `translation_changed` | `navigate_to_reference(...)`, `get_selected_verse()` |
 | `QueuePanel` | `queue_panel.py` | `display_requested`, `theme_changed`, ... | `add_item(data)`, `set_translation(v)` |
 | `STTPanel` | `stt_panel.py` | `transcription_started/stopped`, `recording_*` | `append_transcript(text)` |

@@ -153,3 +153,74 @@ class TestOrderPersistence:
             assert args[0][0] == "bible.translation_order"
             saved = json.loads(args[0][1])
             assert saved == order
+
+
+# ─── Translation Bar Sorting ─────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def _sorted_app():
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["test"])
+    return app
+
+
+@pytest.fixture()
+def _sorted_db(tmp_path, monkeypatch):
+    import core.database as db
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "app.db"))
+    db.init_db()
+    return tmp_path
+
+
+def _bar_widgets(panel):
+    """Widgets in the translation bar, left to right, spacer skipped."""
+    from PyQt6.QtWidgets import QScrollArea
+    scroll = next(child for child in panel.findChildren(QScrollArea)
+                  if child.widget() is not None)
+    layout = scroll.widget().layout()
+    return [layout.itemAt(i).widget() for i in range(layout.count())
+            if layout.itemAt(i).widget() is not None]
+
+
+class TestTranslationBarSort:
+    def _panel(self):
+        from ui.panels.browser_panel import BrowserPanel
+        return BrowserPanel(translations=["NIV", "KJV", "AMP"])
+
+    def _assert_order(self, panel, expected):
+        widgets = _bar_widgets(panel)
+        # + Add is not a translation: it stays last, after the stretch.
+        assert widgets[-1] is panel._add_btn
+        names = [w.canonical for w in widgets if w is not panel._add_btn]
+        assert names == expected
+        # Only translations are persisted.
+        saved = json.loads(db_get_order())
+        assert saved == expected
+
+    def test_add_stays_last_after_az(self, _sorted_app, _sorted_db):
+        panel = self._panel()
+        try:
+            panel._on_sort_translations("az")
+            self._assert_order(panel, ["AMP", "KJV", "NIV"])
+        finally:
+            panel.close()
+            panel.deleteLater()
+            _sorted_app.processEvents()
+
+    def test_add_stays_last_after_za(self, _sorted_app, _sorted_db):
+        panel = self._panel()
+        try:
+            panel._on_sort_translations("za")
+            self._assert_order(panel, ["NIV", "KJV", "AMP"])
+        finally:
+            panel.close()
+            panel.deleteLater()
+            _sorted_app.processEvents()
+
+
+def db_get_order():
+    from core.database import get_setting
+    return get_setting("bible.translation_order", "[]")

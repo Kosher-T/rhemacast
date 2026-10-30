@@ -23,6 +23,7 @@ from ui.widgets.lite_designer.rich_txt import txt_to_display_doc
 from ui.styles import (
     SELECTION_BG, SELECTION_BORDER, SLATE_600,
     TEXT_PRIMARY, TEXT_FAINT, TEXT_MUTED, ACCENT, TEXT_SELECTION,
+    ACCENT_TEXT,
 )
 
 DISPLAY_TEXT_PX_DEFAULT = 13
@@ -185,13 +186,13 @@ _RADIUS_BOTTOM = (_corner("top-left", 0) + _corner("top-right", 0)
 # ancestor bare-QWidget rule on specificity)
 _INDEX_NORMAL = (
     "QLabel {"
-    "  color: " + SLATE_600 + "; font-size: 11px; font-weight: 700;"
+    "  color: " + TEXT_FAINT + "; font-size: 12px; font-weight: 700;"
     "  background: transparent; border: none;"
     "}"
 )
 _INDEX_ACTIVE = (
     "QLabel {"
-    "  color: " + ACCENT + "; font-size: 11px; font-weight: 700;"
+    "  color: " + ACCENT_TEXT + "; font-size: 12px; font-weight: 700;"
     "  background: transparent; border: none;"
     "}"
 )
@@ -207,15 +208,15 @@ _VIEWPORT_CLEAN = (
 _SECTION_NORMAL = (
     "QTextEdit {"
     "  background: transparent; color: " + TEXT_FAINT + ";"
-    "  font-size: 12px; font-weight: 600;"
+    "  font-size: 13px; font-weight: 600;"
     "  border: none; padding: 0px;"
     "}"
     + _VIEWPORT_CLEAN
 )
 _SECTION_ACTIVE = (
     "QTextEdit {"
-    "  background: transparent; color: " + ACCENT + ";"
-    "  font-size: 12px; font-weight: 700;"
+    "  background: transparent; color: " + ACCENT_TEXT + ";"
+    "  font-size: 13px; font-weight: 700;"
     "  border: none; padding: 0px;"
     "}"
     + _VIEWPORT_CLEAN
@@ -262,9 +263,9 @@ _ACTIONS_ACTIVE = (
 # Action buttons
 _BTN_NORMAL = (
     "QPushButton {"
-    "  background: transparent; color: " + SLATE_600 + ";"
+    "  background: transparent; color: " + TEXT_FAINT + ";"
     "  border: none; border-radius: 4px;"
-    "  padding: 1px 3px; font-size: 11px; font-weight: 700;"
+    "  padding: 1px 3px; font-size: 12px; font-weight: 700;"
     "}"
     "QPushButton:hover { color: " + TEXT_PRIMARY + "; background: rgba(255, 255, 255, 0.08); }"
 )
@@ -272,7 +273,7 @@ _BTN_ACTIVE = (
     "QPushButton {"
     "  background: transparent; color: " + TEXT_MUTED + ";"
     "  border: none; border-radius: 4px;"
-    "  padding: 1px 3px; font-size: 11px; font-weight: 700;"
+    "  padding: 1px 3px; font-size: 12px; font-weight: 700;"
     "}"
     "QPushButton:hover { color: " + TEXT_PRIMARY + "; background: rgba(255, 255, 255, 0.12); }"
 )
@@ -350,8 +351,21 @@ class _SectionEdit(QTextEdit):
             self._maybe_commit()
             self._card.add_and_continue_requested.emit(self._card._index)
             return
-        # Enter commits the section edit, Shift+Enter inserts newline
+        # Enter ends the section line: whatever follows the caret cannot
+        # live on a `*` line, so it spills into the display text. The
+        # designer applies both halves together (a card rebuild must not
+        # leave this widget calling into a deleted object). Shift+Enter
+        # stays a literal soft break inside the chip.
         if is_enter and not (mods & Qt.KeyboardModifier.ShiftModifier):
+            text = self.toPlainText()
+            pos = self.textCursor().position()
+            head, tail = text[:pos], text[pos:]
+            # The widget text must already match the committed head when
+            # focus leaves: the deferred focusOut commit would otherwise
+            # write the full line back over the spill.
+            self.set_section_text(head)
+            self._card.section_spill_requested.emit(
+                self._card._index, head, tail)
             self.clearFocus()
             return
         # Custom word-end hop onto punctuation clusters (Ctrl+Left stays Qt)
@@ -479,11 +493,19 @@ class _DisplayBox(QTextEdit):
         self._fit_height()
 
     def set_content_text(self, text: str):
-        val = (text or "").strip()
+        # No strip: leading paragraph indent is real content (Tab indent)
+        # and must read the same here as in the active card and on save.
+        val = text or ""
         if val == self._raw:
             return  # identical sync: zero churn (keeps tier selections)
         self._raw = val
         self.setDocument(txt_to_display_doc(val))
+        # setDocument() resets the document default font to the application
+        # font (9pt). Every refresh — a format fan-out, a card switch, a
+        # save — would silently shrink the text while the widget QSS still
+        # says display_text_px(). Pin the document to the widget font so a
+        # fresh document and a refreshed one lay out identically.
+        self.document().setDefaultFont(self.font())
         self.document().documentLayout().documentSizeChanged.connect(
             lambda _s: self._fit_height())
         self._fit_height()
@@ -503,6 +525,7 @@ class SlideCard(QFrame):
 
     activated = pyqtSignal(int)
     section_changed = pyqtSignal(int, str)
+    section_spill_requested = pyqtSignal(int, str, str)
     delete_requested = pyqtSignal(int)
     move_requested = pyqtSignal(int, int)
     add_after_requested = pyqtSignal(int)
@@ -723,6 +746,11 @@ class SlideCard(QFrame):
             self._actions.setStyleSheet(_ACTIONS_NORMAL)
             for btn in (self._btn_up, self._btn_down, self._btn_add, self._btn_del):
                 btn.setStyleSheet(_BTN_NORMAL)
+        # Keep the document pinned to the widget font through stylesheet
+        # changes too (setDefaultFont is a no-op when the font is equal).
+        doc = self._display_box.document()
+        if doc is not None and doc.defaultFont() != self._display_box.font():
+            doc.setDefaultFont(self._display_box.font())
         highlighted = self._active
         if self._joined_first and self._joined_last:
             radius = _RADIUS_SINGLE

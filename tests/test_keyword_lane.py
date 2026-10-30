@@ -1,6 +1,6 @@
 """Keyword lane: Nave's topics + Strong's lemmas as a translation-independent
-search lane, display-translation rendering, graceful degradation, and
-panel merge (dedup + genuinely-new verses).
+search service, display-translation rendering, graceful degradation, and the
+Keyword page staying pure FTS (no postings scorer merged in).
 """
 
 import os
@@ -99,7 +99,15 @@ def test_invalid_display_translation_falls_back(_realdb):
 
 
 @_needs_index()
-def test_panel_merge_dedups_and_adds(tmp_path, monkeypatch):
+def test_panel_renders_sweep_only(tmp_path):
+    """The Keyword lane shows the FTS sweep, and nothing else.
+
+    The panel used to merge a second, postings-scorer result set on top
+    of the per-translation sweep; one stray query word from that scorer
+    could pull unrelated verses above real hits, which is the "sticky
+    after a typo" behaviour the operator reported. The lane is pure FTS
+    now, so the sweep bucket IS the result list.
+    """
     import time
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PyQt6.QtWidgets import QApplication
@@ -107,25 +115,24 @@ def test_panel_merge_dedups_and_adds(tmp_path, monkeypatch):
     db.DB_PATH = str(tmp_path / "app.db")
     db.init_db()
     from ui.panels import fts_search_panel as mod
+    assert not hasattr(mod, "keyword_search"), (
+        "the Keyword lane is pure FTS; the postings scorer must not be "
+        "imported here")
     panel = mod.FtsSearchPanel()
     panel._paint_per_frame = 10 ** 9
     panel.show()
     try:
-        sweep_hit = {"book": "Luke", "chapter": 15, "verse": 11,
-                     "verse_num": 11, "text": "sweep text",
-                     "confidence": 90.0}
-        kw_dup = {"book": "Luke", "chapter": 15, "verse": 11,
-                  "verse_num": 11, "text": "keyword text",
-                  "confidence": 80.0, "matched": [], "keyword": True}
-        kw_new = {"book": "Luke", "chapter": 15, "verse": 12,
-                  "verse_num": 12, "text": "keyword-only text",
-                  "confidence": 70.0, "matched": [], "keyword": True}
+        hit11 = {"book": "Luke", "chapter": 15, "verse": 11,
+                 "verse_num": 11, "text": "sweep text eleven",
+                 "confidence": 90.0}
+        hit12 = {"book": "Luke", "chapter": 15, "verse": 12,
+                 "verse_num": 12, "text": "sweep text twelve",
+                 "confidence": 70.0}
         gen = panel._search_gen + 1
         panel._search_gen = gen
         panel._gen_queries[gen] = "prodigal"
-        bucket = {"KJV": [dict(sweep_hit)]}
-        panel._on_sweep_done(gen, bucket, 5.0, True,
-                             [dict(kw_dup), dict(kw_new)], 2.0, "KJV")
+        panel._on_sweep_done(gen, {"KJV": [dict(hit11), dict(hit12)]},
+                             5.0, True)
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             app.processEvents()
@@ -133,20 +140,16 @@ def test_panel_merge_dedups_and_adds(tmp_path, monkeypatch):
             if panel._paint is None:
                 break
         app.processEvents()
-        texts = []
+        rows = []
         for i in range(panel.results_list.count()):
             w = panel.results_list.itemWidget(panel.results_list.item(i))
             if type(w).__name__ == "_ResultRow":
-                texts.append((w._data["book"], w._data["verse_num"],
-                              w._data["text"]))
-        refs = [(b, v) for b, v, _t in texts]
-        assert refs.count(("Luke", "11")) == 1, refs  # no duplicate row
-        assert ("Luke", "12") in refs, refs  # keyword-only verse joins
-        row12 = next(t for b, v, t in texts if (b, v) == ("Luke", "12"))
-        assert row12 == "keyword-only text"
-        # Sweep text wins the shared verse (first occurrence kept).
-        row11 = next(t for b, v, t in texts if (b, v) == ("Luke", "11"))
-        assert row11 == "sweep text"
+                rows.append((w._data["book"], w._data["verse_num"],
+                             w._data["text"]))
+        assert [(b, v) for b, v, _t in rows] == [("Luke", "11"),
+                                                 ("Luke", "12")]
+        assert {t for _b, _v, t in rows} == {
+            "sweep text eleven", "sweep text twelve"}
     finally:
         try:
             panel.cleanup()

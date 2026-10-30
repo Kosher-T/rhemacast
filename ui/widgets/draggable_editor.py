@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
+from ui.popups import install_combo
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 
 from ui.styles import (
@@ -65,14 +66,14 @@ _INPUT_STYLE = (
     "border-radius: 4px;"
     "padding: 2px 6px;"
     "color: " + TEXT_PRIMARY + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
 )
 
 _LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
     "color: " + TEXT_FAINT + ";"
-    "font-size: 10px;"
+    "font-size: 12px;"
     "font-weight: 600;"
     "text-transform: uppercase;"
 )
@@ -84,7 +85,7 @@ _COMBO_STYLE = (
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "}"
     "QComboBox::drop-down {"
     "  border: none;"
@@ -108,8 +109,8 @@ _PANEL_STYLE = (
 _SECTION_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: " + SLATE_600 + ";"
-    "font-size: 9px;"
+    "color: " + TEXT_FAINT + ";"
+    "font-size: 12px;"
     "font-weight: 700;"
     "text-transform: uppercase;"
     "letter-spacing: 1px;"
@@ -434,6 +435,7 @@ class _PropFontRow(QWidget):
         layout.addWidget(lbl)
 
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.setFixedHeight(22)
         self._combo.addItems(self.FONTS)
         self._combo.setStyleSheet(_COMBO_STYLE)
@@ -479,6 +481,7 @@ class _PropWeightRow(QWidget):
         layout.addWidget(lbl)
 
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.setFixedHeight(22)
         for label, _ in self.WEIGHTS:
             self._combo.addItem(label)
@@ -654,11 +657,6 @@ class DraggableEditor(QWidget):
         props_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         props_scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 5px; }"
-            "QScrollBar::handle:vertical {"
-            "  background: rgba(255,255,255,0.1);"
-            "  border-radius: 2px;"
-            "}"
         )
 
         props_content = QWidget()
@@ -710,7 +708,7 @@ class DraggableEditor(QWidget):
         self._prop_visible.setStyleSheet(
             "QCheckBox {"
             "  color: " + TEXT_MUTED + ";"
-            "  font-size: 10px;"
+            "  font-size: 12px;"
             "  font-weight: 600;"
             "  spacing: 6px;"
             "}"

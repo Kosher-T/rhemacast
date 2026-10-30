@@ -69,6 +69,14 @@ def _boot_background_services():
     except Exception as e:
         logger.error(f"Failed to start clipboard cache: {e}")
 
+    # Live LAN address: the Outputs page's network display URL must follow
+    # a mid-service network change without an app relaunch.
+    try:
+        from core.network_watcher import network_watcher
+        network_watcher()
+    except Exception as e:
+        logger.error(f"Failed to start network watcher: {e}")
+
     # Preload search indexes + embedding model in background
     try:
         from core.model_manager import model_manager
@@ -83,7 +91,36 @@ class RhemaCastApp(QApplication):
     def __init__(self, argv):
         _configure_high_dpi()
         super().__init__(argv)
-        
+
+        # One widget-style base on every platform (Fusion) and no popup
+        # animations, before any widget exists. This is what stops Qt from
+        # borrowing the OS style on Windows.
+        from ui.app_style import install as install_app_style
+        install_app_style(self)
+
+        # One scrollbar style for every panel: flat, arrowless, token
+        # colours (ui.tokens). Widget-local QScrollBar rules still win, which
+        # is how the verse/schedule/deck lists keep their 6px bar. The
+        # tooltip rule lives here too: the old QToolTip block in
+        # ui/styles.py belongs to APP_STYLESHEET, which is never applied.
+        #
+        # This must come BEFORE the app font: the moment an application
+        # stylesheet exists, QStyleSheetStyle resolves the default widget
+        # font from the platform theme instead of QApplication::font(). On a
+        # GTK platform theme that silently turned every label into
+        # "Liberation Sans" (Windows would do the same with Segoe UI), so
+        # the bundled Inter was only reaching widgets that set their own
+        # font. Installing typography after the sheet keeps one family
+        # everywhere, with or without a desktop theme plugin.
+        from ui.tokens import scrollbar_qss
+        from ui.popups import tooltip_qss
+        self.setStyleSheet(scrollbar_qss() + "\n" + tooltip_qss())
+
+        # Application typography: bundled Inter + rendering mode
+        # (RHEMA_TEXT_MODE). Must run before any widget is constructed.
+        from ui.typography import install as install_typography
+        install_typography(self)
+
         # Apply app-theme palette for native look + accessibility
         apply_theme(self)
         
@@ -173,7 +210,13 @@ def launch_ui():
             manager.initiate_shutdown()
     except Exception:
         pass
-    
+
+    try:
+        from core.network_watcher import stop_network_watcher
+        stop_network_watcher()
+    except Exception:
+        pass
+
     return exit_code
 
 if __name__ == "__main__":

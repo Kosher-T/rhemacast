@@ -18,9 +18,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent, QObject, QPropertyAnimation
 
+from ui.popups import menu_qss
 from ui.styles import (
     SLATE_950, SLATE_900, SLATE_600, SLATE_400, SLATE_800,
     BLUE_500, BLUE_400, BORDER_LIGHT, SELECTION_BG, MENU_BG,
+    TEXT_FAINT,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,14 +30,28 @@ logger = logging.getLogger(__name__)
 # Strip typography default (operator UI, not screen emulation).
 # The live value comes from the "slides.strip_font_size" setting.
 DEFAULT_STRIP_TEXT_SIZE = 13
-STRIP_SECTION_SIZE = 10
+STRIP_SECTION_SIZE = 12
+
+
+def _grid_header_style() -> str:
+    """PREVIEW / LIVE grid caption — shares the "panel.labels" group.
+
+    Unset keeps this caption's original 12px / 700 (the Scripture panel
+    headers default to 13 / 600); a saved group value applies to both.
+    """
+    from ui.app_theme import area_font, font_qss
+    spec = area_font("panel.labels", 12, 700, size_min=8, size_max=28)
+    return (f"color: {SLATE_400};{font_qss(spec)} "
+            f"letter-spacing: 0.5px; background: transparent; "
+            f"padding: 2px 4px;")
 
 
 def strip_text_size() -> int:
     """Current strip font size from settings (falls back to default)."""
     try:
         from core.database import get_setting
-        return int(get_setting("slides.strip_font_size", str(DEFAULT_STRIP_TEXT_SIZE)))
+        return int(get_setting("slides.strip_font_size",
+                               str(DEFAULT_STRIP_TEXT_SIZE)))
     except (TypeError, ValueError):
         return DEFAULT_STRIP_TEXT_SIZE
 
@@ -111,7 +127,7 @@ class SlideCard(QFrame):
 
         idx_label = QLabel(str(index + 1))
         idx_label.setStyleSheet(
-            f"color: {SLATE_600}; font-size: 9px; font-weight: 700; background: transparent;"
+            f"color: {TEXT_FAINT}; font-size: 12px; font-weight: 700; background: transparent;"
         )
         layout.addWidget(idx_label)
         self._idx_label = idx_label
@@ -380,10 +396,7 @@ class SlideGridPanel(QWidget):
         root.setSpacing(4)
 
         self._header = QLabel(title)
-        self._header.setStyleSheet(
-            f"color: {SLATE_400}; font-size: 11px; font-weight: 700; "
-            f"letter-spacing: 0.5px; background: transparent; padding: 2px 4px;"
-        )
+        self._header.setStyleSheet(_grid_header_style())
         root.addWidget(self._header)
 
         self._scroll = QScrollArea()
@@ -408,9 +421,18 @@ class SlideGridPanel(QWidget):
         self._empty_label = QLabel("No deck loaded")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
-            f"color: {SLATE_600}; font-size: 11px; background: transparent; padding-top: 24px;"
+            f"color: {TEXT_FAINT}; font-size: 12px; background: transparent; padding-top: 24px;"
         )
         self._grid.addWidget(self._empty_label, 0, 0)
+
+        # Settings → Interface: PREVIEW/LIVE captions share the panel-label
+        # font group.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "panel.labels":
+            self._header.setStyleSheet(_grid_header_style())
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -574,7 +596,7 @@ class SlideGridPanel(QWidget):
         """Section label row spanning both columns."""
         header = QLabel(f"{section.upper()} · {count}")
         header.setStyleSheet(
-            f"color: {BLUE_400}; font-size: {STRIP_SECTION_SIZE}px; font-weight: 800; "
+            f"color: {BLUE_400}; font-size: {STRIP_SECTION_SIZE}px; font-weight: 700; "
             f"border-left: 3px solid {BLUE_500}; padding-left: 8px; "
             f"background: transparent; margin-top: 4px;"
         )
@@ -658,12 +680,7 @@ class SlideGridPanel(QWidget):
         if deck.get("id") is None:
             return
         menu = QMenu(self)
-        menu.setStyleSheet(
-            "QMenu { background: " + MENU_BG + "; color: #fafafa; "
-            "border: 1px solid rgba(255, 255, 255, 20); border-radius: 6px; padding: 4px; }"
-            "QMenu::item { padding: 6px 20px; border-radius: 4px; }"
-            "QMenu::item:selected { background: " + SELECTION_BG + "; }"
-        )
+        menu.setStyleSheet(menu_qss())
         edit = menu.addAction("Edit Slide…")
         edit.triggered.connect(
             lambda: self.slide_edit_requested.emit(deck["id"], index))

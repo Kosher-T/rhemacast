@@ -10,22 +10,28 @@ import logging
 import time
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QSizeGrip
 )
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 
+from ui import dialogs
+from ui.popups import menu_qss
 from ui.styles import (
-    SLATE_950, SLATE_600, CHROME_BG, CHROME_TAB_ACTIVE,
-    WHITE, SLATE_400, EMERALD_500, RED_500, BORDER_SUBTLE,
+    SLATE_950, WHITE, BORDER_SUBTLE,
     ACCENT, ACCENT_LIGHT, TEXT_FAINT, TEXT_PRIMARY,
+)
+from ui.tokens import (
+    TAB_LOADED_BG, TAB_LOADED_TEXT, TAB_UNLOADED_BG, TAB_UNLOADED_TEXT,
+    TAB_SELECTED_BG, TAB_SELECTED_TEXT,
+    BUTTON_HEIGHT, DANGER, SPACE_4, SPACE_8, SPACE_12, SPACE_16, SUCCESS,
+    button_qss, tone_button_qss,
 )
 from ui.tabs.presentation_tab import PresentationTab
 from ui.tabs.library_tab import LibraryTab
 from ui.tabs.slides_tab import SlidesTab
 from ui.tabs.settings_tab import SettingsTab
-from ui.tabs.history_tab import HistoryTab
 from ui.widgets.status_bar import StatusBar
 
 logger = logging.getLogger(__name__)
@@ -43,33 +49,90 @@ _CTRL_DOUBLE_TAP_SECONDS = 0.45
 
 
 class ChromeTab(QPushButton):
-    """Custom button acting as a Chrome-style tab."""
-    def __init__(self, text: str, is_active: bool = False, parent=None):
+    """Custom button acting as a Chrome-style tab.
+
+    ``loaded`` chooses the resting surface: loaded tabs wear a subtle accent
+    wash, unloaded tabs stay neutral grey. The checked state is stronger than
+    both and adds an accent underline, so the current tab never gets lost
+    among the other loaded ones. Changing the state only repaints — the tab
+    keeps its fixed height, padding, and width, so the bar never shifts.
+    """
+    middle_clicked = pyqtSignal()
+
+    def __init__(self, text: str, is_active: bool = False, loaded: bool = True,
+                 parent=None):
         super().__init__(text, parent)
+        self._loaded = loaded
         self.setCheckable(True)
         self.setChecked(is_active)
         self.setFixedHeight(30)
         self.setAccessibleName(text)
         # self.setAccessibleRole(Qt.AccessibleRole.PageTab)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        
+        self.apply_font()
+        self._sync_accessible_state()
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "tabs.names":
+            self.apply_font()
+
+    def set_loaded(self, loaded: bool):
+        """Reflect whether this tab's content is currently instantiated.
+
+        Colour is the at-a-glance signal; the tooltip and accessible
+        description say it in words so the state is not colour-only.
+        """
+        if self._loaded == loaded:
+            return
+        self._loaded = loaded
+        self.apply_font()
+        self._sync_accessible_state()
+
+    def _sync_accessible_state(self):
+        state = "Loaded" if self._loaded else "Unloaded — click to reload"
+        self.setToolTip("" if self._loaded else state)
+        self.setAccessibleDescription(state)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self.middle_clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def apply_font(self):
+        """Top tab-name type — shared "tabs.names" font group."""
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("tabs.names", 12, 600, size_min=8, size_max=20)
+        if self._loaded:
+            resting_bg, resting_fg = TAB_LOADED_BG, TAB_LOADED_TEXT
+        else:
+            resting_bg, resting_fg = TAB_UNLOADED_BG, TAB_UNLOADED_TEXT
         self.setStyleSheet(f"""
             QPushButton {{
-                background: transparent;
-                color: {SLATE_400};
+                background: {resting_bg};
+                color: {resting_fg};
                 border: none;
+                border-bottom: 2px solid transparent;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
                 padding: 0 14px;
-                font-size: 10px;
-                font-weight: 600;
+                {font_qss(spec)}
             }}
             QPushButton:hover {{
                 background: rgba(255, 255, 255, 0.05);
             }}
             QPushButton:checked {{
-                background: {CHROME_TAB_ACTIVE};
-                color: {WHITE};
+                background: {TAB_SELECTED_BG};
+                color: {TAB_SELECTED_TEXT};
+                border-bottom: 2px solid {ACCENT};
+            }}
+            QPushButton:checked:hover {{
+                background: {TAB_SELECTED_BG};
+                color: {TAB_SELECTED_TEXT};
+                border-bottom: 2px solid {ACCENT};
             }}
         """)
 
@@ -110,8 +173,8 @@ class FramelessTitleBar(QWidget):
         )
         logo.setTextFormat(Qt.TextFormat.RichText)
         logo.setStyleSheet("""
-            font-size: 12px;
-            font-weight: 800;
+            font-size: 13px;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: -0.5px;
             padding-right: 16px;
@@ -208,34 +271,85 @@ class FramelessTitleBar(QWidget):
 
 
 class PlaceholderTab(QWidget):
-    """A lazy-loaded tab placeholder that instantiates its true widget on first show."""
-    loaded = pyqtSignal(object)  # emits the real widget once loaded
+    """A lazily built tab that can also be unloaded back to a placeholder.
+
+    States:
+      pending   — never built; the first show builds it.
+      loaded    — the real widget is instantiated.
+      unloaded  — explicitly released; it is rebuilt only when the operator
+                  asks for it again (tab click, menu, or middle-click).
+
+    ``showEvent`` deliberately does *not* rebuild an explicitly unloaded tab:
+    the placeholder is already on screen after an unload, and rebuilding it
+    there would undo the unload immediately.
+    """
+    loaded = pyqtSignal(object)  # emits the real widget after every build
 
     def __init__(self, init_func, parent=None):
         super().__init__(parent)
         self.init_func = init_func
         self._loaded = False
+        self._unloaded = False
         self.real_widget = None
-        
+
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Show a loading indicator initially
+
+        # Kept for the life of the placeholder: it is the unloaded face too.
         self.loading_label = QLabel("Loading...")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setWordWrap(True)
         self.loading_label.setStyleSheet(f"color: {TEXT_FAINT}; font-size: 14px;")
         self.layout.addWidget(self.loading_label)
 
-    def showEvent(self, event):
+    @property
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    @property
+    def is_unloaded(self) -> bool:
+        return self._unloaded
+
+    def ensure_loaded(self):
+        """Build the real widget if it is pending or explicitly unloaded."""
         if not self._loaded:
-            # Instantiate the real widget
-            widget = self.init_func()
-            self.real_widget = widget
-            self.layout.removeWidget(self.loading_label)
-            self.loading_label.deleteLater()
-            self.layout.addWidget(widget)
-            self._loaded = True
-            self.loaded.emit(widget)
+            self._load()
+        return self.real_widget
+
+    def _load(self):
+        widget = self.init_func()
+        self.real_widget = widget
+        self._loaded = True
+        self._unloaded = False
+        self.loading_label.hide()
+        self.layout.addWidget(widget)
+        self.loaded.emit(widget)
+
+    def unload(self) -> bool:
+        """Destroy the real widget and show the unloaded face.
+
+        Returns False when there is nothing to release. The caller owns the
+        guard checks (unsaved edits, running work) — this method only does
+        the mechanical teardown.
+        """
+        if not self._loaded or self.real_widget is None:
+            return False
+        widget = self.real_widget
+        self.layout.removeWidget(widget)
+        widget.hide()
+        widget.setParent(None)
+        widget.deleteLater()
+        self.real_widget = None
+        self._loaded = False
+        self._unloaded = True
+        self.loading_label.setText(
+            "Tab unloaded to free resources.\nClick the tab to reload it.")
+        self.loading_label.show()
+        return True
+
+    def showEvent(self, event):
+        if not self._loaded and not self._unloaded:
+            self._load()
         super().showEvent(event)
 
 
@@ -256,9 +370,13 @@ class MainWindow(QMainWindow):
         self.setAccessibleName("RhemaCast Main Window")
         self.setAccessibleDescription("Live sermon transcription with verse suggestion and OBS broadcast")
         
-        # Frameless window configuration
+        # Frameless window configuration.
+        # Deliberately NOT translucent: an RGBA top-level surface forces
+        # grayscale antialiasing for every glyph in the window. The window
+        # paints an opaque container (no rounded outer corners, no shadow),
+        # so dropping WA_TranslucentBackground changes nothing visually and
+        # lets Qt take the platform's subpixel text path.
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(1024, 768)
         self.resize(1280, 800)
 
@@ -293,38 +411,13 @@ class MainWindow(QMainWindow):
         self.sub_toolbar = QWidget()
         self.sub_toolbar.setObjectName("SubToolbar")
         
-        _greyed_btn_style = f"""
-            QPushButton {{
-                background: transparent;
-                color: {SLATE_600};
-                font-size: 11px;
-                padding: 4px 8px;
-                border: none;
-            }}
-            QPushButton:disabled {{
-                color: {SLATE_600};
-            }}
-        """
-        
-        _service_btn_style = f"""
-            QPushButton {{
-                background: rgba(16, 185, 129, 0.15);
-                color: {EMERALD_500};
-                font-size: 11px;
-                font-weight: 700;
-                padding: 4px 14px;
-                border: 1px solid rgba(16, 185, 129, 0.3);
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background: rgba(16, 185, 129, 0.25);
-            }}
-            QPushButton:disabled {{
-                background: rgba(239, 68, 68, 0.1);
-                color: {RED_500};
-                border-color: rgba(239, 68, 68, 0.2);
-            }}
-        """
+        # The menu row is the ghost variant of the one button language:
+        # text until hovered, same height/radius as every other button.
+        _greyed_btn_style = button_qss(
+            "ghost", padding=f"0 {SPACE_8}px")
+        # Start/Stop carries its state in a tone (green ready / red running)
+        # AND in the label text, so it never relies on colour alone.
+        _service_btn_style = tone_button_qss(SUCCESS)
         
         self.sub_toolbar.setStyleSheet(f"""
             QWidget#SubToolbar {{
@@ -333,23 +426,21 @@ class MainWindow(QMainWindow):
             }}
         """)
         sub_layout = QHBoxLayout(self.sub_toolbar)
-        sub_layout.setContentsMargins(12, 4, 12, 4)
-        sub_layout.setSpacing(4)
-        
+        sub_layout.setContentsMargins(SPACE_12, SPACE_4, SPACE_12, SPACE_4)
+        sub_layout.setSpacing(SPACE_4)
+
         # Greyed-out menu items
         for text in ["View"]:
             btn = QPushButton(text)
+            btn.setFixedHeight(BUTTON_HEIGHT)
             btn.setStyleSheet(_greyed_btn_style)
             btn.setEnabled(False)
             btn.setToolTip(f"{text} — coming soon")
             sub_layout.addWidget(btn)
-            
-        sep = QLabel("|")
-        sep.setStyleSheet(f"color: {SLATE_600}; font-size: 11px; margin: 0 4px;")
-        sub_layout.addWidget(sep)
 
         # Schedule button — shows dropdown of available schedules
         self.schedule_btn = QPushButton("Schedule")
+        self.schedule_btn.setFixedHeight(BUTTON_HEIGHT)
         self.schedule_btn.setStyleSheet(_greyed_btn_style)
         self.schedule_btn.setEnabled(True)
         self.schedule_btn.setToolTip("Load a schedule (click) or show schedule menu (hold)")
@@ -358,6 +449,7 @@ class MainWindow(QMainWindow):
         
         for text in ["Remote", "Live Sync"]:
             btn = QPushButton(text)
+            btn.setFixedHeight(BUTTON_HEIGHT)
             btn.setStyleSheet(_greyed_btn_style)
             btn.setEnabled(False)
             btn.setToolTip(f"{text} — coming soon")
@@ -370,6 +462,7 @@ class MainWindow(QMainWindow):
         from ui.icons import apply_button
         apply_button(self.start_service_btn, "play")
         self.start_service_btn.setText("Start Service")
+        self.start_service_btn.setFixedHeight(BUTTON_HEIGHT)
         self.start_service_btn.setStyleSheet(_service_btn_style)
         self.start_service_btn.setToolTip("Boot all backend threads (Audio, STT, Search, DB Writer, Hardware Monitor)")
         self.start_service_btn.clicked.connect(self._toggle_service)
@@ -403,6 +496,7 @@ class MainWindow(QMainWindow):
         # Initialize Tabs
         self._tabs = {}
         self._tab_buttons = {}
+        self._tab_state = {}
         self._setup_tabs()
         
         # Setup Hotkeys
@@ -415,6 +509,24 @@ class MainWindow(QMainWindow):
         # Phase 10: Operator Consent Gate at boot
         self._check_offline_queue()
 
+    def showEvent(self, event):
+        """One-shot: align the menu row with the first tab once the title
+        bar's layout has real geometry (the tab's x depends on the logo)."""
+        super().showEvent(event)
+        if not getattr(self, "_menu_row_aligned", False):
+            self._menu_row_aligned = True
+            QTimer.singleShot(0, self._align_menu_row)
+
+    def _align_menu_row(self):
+        btn = self._tab_buttons.get("SCRIPTURE")
+        if btn is None:
+            return
+        x = btn.mapTo(self.sub_toolbar, QPoint(0, 0)).x()
+        layout = self.sub_toolbar.layout()
+        if x > 0 and layout is not None:
+            layout.setContentsMargins(
+                x, SPACE_4, SPACE_12, SPACE_4)
+
     def _check_offline_queue(self):
         import os
         from cloud.extraction import OFFLINE_QUEUE_PATH
@@ -423,13 +535,12 @@ class MainWindow(QMainWindow):
                 with open(OFFLINE_QUEUE_PATH, 'r', encoding='utf-8') as f:
                     lines = [line for line in f if line.strip()]
                 if lines:
-                    from PyQt6.QtWidgets import QMessageBox
-                    msg = QMessageBox(self)
+                    msg = dialogs.MessageDialog(self)
                     msg.setWindowTitle("Offline Extraction Queue")
                     msg.setText(f"{len(lines)} past services pending. Process now or after service?")
-                    msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                    msg.button(QMessageBox.StandardButton.Yes).setText("Process Now")
-                    msg.button(QMessageBox.StandardButton.No).setText("After Service")
+                    msg.setStandardButtons(dialogs.Yes | dialogs.No)
+                    msg.button(dialogs.Yes).setText("Process Now")
+                    msg.button(dialogs.No).setText("After Service")
                     msg.setModal(False) # Non-blocking
                     msg.show()
                     
@@ -450,7 +561,6 @@ class MainWindow(QMainWindow):
             ("SCRIPTURE", "Scriptures", "display", lambda: PresentationTab()),
             ("SLIDES", "Decks", "display", lambda: SlidesTab()),
             ("LIBRARY", "Library", "core", lambda: LibraryTab()),
-            ("HISTORY", "History", "core", lambda: HistoryTab()),
             ("THEME DESIGNER", "Theme Designer", "core",
              self._init_theme_designer),
             ("SETTINGS", "Settings", "core", lambda: SettingsTab()),
@@ -460,8 +570,7 @@ class MainWindow(QMainWindow):
         for i, (key, label, group, init_func) in enumerate(tabs_config):
             if group == "core" and not seen_core:
                 seen_core = True
-                self.title_bar.tabs_layout.addWidget(
-                    self._tab_group_separator())
+                self.title_bar.tabs_layout.addWidget(self._tab_group_gap())
             # Create content widget
             if key == "SCRIPTURE":
                 # Presentation tab is fully loaded immediately
@@ -473,19 +582,22 @@ class MainWindow(QMainWindow):
             else:
                 # Other tabs are lazy-loaded Placeholders
                 content = PlaceholderTab(init_func)
-                # Connect hotkey editor when Settings tab finishes loading
-                if key == "SETTINGS":
-                    content.loaded.connect(self._on_settings_tab_loaded)
-                # Connect history verse navigation when History finishes loading
-                if key == "HISTORY":
-                    content.loaded.connect(self._on_history_tab_loaded)
+                # Every build (first load or reload) re-wires its owner.
+                content.loaded.connect(
+                    lambda widget, k=key: self._on_tab_content_loaded(k, widget))
             self.stack.addWidget(content)
             self._tabs[key] = content
 
-            # Create tab button
-            btn = ChromeTab(label, is_active=(i == 0))
+            # Create tab button. Only Scriptures exists at startup; the lazy
+            # tabs start in the unloaded/grey state until first shown.
+            btn = ChromeTab(label, is_active=(i == 0),
+                            loaded=(key == "SCRIPTURE"))
             # Create a closure to capture the index
             btn.clicked.connect(lambda checked, idx=i, n=key: self._switch_tab(idx, n))
+            btn.middle_clicked.connect(lambda k=key: self._toggle_tab_loaded(k))
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, k=key, b=btn: self._show_tab_menu(k, b.mapToGlobal(pos)))
 
             # Add container to align tabs to the bottom of the title bar
             btn_layout = QVBoxLayout()
@@ -500,23 +612,17 @@ class MainWindow(QMainWindow):
             self._tab_buttons[key] = btn
 
     @staticmethod
-    def _tab_group_separator() -> QWidget:
-        """Thin divider between display tabs and core tabs (bottom-aligned
-        with the tab buttons)."""
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.VLine)
-        line.setFixedWidth(3)
-        # Solid grey (not the hairline border tokens): a group divider
-        # must read as one at a glance.
-        line.setStyleSheet(
-            f"background-color: {SLATE_600}; border: none;")
-        wrap = QWidget()
-        lay = QVBoxLayout()
-        lay.setContentsMargins(10, 8, 10, 2)
-        lay.addStretch()
-        lay.addWidget(line, stretch=1)
-        wrap.setLayout(lay)
-        return wrap
+    def _tab_group_gap() -> QWidget:
+        """Breathing room between display tabs and core tabs.
+
+        A painted vertical rule used to sit here; against the chrome it read
+        as a stray divider, so the group boundary is spacing now (token
+        scale) and the tabs alone carry the grouping.
+        """
+        gap = QWidget()
+        gap.setFixedWidth(SPACE_16)
+        gap.setStyleSheet("background: transparent;")
+        return gap
 
     def _switch_tab(self, index: int, name: str):
         # Update button states
@@ -525,13 +631,18 @@ class MainWindow(QMainWindow):
             
         # Hide sub-toolbar for tabs that don't need it
         # (SLIDES keeps it: same View/Schedule/Remote/LiveSync + Start Service strip)
-        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS", "HISTORY"))
-            
+        self.sub_toolbar.setVisible(name not in ("LIBRARY", "SETTINGS"))
+
+        # A click is an explicit request for content: build a pending tab or
+        # rebuild an explicitly unloaded one before it is presented.
+        target = self.stack.widget(index)
+        if isinstance(target, PlaceholderTab):
+            target.ensure_loaded()
+
         # Switch stack
         # Fresh frame first: give the incoming tab a head start on
         # committing a current frame (idempotent re-push; showEvent
         # repeats it as belt-and-suspenders).
-        target = self.stack.widget(index)
         resync = getattr(target, "resync_screens", None)
         if callable(resync):
             try:
@@ -540,17 +651,124 @@ class MainWindow(QMainWindow):
                 logger.warning(f"Screen resync before tab switch failed: {e}")
         self.stack.setCurrentIndex(index)
 
-    def _on_history_tab_loaded(self, widget):
-        """Route History Ctrl+click verse navigation into the SCRIPTURE tab."""
-        if hasattr(widget, "navigate_to_verse_requested"):
-            widget.navigate_to_verse_requested.connect(self._on_history_navigate)
+    # ── Tab unloading (Firefox-style) ───────────────────────────────────
+    #
+    # Only tabs whose whole state is either disposable or restorable may be
+    # released. The two display workspaces are deliberately excluded: their
+    # objects own the live-output stepping ops and the STT/worker bindings,
+    # so destroying them would detach running functionality, not just a view.
+
+    _TAB_UNLOAD_BLOCKERS = {
+        "SCRIPTURE": (
+            "Scriptures cannot be unloaded: it owns the STT start/stop "
+            "controls, verse stepping, and the live scripture hotkeys. "
+            "Unloading it would detach those from the running service."
+        ),
+        "SLIDES": (
+            "Decks cannot be unloaded: it owns the live deck display and "
+            "its prev/next stepping. A live deck would stop responding."
+        ),
+    }
+
+    def _on_tab_content_loaded(self, key: str, widget):
+        """A placeholder just built its real widget (first load or reload)."""
+        self._set_tab_loaded_visual(key, True)
+        state = self._tab_state.pop(key, None)
+        if state:
+            restore = getattr(widget, "restore_state", None)
+            if callable(restore):
+                try:
+                    restore(state)
+                except Exception:
+                    logger.exception("Failed to restore %s tab state", key)
+        if key == "SETTINGS":
+            self._on_settings_tab_loaded(widget)
+
+    def _set_tab_loaded_visual(self, key: str, loaded: bool):
+        btn = self._tab_buttons.get(key)
+        if btn is not None:
+            btn.set_loaded(loaded)
+
+    def _can_unload_tab(self, key: str):
+        """Return (allowed, reason). Empty reason means nothing to report."""
+        blocker = self._TAB_UNLOAD_BLOCKERS.get(key)
+        if blocker:
+            return False, blocker
+        content = self._tabs.get(key)
+        if not isinstance(content, PlaceholderTab):
+            return False, "This tab has no unloadable content."
+        if not content.is_loaded:
+            return False, ""
+        real = content.real_widget
+        guard = getattr(real, "can_unload", None)
+        if callable(guard):
+            try:
+                result = guard()
+                if isinstance(result, tuple):
+                    return bool(result[0]), str(result[1] or "")
+                if not result:
+                    return False, "This tab cannot be unloaded right now."
+            except Exception:
+                logger.exception("Unload guard failed for %s", key)
+                return False, "This tab cannot be unloaded right now."
+        return True, ""
+
+    def _unload_tab(self, key: str) -> bool:
+        """Release a tab's view if its guard allows it."""
+        allowed, reason = self._can_unload_tab(key)
+        if not allowed:
+            if reason:
+                dialogs.information(self, "Cannot unload tab", reason)
+            return False
+        content = self._tabs.get(key)
+        real = content.real_widget
+        # Persist the small amount of view state worth carrying across.
+        current = getattr(real, "current_state", None)
+        if callable(current):
+            try:
+                self._tab_state[key] = current()
+            except Exception:
+                logger.exception("Failed to save %s tab state", key)
+        if key == "THEME DESIGNER" and getattr(
+                self, "_theme_designer_tab", None) is real:
+            self._theme_designer_tab = None
+        if not content.unload():
+            return False
+        self._set_tab_loaded_visual(key, False)
+        return True
+
+    def _toggle_tab_loaded(self, key: str):
+        """Middle-click: unload a loaded tab, load an unloaded one."""
+        if key in self._TAB_UNLOAD_BLOCKERS:
+            self._unload_tab(key)   # explains why it stays loaded
+            return
+        content = self._tabs.get(key)
+        if isinstance(content, PlaceholderTab) and content.is_loaded:
+            self._unload_tab(key)
+            return
+        self._switch_tab(list(self._tabs.keys()).index(key), key)
+
+    def _show_tab_menu(self, key: str, global_pos):
+        from PyQt6.QtWidgets import QMenu
+        content = self._tabs.get(key)
+        menu = QMenu(self)
+        menu.setStyleSheet(menu_qss())
+        if isinstance(content, PlaceholderTab) and not content.is_loaded:
+            label = "Reload Tab" if content.is_unloaded else "Load Tab"
+            action = menu.addAction(label)
+            action.triggered.connect(
+                lambda: self._switch_tab(list(self._tabs.keys()).index(key), key))
+        else:
+            action = menu.addAction("Unload Tab")
+            action.triggered.connect(lambda: self._unload_tab(key))
+        menu.exec(global_pos)
 
     def _on_translation_renamed(self, canonical: str):
-        """Cascade a translation rename across schedules, screens, history.
+        """Cascade a translation rename across schedules and screens.
 
         Data (mapping, schedule files, history rows) was already rewritten by
-        bible_service.rename_translation; this syncs the live model, views,
-        current screens, and the history tab.
+        bible_service.rename_translation; this syncs the live model, views
+        and current screens.
         """
         from core.bible_service import get_last_rename
         info = get_last_rename()
@@ -581,35 +799,6 @@ class MainWindow(QMainWindow):
                 tab.refresh_display_names(old_display, new_display)
         except Exception as e:
             logger.warning(f"Screen rename refresh failed: {e}")
-
-        # History tab reads the rewritten rows on reload.
-        try:
-            hist = self._tabs.get("HISTORY")
-            real = getattr(hist, "real_widget", None)
-            if real is not None and getattr(hist, "_loaded", False):
-                hist = real
-            if hist is not None and hasattr(hist, "reload"):
-                hist.reload()
-        except Exception as e:
-            logger.warning(f"History rename refresh failed: {e}")
-
-    def _on_history_navigate(self, book: str, chapter: str, verse: str,
-                             translation: str):
-        names = list(self._tabs.keys())
-        if "SCRIPTURE" in names:
-            self._switch_tab(names.index("SCRIPTURE"), "SCRIPTURE")
-        tab = self._tabs.get("SCRIPTURE")
-        real = getattr(tab, "real_widget", None)
-        if real is not None and getattr(tab, "_loaded", False):
-            tab = real
-        browser = getattr(tab, "browser_panel", None)
-        if browser is not None and hasattr(browser, "navigate_to_reference"):
-            try:
-                browser.navigate_to_reference(book, chapter, verse,
-                                              translation=translation)
-            except TypeError:
-                browser.navigate_to_reference(book, chapter, verse)
-            logger.info(f"History navigate → {book} {chapter}:{verse}")
 
     def _on_settings_tab_loaded(self, widget):
         """Connect hotkey editor and font size signals once the Settings tab finishes lazy-loading."""
@@ -799,6 +988,16 @@ class MainWindow(QMainWindow):
             if self.isActiveWindow() and self._maybe_song_nav_key(event):
                 if _KEYTAP_ENABLED:
                     logger.info("KEYTAP song-nav consumed key=%s",
+                                event.key())
+                return True
+
+        # Ctrl+S saves the schedule. Same interception path (and for the same
+        # reason) as the section hops above — Chromium owns Ctrl+S inside the
+        # display view, so a QShortcut would never fire there.
+        if event.type() == _QE.Type.KeyPress:
+            if self.isActiveWindow() and self._maybe_save_schedule_key(event):
+                if _KEYTAP_ENABLED:
+                    logger.info("KEYTAP save-schedule consumed key=%s",
                                 event.key())
                 return True
 
@@ -1044,12 +1243,17 @@ class MainWindow(QMainWindow):
         "prev_schedule_item": "Alt+Left",
         "toggle_transcription": "F7",
         "add_to_schedule": "Alt+Return",
+        "save_schedule": "Ctrl+S",
             "double_click": "F1",
             "song_prev_section": "Ctrl+Left",
             "song_next_section": "Ctrl+Right",
             "navigate_scripture": "Ctrl+N",
             "deck_search": "Ctrl+G",
     }
+
+    # Tabs that own a live output — and therefore a schedule. Everything
+    # else (Library, Theme Designer, Settings) keeps Ctrl+S to itself.
+    _DISPLAY_TAB_KEYS = ("SCRIPTURE", "SLIDES", "MEDIA", "PRESENTATION")
 
     def _on_hotkey_bindings_changed(self, bindings: dict):
         """Called when user changes bindings in Settings."""
@@ -1125,7 +1329,7 @@ class MainWindow(QMainWindow):
     def _cycle_display_tab(self, step: int) -> str | None:
         """Move `step` through the display tabs, wrapping at both ends."""
         display_keys = [k for k in self._tabs
-                        if k in ("SCRIPTURE", "SLIDES", "MEDIA", "PRESENTATION")]
+                        if k in self._DISPLAY_TAB_KEYS]
         if not display_keys:
             return None
         names = list(self._tabs.keys())
@@ -1206,6 +1410,78 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return self._tabs.get("SCRIPTURE")
+
+    def _active_display_tab(self):
+        """Return the DISPLAY tab (SCRIPTURE/SLIDES) currently shown, or None.
+
+        Unlike _active_workspace_tab() there is no fallback: on Library,
+        Theme Designer or Settings there is no schedule to act on, not "the
+        scripture tab's one".
+        """
+        try:
+            names = list(self._tabs.keys())
+            current = self.stack.currentIndex()
+            if not (0 <= current < len(names)):
+                return None
+            if names[current] not in self._DISPLAY_TAB_KEYS:
+                return None
+            tab = self._tabs[names[current]]
+            # Unwrap lazy placeholder if already loaded
+            real = getattr(tab, "real_widget", None)
+            if real is not None and getattr(tab, "_loaded", False):
+                tab = real
+            return tab
+        except Exception:
+            return None
+
+    def _save_active_schedule(self) -> bool:
+        """Ctrl+S: save the schedule. False when this tab has none.
+
+        Both workspace tabs render the same shared model, so a lazily built
+        display tab that has no SchedulePanel yet still saves through the
+        loaded one — never through a second, divergent copy.
+        """
+        tab = self._active_display_tab()
+        if tab is None:
+            return False
+        panel = getattr(tab, "schedule_panel", None)
+        if panel is None:
+            panel = getattr(self._tabs.get("SCRIPTURE"), "schedule_panel", None)
+        if panel is None:
+            return False
+        # A never-saved empty schedule has nothing to save: don't pop the
+        # file dialog for it.
+        if not panel.current_file and not panel.get_schedule_data():
+            return True
+        if panel.save_schedule():
+            logger.info("Schedule saved (Ctrl+S)")
+        return True
+
+    def _hotkey_capture_active(self) -> bool:
+        """True while Settings is capturing a chord — hotkeys must stay out."""
+        from ui.widgets.hotkey_editor import KeyboardHandler
+        kh = KeyboardHandler._instance
+        return (kh is not None
+                and getattr(kh, "_target", None) is not None
+                and getattr(kh._target, "_capturing", False))
+
+    def _maybe_save_schedule_key(self, event) -> bool:
+        """Ctrl+S saves the schedule — display tabs only. True if consumed.
+
+        Intercepted here (not as a QShortcut) for the same reason as the
+        slide section hops: a focused QWebEngineView claims Ctrl+S as
+        Chromium's "save page" before shortcut matching ever sees it.
+        """
+        if self._hotkey_capture_active():
+            return False
+        combo = self._binding_combo("save_schedule")
+        if combo is None:
+            return False
+        if event.key() != combo[0] or event.modifiers() != combo[1]:
+            return False
+        if self._active_display_tab() is None:
+            return False          # core tab: Ctrl+S is not ours to consume
+        return self._save_active_schedule()
 
     def _hotkey_next_verse(self):
         self._defocus_navigator()
@@ -1477,10 +1753,7 @@ class MainWindow(QMainWindow):
     def _maybe_song_nav_key(self, event) -> bool:
         """Intercept rebinding-aware slide section-hop combos. Returns True if consumed."""
         # Never steal keys while the user is rebinding hotkeys in Settings.
-        from ui.widgets.hotkey_editor import KeyboardHandler
-        _kh = KeyboardHandler._instance
-        if (_kh is not None and getattr(_kh, "_target", None) is not None
-                and getattr(_kh._target, "_capturing", False)):
+        if self._hotkey_capture_active():
             return False
         for action_id, delta in (("song_prev_section", -1), ("song_next_section", 1)):
             combo = self._binding_combo(action_id)
@@ -1525,6 +1798,8 @@ class MainWindow(QMainWindow):
             return self._fire_song_nav(-1)
         if action_id == "song_next_section":
             return self._fire_song_nav(1)
+        if action_id == "save_schedule":
+            return self._save_active_schedule()
         handler = getattr(self, "_hotkey_actions", {}).get(action_id)
         if handler is None:
             return False
@@ -1658,20 +1933,7 @@ class MainWindow(QMainWindow):
         schedules = schedule_panel.list_schedules()
 
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {SLATE_950};
-                color: {WHITE};
-                border: 1px solid {BORDER_SUBTLE};
-                padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 20px;
-            }}
-            QMenu::item:selected {{
-                background: rgba(255, 255, 255, 0.1);
-            }}
-        """)
+        menu.setStyleSheet(menu_qss())
 
         if not schedules:
             action = menu.addAction("No schedules found")
@@ -1700,8 +1962,6 @@ class MainWindow(QMainWindow):
 
     def _new_schedule(self):
         """Start a new empty schedule, prompting to save if current has items."""
-        from PyQt6.QtWidgets import QMessageBox
-
         pres_tab = self._tabs.get("SCRIPTURE")
         if not pres_tab or not hasattr(pres_tab, "schedule_panel"):
             return
@@ -1710,18 +1970,18 @@ class MainWindow(QMainWindow):
 
         # If current schedule has items and unsaved changes, prompt to save
         if schedule_panel.list_widget.count() > 0 and schedule_panel.is_modified:
-            reply = QMessageBox.question(
+            reply = dialogs.question(
                 self, "Unsaved Changes",
                 "The current schedule has unsaved changes. Save before starting a new schedule?",
-                QMessageBox.StandardButton.Save |
-                QMessageBox.StandardButton.Discard |
-                QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Save
+                dialogs.Save |
+                dialogs.Discard |
+                dialogs.Cancel,
+                dialogs.Save
             )
-            if reply == QMessageBox.StandardButton.Save:
+            if reply == dialogs.Save:
                 if not schedule_panel.save_schedule():
                     return  # User cancelled save dialog
-            elif reply == QMessageBox.StandardButton.Cancel:
+            elif reply == dialogs.Cancel:
                 return
 
         # Clear the schedule
@@ -1734,6 +1994,11 @@ class MainWindow(QMainWindow):
         else:
             self._start_service()
 
+    def _set_service_button(self, running: bool):
+        """Paint Start/Stop from the shared tone tokens (state + label)."""
+        self.start_service_btn.setStyleSheet(
+            tone_button_qss(DANGER if running else SUCCESS))
+
     def _start_service(self):
         """Boot all backend threads via ServiceManager."""
         import logging
@@ -1744,21 +2009,7 @@ class MainWindow(QMainWindow):
             self._service_running = True
             self.start_service_btn.setText("■  Stop Service")
             self.start_service_btn.setToolTip("Stop all backend threads")
-            # Switch to red-ish disabled style for the stop state
-            self.start_service_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(239, 68, 68, 0.15);
-                    color: {RED_500};
-                    font-size: 11px;
-                    font-weight: 700;
-                    padding: 4px 14px;
-                    border: 1px solid rgba(239, 68, 68, 0.3);
-                    border-radius: 4px;
-                }}
-                QPushButton:hover {{
-                    background: rgba(239, 68, 68, 0.25);
-                }}
-            """)
+            self._set_service_button(True)
             logger.info("Service started successfully.")
         except Exception as e:
             logger.error(f"Failed to start service: {e}")
@@ -1773,20 +2024,7 @@ class MainWindow(QMainWindow):
             self._service_running = False
             self.start_service_btn.setText("Start Service")
             self.start_service_btn.setToolTip("Boot all backend threads")
-            self.start_service_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(16, 185, 129, 0.15);
-                    color: {EMERALD_500};
-                    font-size: 11px;
-                    font-weight: 700;
-                    padding: 4px 14px;
-                    border: 1px solid rgba(16, 185, 129, 0.3);
-                    border-radius: 4px;
-                }}
-                QPushButton:hover {{
-                    background: rgba(16, 185, 129, 0.25);
-                }}
-            """)
+            self._set_service_button(False)
             logger.info("Service stopped.")
         except Exception as e:
             logger.error(f"Failed to stop service: {e}")

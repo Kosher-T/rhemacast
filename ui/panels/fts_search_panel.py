@@ -21,19 +21,25 @@ from ui.widgets.predictive_input import (
     GOSPELS_BOOKS)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QWheelEvent, QFontMetrics
+from PyQt6.QtWidgets import QApplication
 
 from ui.styles import (
     PANEL_BODY_STYLE, SHOW_BTN_STYLE,
     ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
     SLATE_300, SLATE_400, SLATE_500, SLATE_600, SLATE_800,
-    WHITE, BORDER_SUBTLE
+    WHITE, BORDER_SUBTLE,
+    ACCENT_TEXT,
 )
-from core.bible_service import fts_search, keyword_search
+from core.bible_service import fts_search
 from core.bible_service import fts_translations
 
 logger = logging.getLogger(__name__)
 
-_CLICK_DELAY = 250
+
+def _click_interval() -> int:
+    """System double-click interval (honors Windows/RDP/accessibility timing)."""
+    app = QApplication.instance()
+    return app.doubleClickInterval() if app else 400
 
 
 def _book_predicate(term: str | None):
@@ -74,7 +80,14 @@ class _FtsResultsList(QListWidget):
 
 
 class _TransBadge(QLabel):
-    """Compact translation badge with single/double click."""
+    """Compact translation badge with single/double click.
+
+    Single fires only when no second click lands within the system
+    double-click interval: double detection is Qt's own mouse-double-click
+    synthesis, not a fixed timer window, so slow double clicks (long system
+    interval, RDP, accessibility settings) still register as doubles instead
+    of two stray singles.
+    """
 
     single_clicked = pyqtSignal(str, dict)
     double_clicked = pyqtSignal(str, dict)
@@ -85,18 +98,19 @@ class _TransBadge(QLabel):
         self._verse_data = verse_data
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(_CLICK_DELAY)
+        self._click_timer.setInterval(_click_interval())
         self._click_timer.timeout.connect(self._on_single)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self._click_timer.isActive():
-                self._click_timer.stop()
-                self.double_clicked.emit(self._version, self._verse_data)
-            else:
-                self._click_timer.start()
+        if event.button() == Qt.MouseButton.LeftButton and not self._click_timer.isActive():
+            # Arm the delayed single; Qt's double-click synthesis cancels it.
+            self._click_timer.start()
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        self._click_timer.stop()
+        self.double_clicked.emit(self._version, self._verse_data)
 
     def _on_single(self):
         self.single_clicked.emit(self._version, self._verse_data)
@@ -155,7 +169,7 @@ class _ResultRow(QFrame):
             badge_color = SLATE_600
         conf_label.setStyleSheet(f"""
             color: {badge_color};
-            font-size: 9px;
+            font-size: 12px;
             font-weight: 700;
             background: rgba(255, 255, 255, 0.05);
             border-radius: 3px;
@@ -170,7 +184,7 @@ class _ResultRow(QFrame):
         ref = f"{data.get('book', '')} {data.get('chapter', '')}:{data.get('verse_num', '')}"
         ref_label = QLabel(ref)
         from ui.app_theme import area_font, font_qss
-        ref_font = area_font("search.ref", 10, 700,
+        ref_font = area_font("search.ref", 12, 700,
                                   family_key="search.ref_font_family",
                                   weight_key="search.ref_font_weight",
                                   size_key="search.ref_font_size")
@@ -179,7 +193,7 @@ class _ResultRow(QFrame):
 
         verse_text = data.get("text", "")
         text_label = QLabel()
-        text_font = area_font("search.result", 9,
+        text_font = area_font("search.result", 13,
                                     family_key="search.result_font_family",
                                     weight_key="search.result_font_weight",
                                     size_key="search.result_font_size")
@@ -226,13 +240,14 @@ class _ResultRow(QFrame):
 
         # Translation badge
         translations = data.get("translations", [])
+        self._trans_badge = None
         if translations:
             t = translations[0]
             from core.bible_service import get_display_name
-            badge = _TransBadge(t["version"], t)
+            badge = self._trans_badge = _TransBadge(t["version"], t)
             badge.setStyleSheet(f"""
                 color: {SLATE_500};
-                font-size: 8px;
+                font-size: 12px;
                 font-weight: 600;
                 background: rgba(255, 255, 255, 0.05);
                 border-radius: 2px;
@@ -245,26 +260,33 @@ class _ResultRow(QFrame):
         # Send to Schedule button
         send_btn = QPushButton("Send")
         send_btn.setStyleSheet(SHOW_BTN_STYLE)
-        send_btn.setFixedWidth(44)
-        send_btn.setFixedHeight(18)
+        send_btn.setFixedWidth(56)
+        send_btn.setFixedHeight(24)
         send_btn.setToolTip("Add this verse to the schedule")
         send_btn.clicked.connect(lambda: self.send_to_schedule.emit(self._data))
         layout.addWidget(send_btn)
 
-        # Click handlers — timer-based single/double click
+        # Click handlers — single fires only when no double click arrives
+        # within the system double-click interval (Qt synthesis decides).
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(_CLICK_DELAY)
+        self._click_timer.setInterval(_click_interval())
         self._click_timer.timeout.connect(self._on_single_click)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self._click_timer.isActive():
-                self._click_timer.stop()
-                self.live_requested.emit(self._data)
-            else:
-                self._click_timer.start()
+        # Presses on the translation badge stay with the badge (it handles
+        # ignoring them); geometry check, not underMouse, so a mid-click
+        # cursor drift cannot re-target the row.
+        if self._trans_badge and self._trans_badge.geometry().contains(event.pos()):
+            super().mousePressEvent(event)
+            return
+        if event.button() == Qt.MouseButton.LeftButton and not self._click_timer.isActive():
+            self._click_timer.start()
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        self._click_timer.stop()
+        self.live_requested.emit(self._data)
 
     def _on_single_click(self):
         self.navigate_requested.emit(self._data)
@@ -285,9 +307,8 @@ class FtsSearchPanel(QWidget):
     trans_badge_to_navigator = pyqtSignal(dict)
     trans_badge_to_live = pyqtSignal(dict)
     # Sweep completion hops worker→GUI thread (always queued across
-    # threads): generation, {translation: [results]}, elapsed ms, done,
-    # keyword-lane [results], keyword ms, keyword display translation.
-    _sweep_done = pyqtSignal(int, object, float, bool, object, float, str)
+    # threads): generation, {translation: [results]}, elapsed ms, done.
+    _sweep_done = pyqtSignal(int, object, float, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -338,22 +359,10 @@ class FtsSearchPanel(QWidget):
         # A plain QLineEdit on purpose: emulating a single-line field on
         # QTextEdit is what produced the selection and caret bugs.
         install_line_edit_nav(self.query_input)
-        self.query_input.setPlaceholderText("e.g., keywords: faith strength mercy...")
+        self.query_input.setPlaceholderText("entrance words light simple")
         self.query_input.setAccessibleName("Keyword search query")
         self.query_input.setAccessibleDescription("Type a Bible verse reference or text to search across all translations")
-        self.query_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {SLATE_800};
-                color: {WHITE};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 12px;
-            }}
-            QLineEdit:focus {{
-                border-color: {ACCENT};
-            }}
-        """)
+        self.query_input.setStyleSheet(self._query_input_style())
         self.query_input.returnPressed.connect(self._on_search)
         input_row.addWidget(self.query_input)
 
@@ -363,11 +372,11 @@ class FtsSearchPanel(QWidget):
         self.search_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT_SOFT};
-                color: {ACCENT};
+                color: {ACCENT_TEXT};
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 6px;
                 padding: 8px 16px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
@@ -402,19 +411,7 @@ class FtsSearchPanel(QWidget):
         self.filter_input.setAccessibleName("Book filter")
         self.filter_input.setAccessibleDescription(
             "Filter results by book or testament. Only verified book names accepted.")
-        self.filter_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {SLATE_800};
-                color: {WHITE};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 12px;
-            }}
-            QLineEdit:focus {{
-                border-color: {ACCENT};
-            }}
-        """)
+        self.filter_input.setStyleSheet(self._filter_input_style())
         self.filter_input.textChanged.connect(self._on_filter_changed)
         filter_row.addWidget(self.filter_input)
 
@@ -463,34 +460,23 @@ class FtsSearchPanel(QWidget):
                 outline: 2px solid {ACCENT};
                 outline-offset: -2px;
             }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {SLATE_600};
-                border-radius: 3px;
-                min-height: 30px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
         """)
         layout.addWidget(self.results_list, 1)
 
         # Status / latency label
         self.status_label = QLabel("")
         self.status_label.setAccessibleName("Search status")
-        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        self.status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         layout.addWidget(self.status_label)
 
-        # Debounce timer (100ms: searches run ~15ms, coalesced)
+        # Auto-search delay: 0 searches on every keystroke, anything else
+        # waits that long after the last one (search.auto_delay_ms).
+        from core.constants import SEARCH_AUTO_DELAY_MS_DEFAULT
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.setInterval(100)
+        self._debounce_timer.setInterval(SEARCH_AUTO_DELAY_MS_DEFAULT)
         self._debounce_timer.timeout.connect(self._execute_search)
-        self.query_input.textChanged.connect(lambda: self._debounce_timer.start())
+        self.query_input.textChanged.connect(self._on_query_text_changed)
 
         # Session-only search history (Up/Down recall). Qualifying a query:
         # 2s idle, or the operator clicks a hit / scrolls the results.
@@ -502,6 +488,67 @@ class FtsSearchPanel(QWidget):
         self._search_history.bind_scroll(
             self.results_list.verticalScrollBar())
 
+        # Settings → Interface: both search boxes (placeholders included)
+        # read the same group as the result text.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+
+    def _query_input_style(self) -> str:
+        """Query-box QSS — family/weight/size from "search.result".
+
+        Unset keeps today's 13px / 500; the placeholder inherits it too.
+        """
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("search.result", 13, 500, size_min=8, size_max=16,
+                         family_key="search.result_font_family",
+                         weight_key="search.result_font_weight",
+                         size_key="search.result_font_size")
+        return f"""
+            QLineEdit {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 8px 12px;
+                {font_qss(spec)}
+            }}
+            QLineEdit:focus {{
+                border-color: {ACCENT};
+            }}
+        """
+
+    def _filter_input_style(self) -> str:
+        """Book-filter QSS — same "search.result" group, 13/500 default."""
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("search.result", 13, 500, size_min=8, size_max=16,
+                         family_key="search.result_font_family",
+                         weight_key="search.result_font_weight",
+                         size_key="search.result_font_size")
+        return f"""
+            QLineEdit {{
+                background: {SLATE_800};
+                color: {WHITE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 6px;
+                padding: 6px 10px;
+                {font_qss(spec)}
+            }}
+            QLineEdit:focus {{
+                border-color: {ACCENT};
+            }}
+        """
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix != "search.result":
+            return
+        self.query_input.setStyleSheet(self._query_input_style())
+        self.filter_input.setStyleSheet(self._filter_input_style())
+        # The filter box is width-fitted to its placeholder; refit it so a
+        # larger saved size does not clip the text.
+        self.filter_input.ensurePolished()
+        if hasattr(self.filter_input, "_autosize"):
+            self.filter_input._autosize()
+
     def set_translation(self, version: str):
         pass
 
@@ -510,6 +557,28 @@ class FtsSearchPanel(QWidget):
         focus watcher's job (text_nav._FocusSelectAll), so nothing to add
         here — and nothing here that could disagree with it."""
         self.query_input.setFocus()
+
+    def _on_query_text_changed(self):
+        """Schedule a search per the operator's auto-search delay.
+
+        `search.auto_delay_ms` is read live on every keystroke: 0 fires
+        immediately ("every keystroke"), any other value waits that many
+        ms after the last character. A bad/unset value falls back to the
+        default rather than stalling the lane.
+        """
+        from core.constants import SEARCH_AUTO_DELAY_MS_DEFAULT
+        from core.database import get_setting
+        try:
+            delay = int(get_setting("search.auto_delay_ms",
+                                    str(SEARCH_AUTO_DELAY_MS_DEFAULT)))
+        except (TypeError, ValueError):
+            delay = SEARCH_AUTO_DELAY_MS_DEFAULT
+        self._debounce_timer.stop()
+        if delay <= 0:
+            self._execute_search()
+            return
+        self._debounce_timer.setInterval(delay)
+        self._debounce_timer.start()
 
     def _on_search(self):
         self._debounce_timer.stop()
@@ -553,13 +622,13 @@ class FtsSearchPanel(QWidget):
         self.status_label.setText("Searching…")
 
     def _run_sweep(self, gen: int, query: str):
-        """Worker thread: per-translation two-stage search in parallel,
-        plus the keyword lane once per query (translation-independent).
+        """Worker thread: per-translation FTS in parallel. Pure FTS5 —
+        no postings scorer, no typo rescue, no second ranking merged in.
 
         Checks each completion whether a newer generation superseded
         this sweep (cancels the rest); returns (gen, {trans: results},
-        elapsed_ms, done, kw_results, kw_ms, kw_display). Never touches
-        widgets — results hop back via _sweep_done.
+        elapsed_ms, done). Never touches widgets — results hop back via
+        _sweep_done.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         bucket: dict = {}
@@ -587,31 +656,22 @@ class FtsSearchPanel(QWidget):
                     bucket[trans] = []
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        kw_results, kw_ms, kw_display = keyword_search(query, 30)
-        return (gen, bucket, (time.monotonic() - t0) * 1000, done,
-                kw_results, kw_ms, kw_display)
+        return (gen, bucket, (time.monotonic() - t0) * 1000, done)
 
     def _sweep_finished(self, future):
         """Worker-thread callback: forward to the GUI thread."""
         try:
-            (gen, bucket, elapsed_ms, done,
-             kw_results, kw_ms, kw_display) = future.result()
+            gen, bucket, elapsed_ms, done = future.result()
         except Exception as e:
             logger.warning(f"Scripture sweep crashed: {e}")
             return
-        self._sweep_done.emit(gen, bucket, elapsed_ms, done,
-                              kw_results, kw_ms, kw_display)
+        self._sweep_done.emit(gen, bucket, elapsed_ms, done)
 
     def _on_sweep_done(self, gen: int, bucket: dict, elapsed_ms: float,
-                       done: bool, kw_results: list, kw_ms: float,
-                       kw_display: str):
+                       done: bool):
         """GUI thread: render the sweep iff still current, then drain
         any coalesced pending query (a superseded sweep still drains —
-        otherwise the waiting query strands).
-
-        Keyword-lane hits merge as display-translation results; a
-        (reference, translation) pair already present from the sweep wins
-        (no duplicate badges), genuinely new verses join the list."""
+        otherwise the waiting query strands)."""
         pending = self._search_pending
         self._search_pending = None
         if gen == self._search_gen:
@@ -627,12 +687,9 @@ class FtsSearchPanel(QWidget):
             for trans, results in bucket.items():
                 for r in results:
                     r["version"] = trans
-                    all_results.append(r)
-                    seen.add(_refkey(r, trans))
-            for r in kw_results or []:
-                r["version"] = kw_display
-                key = _refkey(r, kw_display)
-                if key not in seen:
+                    key = _refkey(r, trans)
+                    if key in seen:
+                        continue
                     seen.add(key)
                     all_results.append(r)
             # Operator learning: previously picked verses for similar
@@ -807,8 +864,8 @@ class FtsSearchPanel(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(
             f"QPushButton {{ background: {ACCENT_SOFT};"
-            f"  color: {ACCENT}; border: 1px solid {ACCENT_BORDER};"
-            "  border-radius: 6px; padding: 6px; font-size: 11px;"
+            f"  color: {ACCENT_TEXT}; border: 1px solid {ACCENT_BORDER};"
+            "  border-radius: 6px; padding: 6px; font-size: 12px;"
             "  font-weight: 700; }"
             f"QPushButton:hover {{ background: {SELECTION_BG}; }}")
 

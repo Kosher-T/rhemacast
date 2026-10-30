@@ -8,9 +8,17 @@ Format:
   * at line start = section marker (not displayed, spans slides until next *)
   a bare * alone on a line clears the current section (for section-less slides)
   plain lines = slide content (displayed)
-  double blank line (\\n\\n\\n = two consecutive empty lines) = slide boundary
-    single newline = line break within same slide; single blank line is ignored
-    (not a boundary) to allow readable spacing without splitting slides
+  blank-line `---` divider = slide boundary: at least one blank line on each
+    side, extra blank lines around it are padding (accepted, normalized)
+    `\\n\\n---\\n\\n` is the canonical form; any amount of surrounding space
+    is accepted as long as the divider has blank-line padding.
+    Inside a slide every newline is content: single blank lines and runs of
+    blank lines are vertical spacing and are preserved.
+  Legacy files with no `---` divider keep parsing as before: double blank
+    line (two consecutive empty lines) = slide boundary, and a `*section`
+    line starts a new slide.
+    In bordered (new-format) files `*` only sets the sticky section; slides
+    are split by `---` alone.
 
 Output: {"title": str, "slides": [{"section": str|None, "text": str}]}
 Each entry in slides = one displayable slide. Section may be None if none set.
@@ -30,9 +38,17 @@ Format:
   * at line start = section marker (not displayed, spans slides until next *)
   a bare * alone on a line clears the current section (for section-less slides)
   plain lines = slide content (displayed)
-  double blank line (\\n\\n\\n = two consecutive empty lines) = slide boundary
-    single newline = line break within same slide; single blank line is ignored
-    (not a boundary) to allow readable spacing without splitting slides
+  blank-line `---` divider = slide boundary: at least one blank line on each
+    side, extra blank lines around it are padding (accepted, normalized)
+    `\\n\\n---\\n\\n` is the canonical form; any amount of surrounding space
+    is accepted as long as the divider has blank-line padding.
+    Inside a slide every newline is content: single blank lines and runs of
+    blank lines are vertical spacing and are preserved.
+  Legacy files with no `---` divider keep parsing as before: double blank
+    line (two consecutive empty lines) = slide boundary, and a `*section`
+    line starts a new slide.
+    In bordered (new-format) files `*` only sets the sticky section; slides
+    are split by `---` alone.
   Inline runs (override deck + theme for the bracketed words):
     [words (color=#ff6600; size=20; italics=true; bold=false; case=upper)]
     params must be the final (...) group; unknown/invalid params are skipped.
@@ -731,6 +747,10 @@ def _slide_block(slides: list[dict], idx: int) -> str:
     `*Name` lines (read back losslessly by the parser — section syntax
     is never merged). Section-less slides after a valued one keep the
     bare `*` clear so re-parse does not inherit.
+
+    Only newlines are trimmed at the block edges (they belong to the
+    `---` divider padding); interior blank lines and leading indent are
+    slide content and round-trip verbatim.
     """
     slide = slides[idx]
     lines: list[str] = []
@@ -743,39 +763,69 @@ def _slide_block(slides: list[dict], idx: int) -> str:
         lines.append("*")
     elif slide_owns_marker(slides, idx) and section:
         lines.append(f"*{section}")
-    text = slide.get("text", "") or ""
-    lines.append(text.strip())
+    text = (slide.get("text", "") or "").strip("\n")
+    lines.append(text)
     return "\n".join(lines)
 
 
-def slides_body_to_txt(slides: list[dict]) -> str:
+def slides_body_to_txt(slides: list[dict], end_marker: bool = False) -> str:
     """Serialize slide blocks only — no title, no format line.
 
     Used for tier-scoped copy (a section run, a single slide block): the
     subset carries its own `*` markers via ownership flags, so it
-    re-parses with identical section structure.
+    re-parses with identical section structure. Pass end_marker=True when
+    the result is parsed standalone (clipboard): a single slide then
+    carries the v3 end-marker so its in-slide blanks survive. Splicing
+    callers leave it off — they add real dividers between fragments.
     """
-    return "\n\n\n".join(
-        _slide_block(slides, i) for i in range(len(slides or [])))
+    blocks = [_slide_block(slides, i) for i in range(len(slides or []))]
+    body = "\n\n---\n\n".join(blocks)
+    if end_marker and len(blocks) == 1:
+        body += "\n\n---\n"
+    return body
+
+
+def prune_empty_slides(slides: list[dict]) -> list[dict]:
+    """Drop slides with no body text and no section text (Save-time cleanup).
+
+    Empty cards are legitimate while editing (a blank slide is a place to
+    start typing); the deck txt cannot represent a body-less card, so Save
+    removes them. A card that carries only a section header is kept.
+    """
+    keep = []
+    rows = slides or []
+    for i, slide in enumerate(rows):
+        text = (slide.get("text") or "").strip()
+        section = (slide.get("section") or "").strip() \
+            if slide_owns_marker(rows, i) else ""
+        if text or section:
+            keep.append(slide)
+    return keep
 
 
 def deck_to_txt(title: str, slides: list[dict], format: dict | None = None) -> str:
     """Serialize a deck back to raw txt format (round-trips parse_slide_txt).
 
-    Emits an optional format line, then `# title`, then per slide an optional
-    `*section` marker plus text lines with real line breaks. Slide blocks are
-    joined by TWO blank lines — the parser ignores a single blank, so one
-    blank would merge everything back into a single slide. Two blanks stay
-    well clear of the multi-song split (5+ blanks + title).
+    Emits an optional format line, then `# title`, then slide blocks joined
+    by the canonical `\\n\\n---\\n\\n` divider. Any number of blank lines is
+    legal inside a slide; the divider's blank padding is what distinguishes
+    spacing from a slide break.
     """
-    blocks = []
     header = format_to_line(format)
-    if header:
-        blocks.append(header)
-    blocks.append(f"# {(title or '').strip() or '(untitled)'}")
-    for idx in range(len(slides or [])):
-        blocks.append(_slide_block(slides, idx))
-    return "\n\n\n".join(blocks) + "\n"
+    head = "\n\n".join(
+        part for part in (header,
+                          f"# {(title or '').strip() or '(untitled)'}")
+        if part)
+    blocks = [_slide_block(slides, idx) for idx in range(len(slides or []))]
+    body = "\n\n---\n\n".join(blocks)
+    if not body:
+        return head + "\n"
+    out = head + "\n\n" + body
+    if len(blocks) <= 1:
+        # End-marker: signals the bordered format so in-slide spacing is
+        # preserved even when the deck has a single slide.
+        out += "\n\n---"
+    return out + "\n"
 
 
 def split_multisong(raw: str) -> list[str]:
@@ -792,97 +842,154 @@ def split_multisong(raw: str) -> list[str]:
     return [c for c in chunks if c.strip() != ""] or []
 
 
-def parse_slide_txt(raw: str) -> dict:
+_DIVIDER = "---"
+
+
+def _is_blank_line(line: str) -> bool:
+    return line.strip() == ""
+
+
+def _divider_indices(lines: list[str]) -> list[int]:
+    """Line indexes of `---` slide dividers (blank-padded, BOF/EOF count).
+
+    A divider is a line whose stripped form is exactly `---`, with a blank
+    line on each side — `\n\n---\n\n` at minimum, any amount of padding
+    around it. The first/last line counts as padded.
     """
-    Parse raw txt content into title + slides + deck format overrides.
+    out: list[int] = []
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if line.strip() != _DIVIDER:
+            continue
+        before = i == 0 or _is_blank_line(lines[i - 1])
+        after = i == n - 1 or _is_blank_line(lines[i + 1])
+        if before and after:
+            out.append(i)
+    return out
 
-    Rules:
-    - Deck format: leading 'k=v; k=v' line(s) before the title (size, bold,
-      color, italics, case) → format dict; later lines win per key.
-    - Title: first line matching ^[#%]\\s*(.+?)\\s*$ → title. Subsequent #/% lines ignored.
-    - Section: line matching ^\\*\\s*(.+?)\\s*$ → sets current_section for following slides.
-      A bare `*` clears the section.
-    - Slide: one or more non-empty, non-marker lines grouped until double blank line or EOF.
-      Single newline = line break within same slide ("Line A\\nLine B").
-      Single blank line (\\n\\n) is ignored — not a boundary, just readable spacing.
-      Double blank line (\\n\\n\\n, i.e. two consecutive empty lines) = slide boundary.
-    - Empty/whitespace-only raw → title "" and no slides.
+
+def _trim_padding(lines: list[str]) -> list[str]:
+    """Drop blank boundary padding at both ends, keep interior spacing."""
+    start, end = 0, len(lines)
+    while start < end and _is_blank_line(lines[start]):
+        start += 1
+    while end > start and _is_blank_line(lines[end - 1]):
+        end -= 1
+    return lines[start:end]
+
+
+def _parse_bordered(lines: list[str], fmt: dict) -> dict:
+    """New format: `---` dividers alone split slides.
+
+    `*` lines set the sticky section but never split; every segment between
+    dividers is one slide (empty segments included — Save prunes empty
+    cards). Interior blank lines are content spacing and are preserved;
+    blank lines touching a divider are padding and are dropped.
     """
-    if raw is None:
-        raw = ""
+    title: str | None = None
+    current_section: str | None = None
+    in_header = True
+    slides: list[dict] = []
 
-    # Normalize line endings and strip BOM if present
-    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
-    if raw.startswith("\ufeff"):
-        raw = raw.lstrip("\ufeff")
+    dividers = set(_divider_indices(lines))
+    segments: list[list[str]] = []
+    segment: list[str] = []
+    for i, line in enumerate(lines):
+        if i in dividers:
+            segments.append(segment)
+            segment = []
+            continue
+        segment.append(line)
+    segments.append(segment)
+    # A trailing divider at EOF is an end-marker, not an empty last slide:
+    # it exists so a one-slide deck can still declare the bordered format
+    # (without it, blank-line spacing would re-parse with legacy rules).
+    if len(segments) > 1 and not _trim_padding(segments[-1]):
+        segments.pop()
 
-    fmt = parse_deck_format(raw)
+    for raw_segment in segments:
+        marker_owned = False
+        content: list[str] = []
+        for line in _trim_padding(raw_segment):
+            stripped = line.strip()
+            if in_header and parse_format_line(line) is not None:
+                continue
+            if _TITLE_RE.match(line):
+                in_header = False
+                if title is None:
+                    m = _TITLE_RE.match(line)
+                    title = m.group(1).strip() if m else ""
+                continue
+            if stripped == "*":
+                in_header = False
+                marker_owned = True
+                current_section = None
+                continue
+            if _SECTION_RE.match(line):
+                in_header = False
+                marker_owned = True
+                m = _SECTION_RE.match(line)
+                current_section = m.group(1).strip() if m else None
+                continue
+            in_header = False
+            content.append(line.rstrip())
+        text = "\n".join(content).strip("\n")
+        slides.append({"section": current_section, "text": text,
+                       "marker": marker_owned})
 
+    return {"title": title or "", "slides": slides, "format": fmt}
+
+
+def _parse_legacy(lines: list[str], fmt: dict) -> dict:
+    """Pre-divider files: double blank line splits, `*section` starts a slide.
+
+    Single blank lines are content spacing (vertical spacing the author
+    typed) and are preserved; leading indent is preserved too.
+    """
     title: str | None = None
     current_section: str | None = None
 
-    # We'll collect blocks: split by blank lines (one or more empty lines)
-    # But we need to handle section markers and title markers which are not content.
-    # Approach: iterate lines, building current slide buffer.
-
     slides: list[dict] = []
-    # Buffer for lines in current slide
     current_lines: list[str] = []
-    # A `*` marker (or bare `*` clear) since the last flush means the next
-    # emitted slide owns its section; otherwise it inherits (sticky).
     marker_pending = False
 
     def flush_slide():
         nonlocal current_lines, marker_pending
         if not current_lines:
             return
-        # Join with newline to preserve intra-slide line breaks, then strip
-        text = "\n".join(current_lines).strip()
-        # Collapse trailing/leading blank artifacts but keep internal single newlines
-        # Also collapse multiple internal blank artefacts that slipped through (shouldn't)
+        text = "\n".join(current_lines).strip("\n")
         if text:
             slides.append({"section": current_section, "text": text,
                            "marker": marker_pending})
             marker_pending = False
         current_lines = []
 
-    lines = raw.split("\n")
-
     consecutive_blank = 0
-    in_header = True  # format lines only count before title/section/content
+    in_header = True
 
     for line in lines:
         stripped = line.strip()
 
-        # Blank line handling: double blank (two consecutive empty lines) = slide boundary
-        # Single blank is ignored (allows readable spacing without splitting)
         if stripped == "":
             consecutive_blank += 1
-            if consecutive_blank == 2:
+            if consecutive_blank >= 2:
                 flush_slide()
-            # For 1 or >2 consecutive blanks, do not flush again — already bounded
+            else:
+                current_lines.append("")
             continue
 
-        # Non-blank resets blank streak
         consecutive_blank = 0
 
-        # Deck format line — only in the header zone; elsewhere it's a lyric
         if in_header and parse_format_line(line) is not None:
             continue
 
-        # Title marker — only first occurrence wins
         if _TITLE_RE.match(line):
             in_header = False
             if title is None:
                 m = _TITLE_RE.match(line)
                 title = m.group(1).strip() if m else ""
-                # Don't treat as content
-                continue
-            else:
-                # Subsequent title-like lines are ignored per spec (not displayed)
-                continue
+            continue
 
-        # Section marker — `*name` sets it, a bare `*` clears it
         if stripped == "*":
             in_header = False
             flush_slide()
@@ -892,26 +999,49 @@ def parse_slide_txt(raw: str) -> dict:
 
         if _SECTION_RE.match(line):
             in_header = False
-            # Flush any pending slide before switching section
             flush_slide()
             m = _SECTION_RE.match(line)
             current_section = m.group(1).strip() if m else None
             marker_pending = True
             continue
 
-        # Plain content line — part of current slide
         in_header = False
-        # Preserve as-is trimmed? Keep original leading/trailing stripped but internal intact
-        # Use stripped version for display (user typed content, trim edges)
-        current_lines.append(stripped)
+        current_lines.append(line.rstrip())
 
-    # Flush trailing slide
     flush_slide()
 
-    if title is None:
-        title = ""
+    return {"title": title or "", "slides": slides, "format": fmt}
 
-    return {"title": title, "slides": slides, "format": fmt}
+
+def parse_slide_txt(raw: str) -> dict:
+    """
+    Parse raw txt content into title + slides + deck format overrides.
+
+    Rules:
+    - Deck format: leading 'k=v; k=v' line(s) before the title (size, bold,
+      color, italics, case) → format dict; later lines win per key.
+    - Title: first line matching ^[#%]\\s*(.+?)\\s*$ → title. Later #/% lines ignored.
+    - Section: line matching ^\\*\\s*(.+?)\\s*$ → sticky section for following
+      slides. A bare `*` clears it. In bordered files `*` never splits.
+    - Border (new format): a `---` line with a blank line on each side splits
+      slides (`\\n\\n---\\n\\n` canonical; extra padding accepted).
+      Inside a slide every newline is content spacing, preserved verbatim.
+    - Legacy (no `---` divider): double blank line = boundary, `*` = new slide,
+      single blank line = preserved spacing.
+    - Empty/whitespace-only raw → title "" and no slides.
+    """
+    if raw is None:
+        raw = ""
+
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+    if raw.startswith("\ufeff"):
+        raw = raw.lstrip("\ufeff")
+
+    fmt = parse_deck_format(raw)
+    lines = raw.split("\n")
+    if _divider_indices(lines):
+        return _parse_bordered(lines, fmt)
+    return _parse_legacy(lines, fmt)
 
 
 def slides_to_text(slides: list[dict], separator: str = " \u2022 ") -> str:

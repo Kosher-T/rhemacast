@@ -687,3 +687,36 @@ def get_session_items(session_id: str, limit: int = 500) -> list:
         return items
     except Exception:
         return []
+
+
+# The instant THIS process became the running app. A session is one app
+# run (plus the transcription session inside it, if any): rows stamped
+# before the boot belong to a finished run and never come back, so an
+# app restart starts the scripture-history view empty.
+APP_SESSION_STARTED_MS = int(time.time() * 1000)
+
+
+def get_scripture_display_history(limit: int = 200) -> list:
+    """Scripture rows displayed during the CURRENT session, newest first.
+
+    A session is this app run — or the live transcription session inside
+    it. Older runs (rows stamped before this boot) and rows from a
+    finished transcription session are never read: the history panel
+    shows only session details and starts empty on every new one. Deck
+    slides, clears and searches never reach the panel. The raw log stays
+    untouched: scoping and the "no consecutive duplicates" rule live in
+    the UI, not in the rows.
+    """
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT ref, text, translation, timestamp_ms FROM display_events"
+            " WHERE session_id = ? AND timestamp_ms >= ?"
+            " AND kind = 'verse' AND action = 'display'"
+            " ORDER BY timestamp_ms DESC, id DESC LIMIT ?",
+            (current_operator_session(), APP_SESSION_STARTED_MS, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []

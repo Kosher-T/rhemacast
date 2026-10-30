@@ -17,21 +17,26 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListView, QFrame, QScrollArea,
-    QStyleOptionViewItem, QStyledItemDelegate, QStyle, QMessageBox,
-    QMenu, QInputDialog, QAbstractItemView
+    QStyleOptionViewItem, QStyledItemDelegate, QStyle, QMenu, QAbstractItemView
 )
 from PyQt6.QtGui import QWheelEvent, QFontMetrics, QDrag, QCursor
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QModelIndex, QVariant, QAbstractListModel, QMimeData, QPoint, QEvent
 
+from ui import dialogs
+from ui.popups import menu_qss
 from ui.styles import (
-    PANEL_BODY_STYLE, SLATE_300, SLATE_400, SLATE_500, BLUE_500, CYAN_400,
-    TRANSLATION_BTN_INACTIVE, TRANSLATION_BTN_ACTIVE,
-    VERSE_EVEN_BG, VERSE_ODD_BG, VERSE_SELECTED_BG, VERSE_HOVER_BG, VERSE_SELECTED_TEXT,
-    BORDER_SUBTLE, SLATE_950, WHITE,    VERSE_TEXT_SIZE, VERSE_REF_SIZE,
-    TOOLBAR_BG, BG_RAISED, ACCENT_BORDER,
+    PANEL_BODY_STYLE, SLATE_300, BLUE_500,
+    translation_btn_style,
+    VERSE_TEXT_SIZE, VERSE_REF_SIZE,
+    TOOLBAR_BG, BG_RAISED, ACCENT_BORDER, BORDER_SUBTLE, WHITE,
     apply_minimal_scrollbar,
 )
 from ui.widgets.predictive_input import PredictiveScriptureInput
+from ui.tokens import (
+    BUTTON_HEIGHT, ROW_EVEN, ROW_HOVER, ROW_ODD, SPACE_4, SPACE_8,
+    ACCENT, ACCENT_TEXT, BG_CARD_SELECTED, SELECTED_BAR_WIDTH,
+    TEXT_PRIMARY, button_qss,
+)
 from ui.dialogs.add_translation_dialog import AddTranslationDialog
 from core.bible_service import (
     AVAILABLE_TRANSLATIONS, get_chapter, get_all_verses,
@@ -140,9 +145,23 @@ class _VerseListView(QListView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # The delegate paints its own quiet hover; the view only tracks
+        # which row the pointer is over (no per-row widgets).
+        self.hover_row = -1
+        self.viewport().setMouseTracking(True)
         self.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
+        if obj is self.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                row = self.indexAt(event.position().toPoint()).row()
+                if row != self.hover_row:
+                    self.hover_row = row
+                    self.viewport().update()
+            elif event.type() == QEvent.Type.Leave:
+                if self.hover_row != -1:
+                    self.hover_row = -1
+                    self.viewport().update()
         return super().eventFilter(obj, event)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -193,41 +212,36 @@ class VerseDelegate(QStyledItemDelegate):
 
         painter.save()
 
-        # Determine background
+        # Determine background — flat stripes (one barely-there wash) and a
+        # quiet hover, both from ui.tokens. A selected row uses the same
+        # surface + 3px accent bar as a schedule card / Outputs row.
         is_selected = option.state & QStyle.StateFlag.State_Selected
+        hovered = getattr(option.widget, "hover_row", -1) == index.row()
         if is_selected:
-            bg = VERSE_SELECTED_BG
+            bg = BG_CARD_SELECTED
+        elif hovered:
+            bg = ROW_HOVER
         elif index.row() % 2 == 0:
-            bg = VERSE_EVEN_BG
+            bg = ROW_EVEN
         else:
-            bg = VERSE_ODD_BG
+            bg = ROW_ODD
 
         from PyQt6.QtGui import QColor, QPen
-        color = QColor(bg)
-        if bg.startswith("rgba"):
-            # Parse rgba manually — alpha is 0.0-1.0, convert to 0-255
-            parts = bg.replace("rgba(", "").replace(")", "").split(",")
-            alpha = float(parts[3].strip())
-            color = QColor(int(parts[0].strip()), int(parts[1].strip()),
-                           int(parts[2].strip()), int(alpha * 255))
-        elif bg == "transparent":
-            color = QColor(0, 0, 0, 0)
-        else:
-            color = QColor(bg)
+        painter.fillRect(option.rect, QColor(bg))
 
-        painter.fillRect(option.rect, color)
-
-        # Left accent border
+        # Left accent bar — painted inside the row's left inset, so the
+        # content stays at x+6 and text never shifts when selection moves.
         if is_selected:
-            painter.fillRect(option.rect.x(), option.rect.y(), 2, option.rect.height(),
-                             QColor(BLUE_500))
+            painter.fillRect(option.rect.x(), option.rect.y(),
+                             SELECTED_BAR_WIDTH, option.rect.height(),
+                             QColor(ACCENT))
 
         # Reference text (Book chapter:verse)
         abbrev = BOOK_ABBREV.get(verse['book'], verse['book'][:4])
         ref = f"{abbrev} {verse['chapter']}:{verse['verse']}"
         ref_rect = option.rect.adjusted(6, 0, 0, 0)
         ref_rect.setWidth(55)
-        painter.setPen(QPen(QColor(BLUE_500)))
+        painter.setPen(QPen(QColor(ACCENT_TEXT if is_selected else BLUE_500)))
         font = painter.font()
         font.setPixelSize(self.verse_ref_size)
         if self.verse_ref_font_family:
@@ -238,7 +252,7 @@ class VerseDelegate(QStyledItemDelegate):
 
         # Verse text
         text_rect = option.rect.adjusted(62, 0, -6, 0)
-        text_color = VERSE_SELECTED_TEXT if is_selected else SLATE_300
+        text_color = TEXT_PRIMARY if is_selected else SLATE_300
         painter.setPen(QPen(QColor(text_color)))
         font.setPixelSize(self.verse_text_size)
         if self.verse_font_family:
@@ -284,7 +298,7 @@ class TranslationButton(QPushButton):
         super().__init__(self.display_name, parent)
         self._active = False
         self._drag_start_pos: QPoint | None = None
-        self.setStyleSheet(TRANSLATION_BTN_INACTIVE)
+        self.apply_font()
         self._update_tooltip()
         self.clicked.connect(lambda: self.single_clicked.emit(self.canonical))
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -311,14 +325,19 @@ class TranslationButton(QPushButton):
         self.double_clicked_signal.emit(self.canonical)
         super().mouseDoubleClickEvent(event)
 
+    def apply_font(self):
+        """Re-read the "panel.labels" group for this bar button."""
+        self.setStyleSheet(translation_btn_style(self._active))
+
     def set_active(self, active: bool):
         self._active = active
-        self.setStyleSheet(TRANSLATION_BTN_ACTIVE if active else TRANSLATION_BTN_INACTIVE)
+        self.apply_font()
 
     # ── Context Menu (Rename) ────────────────────────────────────────────────────
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
+        menu.setStyleSheet(menu_qss())
         rename_action = menu.addAction("Rename...")
         rename_action.triggered.connect(self._on_rename)
         menu.addSeparator()
@@ -329,7 +348,7 @@ class TranslationButton(QPushButton):
         menu.exec(self.mapToGlobal(pos))
 
     def _on_rename(self):
-        new_name, ok = QInputDialog.getText(
+        new_name, ok = dialogs.get_text(
             self,
             "Rename Translation",
             f"Display name for {self.canonical}:",
@@ -339,10 +358,10 @@ class TranslationButton(QPushButton):
             return
         new_name = new_name.strip()
         if not new_name:
-            QMessageBox.warning(self, "Invalid Name", "Display name cannot be empty.")
+            dialogs.warning(self, "Invalid Name", "Display name cannot be empty.")
             return
         if len(new_name) > 20:
-            QMessageBox.warning(self, "Invalid Name", "Display name must be 20 characters or fewer.")
+            dialogs.warning(self, "Invalid Name", "Display name must be 20 characters or fewer.")
             return
         # Check for duplicates (allow keeping the same name)
         if new_name != self.display_name:
@@ -350,7 +369,7 @@ class TranslationButton(QPushButton):
             try:
                 rename_translation(self.canonical, new_name)
             except ValueError as e:
-                QMessageBox.warning(self, "Invalid Name", str(e))
+                dialogs.warning(self, "Invalid Name", str(e))
                 return
             self.display_name = new_name
             self.setText(new_name)
@@ -528,12 +547,13 @@ class BrowserPanel(QWidget):
         trans_area.setStyleSheet("background: transparent;")
         trans_area.reorder_done.connect(self._save_translation_order)
         trans_layout = QHBoxLayout(trans_area)
-        trans_layout.setContentsMargins(0, 0, 0, 0)
-        trans_layout.setSpacing(6)
+        trans_layout.setContentsMargins(SPACE_8, SPACE_8, SPACE_8, SPACE_8)
+        trans_layout.setSpacing(SPACE_4)
 
         for abbrev in translations:
             display = get_display_name(abbrev)
             btn = TranslationButton(abbrev, display)
+            btn.setFixedHeight(BUTTON_HEIGHT)
             btn.single_clicked.connect(self._on_translation_single_click)
             btn.double_clicked_signal.connect(self._on_translation_double_click)
             btn.sort_requested.connect(self._on_sort_translations)
@@ -549,21 +569,8 @@ class BrowserPanel(QWidget):
         self._add_btn = QPushButton("+ Add")
         self._add_btn.setAccessibleName("Add translation")
         self._add_btn.setAccessibleDescription("Import a new Bible translation")
-        self._add_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {SLATE_400};
-                font-size: 10px;
-                font-weight: 600;
-                background: transparent;
-                border: 1px dashed {BORDER_SUBTLE};
-                border-radius: 4px;
-                padding: 4px 8px;
-            }}
-            QPushButton:hover {{
-                color: {WHITE};
-                border-color: {CYAN_400};
-            }}
-        """)
+        self._add_btn.setFixedHeight(BUTTON_HEIGHT)
+        self._add_btn.setStyleSheet(self._add_btn_style())
         self._add_btn.clicked.connect(self._on_add_translation)
         trans_layout.addWidget(self._add_btn)
 
@@ -639,13 +646,17 @@ class BrowserPanel(QWidget):
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 8px;
                 padding: 2px 8px;
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 700;
             }}
         """)
         self._quick_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._quick_badge.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._quick_badge.hide()
+
+        # Settings → Interface: the translation bar reads "panel.labels".
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -701,9 +712,12 @@ class BrowserPanel(QWidget):
 
     # ── Bible Loading ──────────────────────────────────────────────────────
 
-    def _load_bible(self):
+    def _load_bible(self) -> bool:
         """Load the entire bible for the current translation into the virtual model.
-        Uses an in-memory cache to avoid re-querying bible.db on repeated switches."""
+        Uses an in-memory cache to avoid re-querying bible.db on repeated switches.
+        Returns False when the verses are not loadable (missing translation,
+        locked/unreadable bible.db); callers must not leave the browser in a
+        half-switched state in that case."""
         if self._current_translation not in self._bible_cache:
             logger.info(f"Loading entire bible [{self._current_translation}]...")
             verses = get_all_verses(self._current_translation)
@@ -711,8 +725,9 @@ class BrowserPanel(QWidget):
                 self._bible_cache[self._current_translation] = verses
                 logger.info(f"Loaded {len(verses)} verses [{self._current_translation}]")
             else:
-                logger.error("Failed to load bible verses")
-                return
+                logger.error("Failed to load bible verses [%s]",
+                             self._current_translation)
+                return False
 
         self._model.load_all(self._bible_cache[self._current_translation])
 
@@ -720,6 +735,37 @@ class BrowserPanel(QWidget):
         self._set_highlight(self._highlighted_book, self._highlighted_chapter, self._highlighted_verse)
         self._scroll_to_highlight()
         self._update_navigator()
+        return True
+
+    def _switch_translation(self, translation: str) -> bool:
+        """Switch the browser's active translation, verifying the load succeeds.
+
+        All translation mutations (buttons, state, settings) happen together and
+        are fully reverted when the bible cannot be loaded — a failed switch must
+        never leave the browser half-switched (viewer showing one translation,
+        buttons claiming another), which reads to the operator as "click does
+        nothing". Returns True when the new translation is live.
+        """
+        previous = self._current_translation
+        for _name, btn in self._translation_buttons.items():
+            btn.set_active(_name == translation)
+        self._current_translation = translation
+        self.verse_list._translation = translation
+        self.predictive_input.set_translation(translation)
+        set_setting("bible.last_translation", translation)
+
+        if not self._load_bible():
+            logger.warning("Translation [%s] not loadable — reverting to [%s]",
+                           translation, previous)
+            for _name, btn in self._translation_buttons.items():
+                btn.set_active(_name == previous)
+            self._current_translation = previous
+            self.verse_list._translation = previous
+            self.predictive_input.set_translation(previous)
+            set_setting("bible.last_translation", previous)
+            self._load_bible()
+            return False
+        return True
 
     def _set_highlight(self, book: str, chapter: int, verse: int):
         """Update the highlighted verse state and move the current index to it.
@@ -828,14 +874,8 @@ class BrowserPanel(QWidget):
         differs from the current one, switches translation first.
         """
         if translation and translation != self._current_translation:
-            # Switch translation
-            for name, btn in self._translation_buttons.items():
-                btn.set_active(name == translation)
-            self._current_translation = translation
-            self.verse_list._translation = translation
-            self.predictive_input.set_translation(translation)
-            set_setting("bible.last_translation", translation)
-            self._load_bible()
+            # Switch translation (all-or-revert — never half-switched)
+            self._switch_translation(translation)
 
         chap_int = int(chapter) if chapter else 1
         verse_int = int(verse) if verse else 1
@@ -869,17 +909,7 @@ class BrowserPanel(QWidget):
 
     def _on_translation_single_click(self, abbrev: str):
         """Switch to that translation and navigate to the currently highlighted verse."""
-        for name, btn in self._translation_buttons.items():
-            btn.set_active(name == abbrev)
-        self._current_translation = abbrev
-        self.verse_list._translation = abbrev
-        self.predictive_input.set_translation(abbrev)
-
-        # Persist the selected translation
-        set_setting("bible.last_translation", abbrev)
-
-        # Reload the entire bible in the new translation
-        self._load_bible()
+        self._switch_translation(abbrev)
 
         # Update preview with the highlighted verse in the new translation
         self.verse_clicked.emit(self._current_translation)
@@ -889,15 +919,7 @@ class BrowserPanel(QWidget):
 
     def _on_translation_double_click(self, abbrev: str):
         """Double-click: switch translation, push the LIVE verse to live."""
-        for name, btn in self._translation_buttons.items():
-            btn.set_active(name == abbrev)
-        self._current_translation = abbrev
-        self.verse_list._translation = abbrev
-        self.predictive_input.set_translation(abbrev)
-        set_setting("bible.last_translation", abbrev)
-
-        # Reload bible in new translation, preserving highlighted verse
-        self._load_bible()
+        self._switch_translation(abbrev)
 
         # Push the live-displayed verse (not the highlight) in this version
         self.broadcast_live_translation.emit(self._current_translation)
@@ -937,35 +959,68 @@ class BrowserPanel(QWidget):
         if not layout:
             return
 
-        # Gather all buttons and the stretch spacer
+        # Gather all translation buttons, the stretch spacer, and the
+        # Add button. Add is NOT a translation: it must stay pinned after
+        # the stretch, never be sorted into the bar (re-adding sorted
+        # buttons appends them, which used to leave Add at the front).
         buttons = []
         stretch_item = None
+        add_btn = getattr(self, "_add_btn", None)
         for i in range(layout.count()):
             item = layout.itemAt(i)
-            if item.widget() and isinstance(item.widget(), TranslationButton):
-                buttons.append(item.widget())
-            elif item.spacerItem():
+            widget = item.widget() if item else None
+            if isinstance(widget, TranslationButton):
+                buttons.append(widget)
+            elif item and item.spacerItem():
                 stretch_item = item
 
         # Sort by display name
         reverse = (self._sort_mode == "za")
         buttons.sort(key=lambda b: b.display_name.lower(), reverse=reverse)
 
-        # Remove stretch and all buttons from layout
+        # Remove stretch, all buttons, and Add from layout
         if stretch_item:
             layout.removeItem(stretch_item)
         for btn in buttons:
             layout.removeWidget(btn)
+        if add_btn is not None:
+            layout.removeWidget(add_btn)
 
-        # Re-add in sorted order, then stretch at end
+        # Re-add sorted buttons, stretch, then Add at the far right
         for btn in buttons:
             layout.addWidget(btn)
         if stretch_item:
             layout.addItem(stretch_item)
+        if add_btn is not None:
+            layout.addWidget(add_btn)
 
-        # Persist the new order
+        # Persist the new order (translations only — Add stays out)
         new_order = [btn.canonical for btn in buttons]
         set_translation_order(new_order)
+
+    # ── Settings-backed type ────────────────────────────────────────────────
+
+    def _add_btn_style(self) -> str:
+        """+ Add QSS — same "panel.labels" group, 12/600 default.
+
+        Dashed form of the shared ghost button: the outline is the add
+        affordance, and the width is reserved at rest.
+        """
+        from ui.app_theme import area_font, font_qss
+        spec = area_font("panel.labels", 12, 600, size_min=8, size_max=28)
+        return button_qss("ghost", font_css=font_qss(spec),
+                          padding=f"0 {SPACE_8}px", dashed=True)
+
+    def apply_translation_fonts(self):
+        """Push the "panel.labels" font group onto the whole translation bar."""
+        for btn in self._translation_buttons.values():
+            btn.apply_font()
+        if getattr(self, "_add_btn", None) is not None:
+            self._add_btn.setStyleSheet(self._add_btn_style())
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "panel.labels":
+            self.apply_translation_fonts()
 
     # ── Add Translation ─────────────────────────────────────────────────────
 
@@ -989,7 +1044,7 @@ class BrowserPanel(QWidget):
             logger.info(f"Translation '{version}' imported successfully")
         except Exception as e:
             logger.error(f"Failed to import translation: {e}")
-            QMessageBox.critical(
+            dialogs.critical(
                 self,
                 "Import Failed",
                 f"Could not import the file:\n\n{e}",
@@ -1059,9 +1114,11 @@ class BrowserPanel(QWidget):
         """Update verse list font sizes and trigger a repaint."""
         from core.database import get_setting
         if text_size is None:
-            text_size = int(get_setting("bible.verse_text_size", str(VERSE_TEXT_SIZE)))
+            text_size = int(get_setting("bible.verse_text_size",
+                                        str(VERSE_TEXT_SIZE)))
         if ref_size is None:
-            ref_size = int(get_setting("bible.verse_ref_size", str(VERSE_REF_SIZE)))
+            ref_size = int(get_setting("bible.verse_ref_size",
+                                       str(VERSE_REF_SIZE)))
         self._delegate.verse_text_size = text_size
         self._delegate.verse_ref_size = ref_size
         self.update_verse_fonts()

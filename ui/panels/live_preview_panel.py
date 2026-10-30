@@ -15,10 +15,13 @@ from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from ui.widgets.display_view import DisplayView
 from ui.widgets.aspect_ratio import AspectRatioWidget
 from ui.styles import (
-    MACRO_BTN_AMBER, MACRO_BTN_CLEAR,
-    PANEL_HEADER_STYLE, PANEL_HEADER_LABEL_STYLE, PANEL_BODY_STYLE,
-    ACCENT_BORDER, RED_500, TEXT_MUTED, TEXT_PRIMARY, CHROME_SOFT, CHROME_STRONG
+    PANEL_HEADER_STYLE, PANEL_BODY_STYLE,
+    ACCENT_BORDER, RED_500,
 )
+from ui.tokens import (
+    BUTTON_HEIGHT, WARNING, icon_button_qss,
+)
+from ui.connection_status import connection_monitor, live_viewport_qss
 
 
 class PreviewOverlay(QWidget):
@@ -90,7 +93,7 @@ class LivePreviewPanel(QWidget):
     preview_clicked = pyqtSignal()
     live_clicked = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, monitor=None):
         super().__init__(parent)
 
         layout = QVBoxLayout(self)
@@ -113,7 +116,7 @@ class LivePreviewPanel(QWidget):
         preview_header_layout = QHBoxLayout(preview_header)
         preview_header_layout.setContentsMargins(12, 6, 12, 6)
         preview_title = QLabel("OPERATOR PREVIEW")
-        preview_title.setStyleSheet(PANEL_HEADER_LABEL_STYLE)
+        self._preview_title = preview_title
         preview_header_layout.addWidget(preview_title)
         preview_header_layout.addStretch()
         preview_panel_layout.addWidget(preview_header)
@@ -190,12 +193,9 @@ class LivePreviewPanel(QWidget):
         live_row = QHBoxLayout()
         live_row.setSpacing(4)
         live_dot = QLabel("●")
-        live_dot.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+        live_dot.setStyleSheet(f"color: {RED_500}; font-size: 12px;")
         live_label = QLabel("LIVE")
-        live_label.setStyleSheet(f"""
-            color: {RED_500}; font-size: 12px; font-weight: 900;
-            letter-spacing: 3px;
-        """)
+        self._live_label = live_label
         live_row.addWidget(live_dot)
         live_row.addWidget(live_label)
         live_header_layout.addLayout(live_row)
@@ -210,13 +210,11 @@ class LivePreviewPanel(QWidget):
 
         self.viewport = QFrame()
         self.viewport.setObjectName("LiveOutputViewport")
-        self.viewport.setStyleSheet("""
-            QFrame#LiveOutputViewport {
-                background: black;
-                border: 1px solid rgba(239, 68, 68, 0.4);
-                border-radius: 8px;
-            }
-        """)
+        self._connection_monitor = (
+            monitor if monitor is not None else connection_monitor())
+        self.viewport.setStyleSheet(
+            live_viewport_qss(self._connection_monitor.snapshot.state))
+        self._connection_monitor.changed.connect(self._apply_connection_state)
 
         vp_layout = QVBoxLayout(self.viewport)
         vp_layout.setContentsMargins(0, 0, 0, 0)
@@ -241,29 +239,14 @@ class LivePreviewPanel(QWidget):
         live_panel_layout.addWidget(self.ar_widget, 1)
 
         # ── Nav buttons (centered below live viewport) ──
-        NAV_BTN_STYLE = f"""
-            QPushButton {{
-                background: {CHROME_SOFT};
-                color: {TEXT_MUTED};
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {CHROME_STRONG};
-                color: {TEXT_PRIMARY};
-                border-color: rgba(255, 255, 255, 0.1);
-            }}
-        """
         nav_bar = QHBoxLayout()
         nav_bar.setContentsMargins(0, 0, 0, 0)
         nav_bar.setSpacing(6)
         nav_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         btn_prev = QPushButton()
-        btn_prev.setStyleSheet(NAV_BTN_STYLE)
-        btn_prev.setFixedSize(36, 24)
+        btn_prev.setStyleSheet(icon_button_qss())
+        btn_prev.setFixedSize(36, BUTTON_HEIGHT)
         btn_prev.setToolTip("Previous Verse")
         from ui.icons import apply_button
         apply_button(btn_prev, "chevron-left")
@@ -272,16 +255,16 @@ class LivePreviewPanel(QWidget):
 
         btn_clear = QPushButton()
         apply_button(btn_clear, "eye-off")
-        btn_clear.setStyleSheet(MACRO_BTN_CLEAR)
-        btn_clear.setFixedSize(36, 24)
+        btn_clear.setStyleSheet(icon_button_qss())
+        btn_clear.setFixedSize(36, BUTTON_HEIGHT)
         btn_clear.setToolTip("Cloak / Uncloak")
         btn_clear.clicked.connect(self.clear_recall.emit)
         nav_bar.addWidget(btn_clear)
         self.btn_clear = btn_clear
 
         btn_next = QPushButton()
-        btn_next.setStyleSheet(NAV_BTN_STYLE)
-        btn_next.setFixedSize(36, 24)
+        btn_next.setStyleSheet(icon_button_qss())
+        btn_next.setFixedSize(36, BUTTON_HEIGHT)
         btn_next.setToolTip("Next Verse")
         apply_button(btn_next, "chevron-right")
         btn_next.clicked.connect(self.next_verse.emit)
@@ -300,6 +283,29 @@ class LivePreviewPanel(QWidget):
         # Default splitter ratio: 50% | 50%
         splitter.setSizes([500, 500])
         layout.addWidget(splitter, 1)
+
+        # Settings → Interface: panel headers share one font group.
+        from ui.app_theme import subscribe_interface_font_changed
+        subscribe_interface_font_changed(self._on_interface_font_changed)
+        self.apply_panel_label_fonts()
+
+    def _apply_connection_state(self, snapshot):
+        """One source of truth with the status-bar badge (ui.connection_status)."""
+        self.viewport.setStyleSheet(live_viewport_qss(snapshot.state))
+
+    def _on_interface_font_changed(self, prefix: str):
+        if prefix == "panel.labels":
+            self.apply_panel_label_fonts()
+
+    def apply_panel_label_fonts(self):
+        """Re-read the "panel.labels" group for both header labels."""
+        from ui.app_theme import area_font, font_qss
+        from ui.styles import panel_header_label_style
+
+        self._preview_title.setStyleSheet(panel_header_label_style())
+        live = area_font("panel.labels", 13, 700, size_min=8, size_max=28)
+        self._live_label.setStyleSheet(
+            f"color: {RED_500};{font_qss(live)} letter-spacing: 3px;")
 
     def eventFilter(self, obj, event):
         """Resize overlays to match their parent frames."""
@@ -377,11 +383,11 @@ class LivePreviewPanel(QWidget):
         blanked). Mirrors the SHARED cloak state — both tabs subscribe,
         so both buttons follow whichever tab toggles."""
         self.btn_clear.setProperty("cloaked", active)
+        self.btn_clear.setStyleSheet(
+            icon_button_qss(WARNING if active else None))
         self.btn_clear.setToolTip(
             "Output cloaked — showing blank (click to uncloak)"
             if active else "Cloak / Uncloak")
-        self.btn_clear.style().unpolish(self.btn_clear)
-        self.btn_clear.style().polish(self.btn_clear)
 
     def set_preview_payload(self, payload: dict):
         """Send a verse payload to the preview viewport."""

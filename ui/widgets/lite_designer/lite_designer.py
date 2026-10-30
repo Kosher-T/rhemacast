@@ -26,12 +26,15 @@ import logging
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QFrame, QTextEdit, QLineEdit,
-                             QScrollArea, QMessageBox, QStackedWidget,
+                             QScrollArea, QStackedWidget,
                              QSizePolicy, QApplication, QToolButton)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSizeF, QEvent
-from PyQt6.QtGui import QTextCursor, QKeySequence, QTextOption
+from PyQt6.QtGui import (QTextCursor, QTextDocument, QTextDocumentFragment,
+                        QKeySequence,
+                         QTextOption)
 import time as _time
 
+from ui import dialogs
 from ui.widgets.theme_properties_panel import ThemePropertiesPanel
 from ui.widgets.theme_preview import ThemePreview
 from ui.widgets.display_view import DisplayView
@@ -47,9 +50,12 @@ from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT,
     ACCENT, ACCENT_HOVER, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
     TEXT_SELECTION,
+    ACCENT_TEXT,
 )
+from ui.tokens import scrollbar_qss as _scrollbar_qss
 import core.theme_loader
 from core.slide_parser import (deck_to_txt, parse_slide_txt,
+                               prune_empty_slides,
                                 slide_owns_marker)
 
 logger = logging.getLogger(__name__)
@@ -60,35 +66,35 @@ _POPUP_STYLE = (
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 16px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-family: 'Nunito', sans-serif;"
-    "  font-size: 11px;"
+    "  font-family: 'Inter', sans-serif;"
+    "  font-size: 12px;"
     "}"
 )
 _TITLE_BAR_STYLE = ("QFrame { background: transparent;"
                     "  border-bottom: 1px solid rgba(255,255,255,0.06); }")
 _TITLE_LABEL_STYLE = ("background: transparent; border: none; color: " + TEXT_PRIMARY + ";"
-                      "font-size: 12px; font-weight: 700;")
-_BADGE_STYLE = ("background: " + ACCENT_SOFT + "; color: " + ACCENT + ";"
+                      "font-size: 13px; font-weight: 700;")
+_BADGE_STYLE = ("background: " + ACCENT_SOFT + "; color: " + ACCENT_TEXT + ";"
                 "border: 1px solid " + ACCENT_BORDER + "; border-radius: 4px;"
-                "padding: 1px 8px; font-size: 10px; font-weight: 700;")
+                "padding: 1px 8px; font-size: 12px; font-weight: 700;")
 _LIVE_BADGE_STYLE = ("background: rgba(239, 68, 68, 0.15); color: #f87171;"
                      "border: 1px solid rgba(239,68,68,0.4); border-radius: 4px;"
-                     "padding: 1px 8px; font-size: 10px; font-weight: 700;")
-_ICON_STYLE = ("background: transparent; border: none; color: " + ACCENT + ";"
+                     "padding: 1px 8px; font-size: 12px; font-weight: 700;")
+_ICON_STYLE = ("background: transparent; border: none; color: " + ACCENT_TEXT + ";"
                "font-size: 14px;")
 _BTN_GHOST = ("QPushButton { background: transparent; color: " + TEXT_MUTED + ";"
               "  border: 1px solid rgba(255,255,255,0.08); border-radius: 4px;"
-              "  padding: 4px 12px; font-size: 10px; font-weight: 600; }"
+              "  padding: 4px 12px; font-size: 12px; font-weight: 600; }"
               "QPushButton:hover { background: rgba(255,255,255,0.06);"
               "  color: " + TEXT_PRIMARY + "; }")
 _BTN_PRIMARY = ("QPushButton { background: " + BLUE_500 + "; color: #ffffff;"
                 "  border: none; border-radius: 4px; padding: 4px 16px;"
-                "  font-size: 10px; font-weight: 700; }"
+                "  font-size: 12px; font-weight: 700; }"
                 "QPushButton:hover { background: " + ACCENT_HOVER + "; }"
                 "QPushButton:pressed { background: " + ACCENT + "; }")
-_BTN_EXPAND = ("QPushButton { background: " + ACCENT_SOFT + "; color: " + ACCENT + ";"
+_BTN_EXPAND = ("QPushButton { background: " + ACCENT_SOFT + "; color: " + ACCENT_TEXT + ";"
                "  border: 1px solid " + ACCENT_BORDER + "; border-radius: 4px;"
-               "  padding: 4px 14px; font-size: 10px; font-weight: 700; }"
+               "  padding: 4px 14px; font-size: 12px; font-weight: 700; }"
                "QPushButton:hover { background: " + SELECTION_BG + "; }")
 _BTN_CLOSE = ("QPushButton { background: transparent; color: " + TEXT_FAINT + ";"
               "  border: none; border-radius: 4px; padding: 4px 8px;"
@@ -99,6 +105,22 @@ _TITLE_FIELD_STYLE = ("QLineEdit { background: rgba(0,0,0,0.3); color: " + TEXT_
                       "  border: 1px solid rgba(255,255,255,0.1);"
                       "  border-radius: 6px; padding: 4px 10px; font-size: 13px;"
                       "  font-weight: 700; }")
+class _BodyEdit(QTextEdit):
+    """Deck body editor: pastes always land as plain text.
+
+    Slide text is the storage format (inline runs are explicit
+    `[text (bold=true)]` markers), so foreign HTML must never smuggle
+    document formatting into a card.
+    """
+
+    def insertFromMimeData(self, source):
+        if source.hasText() and source.text():
+            self.insertPlainText(source.text())
+        elif source.hasHtml():
+            self.insertPlainText(
+                QTextDocumentFragment.fromHtml(source.html()).toPlainText())
+
+
 def _editor_style(px: int) -> str:
     # Glyph size interpolated (fixed via display_text_px): a bare-QWidget
     # ancestor rule (the popup's 11px) would otherwise win over widget
@@ -117,7 +139,7 @@ def _editor_style(px: int) -> str:
             # ancestor bare-QWidget borders (see slide_cards).
             "QTextEdit QWidget { background: transparent; border: none; }")
 _STATUS_STYLE = ("background: transparent; border: none; color: " + TEXT_FAINT + ";"
-                 "font-size: 10px;")
+                 "font-size: 12px;")
 # Breathing room above a section-headed run (not the first): marks a new
 # section group while cards inside a group stay joined edge-to-edge.
 _SECTION_GAP = 8
@@ -139,26 +161,12 @@ def _burst_render_due(last_ms, deadline_ms, now_ms) -> bool:
     return deadline_ms is not None and now_ms >= deadline_ms
 
 
-# Card-list scrollbar: permanently reserved 6px lane (never pops in and
-# shoves card buttons sideways mid-click), flat 2D thumb, no arrow keys.
+# Card-list scrollbar: the lane is reserved (ScrollBarAlwaysOn at the call
+# site) so the bar never pops in and shoves card buttons sideways mid-click.
+# Look and thickness come from the shared token spec (ui.tokens).
 _CARDS_SCROLL_STYLE = (
     "QScrollArea { border: none; background: transparent; }"
-    "QScrollBar:vertical {"
-    "  background: transparent; width: 6px; margin: 0px; border: none;"
-    "}"
-    "QScrollBar::handle:vertical {"
-    "  background: rgba(161, 161, 170, 0.35); min-height: 20px;"
-    "  border: none; border-radius: 3px;"
-    "}"
-    "QScrollBar::handle:vertical:hover {"
-    "  background: rgba(161, 161, 170, 0.6);"
-    "}"
-    "QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {"
-    "  height: 0px; border: none; background: none;"
-    "}"
-    "QScrollBar::sub-page:vertical, QScrollBar::add-page:vertical {"
-    "  background: none; border: none;"
-    "}"
+    + _scrollbar_qss()
 )
 
 
@@ -188,8 +196,14 @@ class LiteDesigner(QWidget):
                         deck_id, kind, theme_name)
             except Exception:
                 pass
+        # A tool window, NOT Qt.Popup: a popup is an xdg_popup surface
+        # that the compositor dismisses on any outside interaction —
+        # including a screenshot tool taking focus. Dismissing it while
+        # dirty loses the prompt and can strand the app with the popup's
+        # input grab (the main window looks frozen). Tool is frameless,
+        # stays above its parent, and has no grab.
         self.setWindowFlags(
-            Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setFixedSize(1280, 720)
         # Explicit title: untitled surfaces make the compositor fall back to
         # the process name ("debug.py"). If a ghost window ever appears, its
@@ -204,7 +218,17 @@ class LiteDesigner(QWidget):
         self._active = 0
         self._hosted: int | None = None  # which card currently hosts _edit
         self._dirty = False
-        self._splitting = False
+        # Deck-global undo: one chronological history for typing and every
+        # structural op (per-document native stacks cannot see adds or
+        # deletes). Coalesced typing windows, immediate structural steps.
+        self._undo_stack: list[dict] = []
+        self._redo_stack: list[dict] = []
+        self._undo_limit = 200
+        self._undo_restoring = False
+        self._undo_timer = QTimer(self)
+        self._undo_timer.setSingleShot(True)
+        self._undo_timer.setInterval(400)
+        self._undo_timer.timeout.connect(self._commit_undo)
         # Tiered text selection (Ctrl+A ladder, text only — cards never
         # paint a selection state):
         #   0 = none (normal caret) · 1 = active display box ·
@@ -213,6 +237,9 @@ class LiteDesigner(QWidget):
         self._sel_tier = 0
         self._applying_scope_format = False
         self._cards = []
+        self._open_focus_done = False
+        self._force_close = False
+        self._close_overlay = None
 
         self._original_theme = {}
         self._working_theme = {}
@@ -362,7 +389,7 @@ class LiteDesigner(QWidget):
         ll.addWidget(add_btn)
         body.addWidget(left)
 
-        self._edit = QTextEdit()
+        self._edit = _BodyEdit()
         self._edit.setStyleSheet(_editor_style(display_text_px()))
         self._edit.setFrameShape(QFrame.Shape.NoFrame)
         self._edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -385,7 +412,7 @@ class LiteDesigner(QWidget):
         rl.setContentsMargins(16, 12, 16, 12)
         rl.setSpacing(4)
         lbl = QLabel("Preview")
-        lbl.setStyleSheet("color: " + TEXT_MUTED + "; font-size: 9px; font-weight: 700;"
+        lbl.setStyleSheet("color: " + TEXT_MUTED + "; font-size: 12px; font-weight: 700;"
                           "letter-spacing: 1px; background: transparent;")
         preview_head = QHBoxLayout()
         preview_head.setContentsMargins(0, 0, 0, 0)
@@ -400,7 +427,7 @@ class LiteDesigner(QWidget):
         self._preview_white_btn.setToolTip(
             "White preview screen (inspect outlines and shadows)")
         self._preview_white_btn.setStyleSheet(
-            "QToolButton { color: " + TEXT_MUTED + "; font-size: 9px;"
+            "QToolButton { color: " + TEXT_MUTED + "; font-size: 12px;"
             "  font-weight: 700; background: transparent; border: none;"
             "  padding: 2px 6px; }"
             "QToolButton:checked { color: #111111; background: #e8e8e8;"
@@ -461,6 +488,86 @@ class LiteDesigner(QWidget):
         body.addWidget(right, 1)
         return page
 
+    # ─── undo / redo ────────────────────────────────────────────────
+
+    def _snapshot(self):
+        """One undoable state: slide model, active card and body caret."""
+        try:
+            cur = self._edit.textCursor()
+            pos, anchor = cur.position(), cur.anchor()
+        except (RuntimeError, AttributeError):
+            pos = anchor = 0
+        return {
+            "slides": [dict(s) for s in self._slides],
+            "active": self._active,
+            "pos": pos,
+            "anchor": anchor,
+        }
+
+    def _same_snapshot(self, a, b):
+        return a["slides"] == b["slides"] and a["active"] == b["active"]
+
+    def _schedule_undo(self):
+        if self._undo_restoring:
+            return
+        self._undo_timer.start()
+
+    def _commit_undo(self):
+        """Freeze the current state as one undo step (typing coalesced)."""
+        if self._undo_restoring:
+            return
+        try:
+            self._undo_timer.stop()
+            self._store_active()
+            snap = self._snapshot()
+        except RuntimeError:
+            return
+        if self._undo_stack and self._same_snapshot(
+                snap, self._undo_stack[-1]):
+            return
+        self._undo_stack.append(snap)
+        if len(self._undo_stack) > self._undo_limit:
+            del self._undo_stack[0]
+        self._redo_stack.clear()
+
+    def _restore_snapshot(self, snap):
+        self._undo_restoring = True
+        try:
+            self._undo_timer.stop()
+            self._clear_tier()
+            self._slides = [dict(s) for s in snap["slides"]]
+            self._docs = {}
+            self._active = max(
+                0, min(snap["active"], len(self._slides) - 1))
+            self._dirty = True
+            self._rebuild_cards()
+            self._activate(self._active)
+            cur = self._edit.textCursor()
+            last = max(0, self._edit.document().characterCount() - 1)
+            anchor = max(0, min(snap["anchor"], last))
+            pos = max(0, min(snap["pos"], last))
+            cur.setPosition(anchor)
+            cur.setPosition(pos, QTextCursor.MoveMode.KeepAnchor)
+            self._edit.setTextCursor(cur)
+            self._edit.setFocus()
+            self._schedule_preview()
+        finally:
+            self._undo_restoring = False
+
+    def _undo(self):
+        self._commit_undo()
+        if len(self._undo_stack) <= 1:
+            return
+        self._redo_stack.append(self._undo_stack.pop())
+        self._restore_snapshot(self._undo_stack[-1])
+
+    def _redo(self):
+        if not self._redo_stack:
+            return
+        snap = self._redo_stack.pop()
+        self._undo_stack.append(snap)
+        self._restore_snapshot(snap)
+
     # ─── deck load / serialize ──────────────────────────────────────
 
     def _load_deck(self):
@@ -480,6 +587,8 @@ class LiteDesigner(QWidget):
         self._rebuild_cards()
         self._sync_ribbon_theme()
         self._activate(0)
+        self._undo_stack = [self._snapshot()]
+        self._redo_stack = []
 
     def _sync_ribbon_theme(self):
         """Push the DISPLAY theme's baseline formatting into the ribbon.
@@ -667,6 +776,7 @@ class LiteDesigner(QWidget):
             lambda idx: self._add_slide(idx + 1))
         card.add_and_continue_requested.connect(
             lambda idx: self._add_slide_and_continue(idx + 1))
+        card.section_spill_requested.connect(self._spill_section_to_body)
         # Tier keys (Ctrl+A/C/X/V, Esc, plain Delete) are intercepted in
         # the designer's event filter before the chip's own handlers.
         card._chip.setProperty("liteChip", True)
@@ -728,6 +838,8 @@ class LiteDesigner(QWidget):
             # the SlideCard empty document, which must not overwrite.
             self._store_active()
         prev = self._active if 0 <= self._active < len(self._cards) else None
+        if prev != index:
+            self._ribbon.clear_typing_format()
         self._active = index
         if prev is not None and prev != index and prev < len(self._cards):
             old = self._cards[prev]
@@ -738,6 +850,10 @@ class LiteDesigner(QWidget):
         if self._edit.document() is not doc:
             self._edit.blockSignals(True)
             self._edit.setDocument(doc)
+            # setDocument() resets the document default font to the
+            # application font (9pt), which would render the live editor
+            # smaller than its own QSS. Pin it to the widget font.
+            doc.setDefaultFont(self._edit.font())
             self._edit.blockSignals(False)
         card.host_editor(self._edit)
         self._hosted = index
@@ -783,7 +899,149 @@ class LiteDesigner(QWidget):
                 new[k] = doc
         self._docs = new
 
+    def _hop_to_section(self, index, at_end=True):
+        """Move keyboard focus into card `index`'s section box."""
+        if not (0 <= index < len(self._cards)):
+            return False
+        self._clear_tier()
+        self._activate(index)
+        chip = self._cards[index]._chip
+        chip.setFocus()
+        cursor = chip.textCursor()
+        cursor.setPosition(len(chip.toPlainText()) if at_end else 0)
+        chip.setTextCursor(cursor)
+        return True
+
+    def _hop_to_body(self, index, at_end=False):
+        """Move keyboard focus into card `index`'s display text."""
+        if not (0 <= index < len(self._cards)):
+            return False
+        self._clear_tier()
+        self._activate(index)
+        self._edit.setFocus()
+        last = max(0, self._edit.document().characterCount() - 1)
+        cursor = self._edit.textCursor()
+        cursor.setPosition(last if at_end else 0)
+        self._edit.setTextCursor(cursor)
+        return True
+
+    def _merge_backward(self):
+        """Backspace at the body start: absorb into section or previous card.
+
+        Section box has text -> its first paragraph fuses onto the section
+        name (a paragraph break is not a space). Empty section -> the card
+        merges into the one above and the caret sits at the join.
+        """
+        i = self._active
+        if not (0 <= i < len(self._slides)):
+            return
+        self._commit_undo()
+        self._store_active()
+        chip = self._cards[i]._chip
+        section = (chip.toPlainText() or "").strip()
+        body = self._slides[i].get("text", "")
+        first, _, rest = body.partition("\n")
+        if section:
+            new_section = (section + first).strip()
+            self._slides[i]["text"] = rest
+            self._docs.pop(i, None)
+            self._dirty = True
+            self._on_section_changed(i, new_section)
+            self._activate(i)
+            # The rename path inside _on_section_changed assumes the chip
+            # itself produced the text (typed) and returns without a
+            # rebuild — refresh it here, we changed the model directly.
+            chip = self._cards[i]._chip
+            chip.set_section_text(new_section)
+            chip.setFocus()
+            cursor = chip.textCursor()
+            cursor.setPosition(len(chip.toPlainText()))
+            chip.setTextCursor(cursor)
+            self._schedule_preview()
+            self._commit_undo()
+            return
+        if i == 0:
+            return
+        above = self._slides[i - 1].get("text", "")
+        self._slides[i - 1]["text"] = (
+            above + ("\n" if above and body else "") + body)
+        del self._slides[i]
+        self._renumber_docs(i, -1)
+        # The target card's cached doc still holds the pre-join text;
+        # _activate would store it back over the model. Let it rebuild
+        # from the joined slide text instead.
+        self._docs.pop(i - 1, None)
+        self._normalize_markers()
+        self._dirty = True
+        self._rebuild_cards()
+        self._activate(i - 1)
+        self._edit.setFocus()
+        cursor = self._edit.textCursor()
+        cursor.setPosition(len(above))
+        self._edit.setTextCursor(cursor)
+        self._schedule_preview()
+        self._commit_undo()
+
+    def _merge_forward(self):
+        """Delete at the body end: absorb the next card, dropping its section."""
+        i = self._active
+        if not (0 <= i < len(self._slides) - 1):
+            return
+        self._commit_undo()
+        self._store_active()
+        join = self._slides[i].get("text", "")
+        nxt = self._slides[i + 1].get("text", "")
+        self._slides[i]["text"] = join + ("\n" if join and nxt else "") + nxt
+        del self._slides[i + 1]
+        self._renumber_docs(i + 1, -1)
+        self._docs.pop(i, None)
+        self._normalize_markers()
+        self._dirty = True
+        self._rebuild_cards()
+        self._activate(i)
+        self._edit.setFocus()
+        cursor = self._edit.textCursor()
+        cursor.setPosition(len(join))
+        self._edit.setTextCursor(cursor)
+        self._schedule_preview()
+        self._commit_undo()
+
+    def _spill_section_to_body(self, index, head, tail):
+        """Enter in the section box: finish the name, continue in the body.
+
+        Text ahead of the caret becomes the body's first paragraph — the
+        section line cannot hold a line break, so the break spills over.
+        """
+        if not (0 <= index < len(self._slides)):
+            return
+        self._commit_undo()
+        head = " ".join((head or "").splitlines()).strip()
+        tail = " ".join((tail or "").splitlines()).strip()
+        self._store_active()
+        slide = self._slides[index]
+        if (slide.get("section") or "").strip() != head \
+                or not slide.get("marker"):
+            self._on_section_changed(index, head)
+        self._activate(index)
+        self._clear_tier()
+        doc = self._edit.document()
+        cursor = self._edit.textCursor()
+        existing = doc.toPlainText()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        if tail:
+            cursor.insertText(tail)
+            if existing:
+                cursor.insertBlock()
+        # Caret continues at the start of the spilled paragraph (same
+        # place a Ctrl+Enter boundary leaves it).
+        cursor.setPosition(0)
+        self._edit.setTextCursor(cursor)
+        self._edit.setFocus()
+        self._schedule_preview()
+        self._commit_undo()
+
     def _add_slide(self, index):
+        self._commit_undo()
         self._store_active()
         self._clear_tier()
         index = max(0, min(index, len(self._slides)))
@@ -798,6 +1056,107 @@ class LiteDesigner(QWidget):
         self._rebuild_cards()
         self._activate(index)
         self._schedule_preview()
+        self._commit_undo()
+
+    def _split_at_caret(self):
+        """Ctrl+Enter: cut the active card at the caret into two cards.
+
+        The boundary is the model's inter-card divider — the same thing
+        the v3 txt writes as a blank-padded `---`. Content before the
+        caret stays, content after it moves into a new card directly
+        below (empty when the caret is at the very start, empty new card
+        when it is at the end). The caret continues at the start of the
+        new card, matching a typed boundary.
+        """
+        self._commit_undo()
+        self._store_active()
+        self._clear_tier()
+        doc = self._edit.document()
+        cur = self._edit.textCursor()
+        end = max(0, doc.characterCount() - 1)
+        pos = max(0, min(cur.position(), end))
+
+        tail_doc = QTextDocument()
+        tail_doc.setDocumentMargin(0)
+        tail_cur = QTextCursor(tail_doc)
+        if pos < end:
+            src_cur = QTextCursor(doc)
+            src_cur.setPosition(pos)
+            src_cur.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            tail_cur.insertFragment(src_cur.selection())
+            src_cur.removeSelectedText()
+
+        # insertFragment can leave a leading empty block when the cut sits
+        # on a block boundary; drop it so the new card starts on text.
+        if tail_doc.blockCount() > 1 and tail_doc.firstBlock().text() == "":
+            merge = QTextCursor(tail_doc)
+            merge.movePosition(QTextCursor.MoveOperation.Start)
+            merge.movePosition(QTextCursor.MoveOperation.NextBlock,
+                               QTextCursor.MoveMode.KeepAnchor)
+            merge.removeSelectedText()
+
+        if self._format.get("spacing") is not None:
+            apply_spacing_to_doc(tail_doc, self._format["spacing"])
+        self._track_doc(tail_doc)
+        try:
+            tail_doc.contentsChange.connect(self._on_contents_change)
+        except (RuntimeError, TypeError):
+            pass
+
+        self._slides[self._active]["text"] = doc_to_txt(
+            doc, base_spacing=self._base_spacing())
+        section = self._slides[self._active].get("section")
+        self._slides.insert(self._active + 1, {
+            "section": section,
+            "text": doc_to_txt(tail_doc, base_spacing=self._base_spacing()),
+            "marker": False,
+        })
+        self._renumber_docs(self._active + 1, +1)
+        self._docs[self._active + 1] = tail_doc
+        self._normalize_markers()
+        self._dirty = True
+        self._rebuild_cards()
+        self._activate(self._active + 1)
+        self._edit.moveCursor(QTextCursor.MoveOperation.Start)
+        # Same deferred tail as add-and-continue: the rebuild's deferred
+        # focus-clear events would otherwise swallow the setFocus above.
+        QTimer.singleShot(0, self._settle_after_add)
+        self._schedule_preview()
+        self._commit_undo()
+
+    def _indent_blocks(self, outdent=False):
+        """Tab / Shift+Tab: four-space paragraph indent (txt-preserved)."""
+        self._commit_undo()
+        edit = self._edit
+        doc = edit.document()
+        cur = edit.textCursor()
+        had_sel = cur.hasSelection()
+        first = doc.findBlock(cur.selectionStart()).blockNumber()
+        last = doc.findBlock(cur.selectionEnd()).blockNumber()
+        for bn in range(first, last + 1):
+            block = doc.findBlockByNumber(bn)
+            c = QTextCursor(block)
+            if outdent:
+                text = block.text()
+                n = 0
+                while n < 4 and n < len(text) and text[n] == " ":
+                    n += 1
+                if n:
+                    c.setPosition(block.position())
+                    c.setPosition(block.position() + n,
+                                  QTextCursor.MoveMode.KeepAnchor)
+                    c.removeSelectedText()
+            else:
+                c.setPosition(block.position())
+                c.insertText("    ")
+        if had_sel:
+            start = doc.findBlockByNumber(first).position()
+            last_block = doc.findBlockByNumber(last)
+            stop = last_block.position() + max(0, last_block.length() - 1)
+            cur.setPosition(start)
+            cur.setPosition(stop, QTextCursor.MoveMode.KeepAnchor)
+        edit.setTextCursor(cur)
+        self._commit_undo()
 
     def _add_slide_and_continue(self, index):
         """Ctrl+Enter flow: add like the button, then keep the user
@@ -833,10 +1192,11 @@ class LiteDesigner(QWidget):
         self._add_slide(len(self._slides))
 
     def _confirm(self, text):
-        return QMessageBox.question(self, "Lite Designer", text) == \
-            QMessageBox.StandardButton.Yes
+        return dialogs.question(self, "Lite Designer", text) == \
+            dialogs.Yes
 
     def _delete_slide(self, index):
+        self._commit_undo()
         if len(self._slides) <= 1:
             self._slides[0]["text"] = ""
             self._docs.pop(0, None)
@@ -844,9 +1204,8 @@ class LiteDesigner(QWidget):
             self._activate(0)
             self._dirty = True
             self._schedule_preview()
-            return
-        if (self._slides[index].get("text", "").strip()
-                and not self._confirm("Delete this slide?")):
+            QTimer.singleShot(0, self._settle_after_add)
+            self._commit_undo()
             return
         self._clear_tier()
         self._store_active()
@@ -863,6 +1222,10 @@ class LiteDesigner(QWidget):
         self._rebuild_cards()
         self._activate(self._active)
         self._schedule_preview()
+        # The clicked delete button is gone with the old card: without a
+        # deferred refocus the window is left with no focus widget at all.
+        QTimer.singleShot(0, self._settle_after_add)
+        self._commit_undo()
 
     def _pass_header(self, doomed_section, at_index: int):
         """A removed header passes its role on: the slide now sitting at
@@ -879,6 +1242,7 @@ class LiteDesigner(QWidget):
         j = index + delta
         if not (0 <= index < len(self._slides) and 0 <= j < len(self._slides)):
             return
+        self._commit_undo()
         self._clear_tier()
         self._store_active()
         before = [run for _, run in self._section_runs()]
@@ -898,9 +1262,11 @@ class LiteDesigner(QWidget):
         self._dirty = True
         if [run for _, run in self._section_runs()] == before:
             self._move_sync_pair(index, j)
+            self._commit_undo()
             return
         self._rebuild_cards()
         self._activate(self._active)
+        self._commit_undo()
         # No _schedule_preview: _activate already rendered instantly, and
         # the active slide's bytes are unchanged by a move either way.
 
@@ -931,6 +1297,7 @@ class LiteDesigner(QWidget):
     def _on_section_changed(self, index, section):
         if not (0 <= index < len(self._slides)):
             return
+        self._schedule_undo()
         text = (section or "").strip()
         slide = self._slides[index]
         old_runs = None
@@ -1047,6 +1414,17 @@ class LiteDesigner(QWidget):
                 # Pure modifier presses (the Ctrl in Ctrl+A/C/X/V, Shift
                 # held for selections) carry no intent — never collapse.
                 return False
+            if event.matches(QKeySequence.StandardKey.Undo):
+                self._undo()
+                return True
+            if event.matches(QKeySequence.StandardKey.Redo) \
+                    or (event.key() == Qt.Key.Key_Y
+                        and (event.modifiers()
+                             & Qt.KeyboardModifier.ControlModifier)
+                        and not (event.modifiers()
+                                 & Qt.KeyboardModifier.ShiftModifier)):
+                self._redo()
+                return True
             if event.matches(QKeySequence.StandardKey.SelectAll):
                 self._advance_tier()
                 return True
@@ -1072,15 +1450,79 @@ class LiteDesigner(QWidget):
                                          & Qt.KeyboardModifier.ShiftModifier)):
                     self._edit.setTextCursor(cursor)
                     return True
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) \
-                    and (event.modifiers()
-                         & Qt.KeyboardModifier.ControlModifier) \
+            mods = event.modifiers()
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down,
+                               Qt.Key.Key_Left, Qt.Key.Key_Right) \
+                    and not (mods & (Qt.KeyboardModifier.ControlModifier
+                                     | Qt.KeyboardModifier.ShiftModifier
+                                     | Qt.KeyboardModifier.AltModifier
+                                     | Qt.KeyboardModifier.MetaModifier)):
+                cursor = self._edit.textCursor()
+                if not cursor.hasSelection():
+                    if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Left) \
+                            and cursor.atStart():
+                        if self._hop_to_section(self._active, at_end=True):
+                            return True
+                    elif event.key() in (Qt.Key.Key_Down,
+                                         Qt.Key.Key_Right) \
+                            and cursor.atEnd():
+                        if self._hop_to_section(self._active + 1,
+                                                at_end=False):
+                            return True
+            if event.key() == Qt.Key.Key_Backspace \
                     and not (event.modifiers()
-                             & Qt.KeyboardModifier.ShiftModifier):
-                # Ctrl+Enter: same as add-slide, then keep typing in the
-                # new slide (scrolled into view, editor focused).
+                             & (Qt.KeyboardModifier.ControlModifier
+                                | Qt.KeyboardModifier.ShiftModifier
+                                | Qt.KeyboardModifier.AltModifier
+                                | Qt.KeyboardModifier.MetaModifier)):
+                cursor = self._edit.textCursor()
+                if not cursor.hasSelection() and cursor.atStart():
+                    self._merge_backward()
+                    return True
+            if event.key() == Qt.Key.Key_Delete \
+                    and not (event.modifiers()
+                             & (Qt.KeyboardModifier.ControlModifier
+                                | Qt.KeyboardModifier.ShiftModifier
+                                | Qt.KeyboardModifier.AltModifier
+                                | Qt.KeyboardModifier.MetaModifier)):
+                cursor = self._edit.textCursor()
+                if not cursor.hasSelection() and cursor.atEnd():
+                    self._merge_forward()
+                    return True
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) \
+                    and (mods & Qt.KeyboardModifier.ControlModifier) \
+                    and not (mods & Qt.KeyboardModifier.ShiftModifier):
+                # Ctrl+Enter: insert the slide boundary at the caret —
+                # content after the caret becomes the next card and the
+                # caret continues there.
+                self._split_at_caret()
+                return True
+            if (event.key() == Qt.Key.Key_Insert
+                    and (mods & Qt.KeyboardModifier.ControlModifier)) \
+                    or (event.key() == Qt.Key.Key_Down
+                        and (mods & Qt.KeyboardModifier.ControlModifier)):
+                # Add-and-continue: new card below, caret in it.
                 self._add_slide_and_continue(self._active + 1)
                 return True
+            if event.key() == Qt.Key.Key_Tab \
+                    and not (mods & (Qt.KeyboardModifier.ControlModifier
+                                     | Qt.KeyboardModifier.AltModifier
+                                     | Qt.KeyboardModifier.MetaModifier)):
+                self._indent_blocks(outdent=bool(
+                    mods & Qt.KeyboardModifier.ShiftModifier))
+                return True
+            if (mods & Qt.KeyboardModifier.ControlModifier) \
+                    and not (mods & (Qt.KeyboardModifier.ShiftModifier
+                                     | Qt.KeyboardModifier.AltModifier)):
+                if event.key() == Qt.Key.Key_B:
+                    self._ribbon._toggle_bold()
+                    return True
+                if event.key() == Qt.Key.Key_I:
+                    self._ribbon._toggle_italic()
+                    return True
+                if event.key() == Qt.Key.Key_U:
+                    self._ribbon._toggle_underline()
+                    return True
             if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) \
                     and not (event.modifiers()
                              & (Qt.KeyboardModifier.ShiftModifier
@@ -1159,6 +1601,39 @@ class LiteDesigner(QWidget):
                            Qt.Key.Key_Alt, Qt.Key.Key_Meta):
             # Pure modifier presses carry no intent — never collapse.
             return False
+        mods = event.modifiers()
+        if event.matches(QKeySequence.StandardKey.Undo):
+            # A live section edit is not in the model yet; commit it so
+            # the step about to be undone is the section text itself.
+            obj._maybe_commit()
+            self._undo()
+            return True
+        if event.matches(QKeySequence.StandardKey.Redo) \
+                or (event.key() == Qt.Key.Key_Y
+                    and (mods & Qt.KeyboardModifier.ControlModifier)
+                    and not (mods & Qt.KeyboardModifier.ShiftModifier)):
+            obj._maybe_commit()
+            self._redo()
+            return True
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down,
+                           Qt.Key.Key_Left, Qt.Key.Key_Right) \
+                and not (mods & (Qt.KeyboardModifier.ControlModifier
+                                 | Qt.KeyboardModifier.ShiftModifier
+                                 | Qt.KeyboardModifier.AltModifier
+                                 | Qt.KeyboardModifier.MetaModifier)):
+            idx = next((i for i, c in enumerate(self._cards)
+                        if c._chip is obj), None)
+            cursor = obj.textCursor()
+            if idx is not None and not cursor.hasSelection():
+                if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Left) \
+                        and cursor.atStart():
+                    if self._hop_to_body(idx - 1, at_end=True):
+                        return True
+                elif event.key() in (Qt.Key.Key_Down,
+                                     Qt.Key.Key_Right) \
+                        and cursor.atEnd():
+                    if self._hop_to_body(idx, at_end=False):
+                        return True
         if event.matches(QKeySequence.StandardKey.SelectAll):
             self._advance_tier()
             return True
@@ -1463,10 +1938,12 @@ class LiteDesigner(QWidget):
             return self._slides[self._active].get("text", "")
         if self._sel_tier == 2:
             self._store_active()
-            return slides_body_to_txt([self._slides[self._active]])
+            return slides_body_to_txt(
+                [self._slides[self._active]], end_marker=True)
         indices = self._scope_indices()
         self._store_active()
-        return slides_body_to_txt([self._slides[i] for i in indices])
+        return slides_body_to_txt(
+            [self._slides[i] for i in indices], end_marker=True)
 
     # ─── tier scope ops (copy / cut / paste / delete) ────────────────
 
@@ -1688,29 +2165,30 @@ class LiteDesigner(QWidget):
     def _splice_verbatim(self, tier: int, clipboard_text: str):
         """Replace a tier 2/3 scope with the clipboard's raw text, re-parse
         the deck body, and rebuild around the newcomers."""
-        from core.slide_parser import slides_body_to_txt
         self._store_active()
         if tier == 3:
             indices = self._scope_indices()
             start, end = indices[0], indices[-1] + 1
         else:  # tier 2: the active slide's whole block incl. its marker
             start, end = self._active, self._active + 1
-        head = slides_body_to_txt(self._slides[:start])
-        tail = slides_body_to_txt(self._slides[end:])
+        head = [dict(s) for s in self._slides[:start]]
+        tail = [dict(s) for s in self._slides[end:]]
         middle = (clipboard_text or "").strip()
-        body = "\n\n\n".join(p for p in (head, middle, tail) if p.strip())
-        if not body.strip():
+        # Parse the fragment on its own: clipboard text may still be v2
+        # (double-blank boundaries), while head/tail use v3 dividers — a
+        # single parse of the concatenation would read one format only.
+        parsed = parse_slide_txt(middle)
+        pasted = [dict(s) for s in parsed["slides"]]
+        if not pasted:
             self._flash("Nothing to paste — no slides found")
             self._clear_tier()
             return
-        parsed = parse_slide_txt(
-            f"# {self._title or '(untitled)'}\n\n\n{body}\n")
-        if not parsed["slides"]:
-            self._flash("Nothing to paste — no slides found")
-            self._clear_tier()
-            return
-        newcomers = len(parsed["slides"]) - (len(self._slides) - (end - start))
-        self._slides = [dict(s) for s in parsed["slides"]]
+        # A fragment with no marker of its own inherits the section it lands
+        # after (same stickiness a literal text splice would give it).
+        if head and not pasted[0].get("marker"):
+            pasted[0]["section"] = head[-1].get("section")
+        newcomers = len(pasted) - (len(self._slides) - (end - start))
+        self._slides = head + pasted + tail
         self._docs = {}
         self._active = max(0, min(start, len(self._slides) - 1))
         self._normalize_markers()
@@ -1858,10 +2336,10 @@ class LiteDesigner(QWidget):
         kept). Anything else is inserted at the cursor as plain text with
         boundary newlines trimmed — stray leading/trailing blank lines
         from real-world copies must never spawn phantom splits that yank
-        the user onto an empty card. Rich (HTML) clipboards insert via
-        insertHtml with smuggled formatting folded into metadata props,
-        so the edit pane stays inviolable while model + preview keep
-        everything. Returns True when handled.
+        the user onto an empty card. HTML clipboards are reduced to their
+        plain-text flavor: formatting must be re-applied deliberately,
+        never smuggled in from a foreign document. Returns True when
+        handled.
         """
         from core.clipboard import has_html, read_text
         try:
@@ -1870,7 +2348,7 @@ class LiteDesigner(QWidget):
             logger.exception("Paste: could not read clipboard")
             self._flash("Paste failed — see console")
             return True
-        if not text.strip():
+        if not text.strip() and not has_html():
             self._flash(self._describe_empty_clipboard())
             return True
         logger.info("Paste: tier=0 clipboard_chars=%d", len(text))
@@ -1891,29 +2369,28 @@ class LiteDesigner(QWidget):
             self._paste_slides_structural(slides, frag.get("title") or "")
             return True
         if has_html():
-            # Rich paste, handled manually (not native): insert the HTML,
-            # then fold smuggled formatting into metadata props so the
-            # edit pane stays inviolable (model + preview keep
-            # everything). One undo step, cursor ends after the insert.
+            # Foreign HTML never carries formatting into a card: slide
+            # text stores runs as explicit markers, so the clipboard's
+            # plain-text flavor is all that lands. HTML-only clipboards
+            # (no text flavor) fall back to the fragment's text projection.
             from PyQt6.QtWidgets import QApplication
-            clipboard = QApplication.clipboard()
-            html = ""
-            try:
-                mime = clipboard.mimeData() if clipboard is not None else None
-                html = mime.html() if mime is not None else ""
-            except Exception:
+            plain = text
+            if not plain.strip():
+                clipboard = QApplication.clipboard()
                 html = ""
-            if not html:
-                return False
-            cursor = self._edit.textCursor()
-            cursor.beginEditBlock()
-            try:
-                cursor.insertHtml(html)
-                normalize_formatting(self._edit.document(),
-                                     self._base_spacing())
-            finally:
-                cursor.endEditBlock()
-            self._edit.setTextCursor(cursor)
+                try:
+                    mime = (clipboard.mimeData()
+                            if clipboard is not None else None)
+                    html = mime.html() if mime is not None else ""
+                except Exception:
+                    html = ""
+                if not html:
+                    return False
+                from PyQt6.QtGui import QTextDocumentFragment
+                plain = QTextDocumentFragment.fromHtml(html).toPlainText()
+            clean = plain.strip("\r\n")
+            if clean.strip():
+                self._edit.insertPlainText(clean)
             return True
         clean = text.strip("\r\n")
         if not clean.strip():
@@ -1989,10 +2466,8 @@ class LiteDesigner(QWidget):
 
     def _on_editor_text(self):
         self._fit_editor_height()
-        if self._splitting:
-            return
         self._dirty = True
-        self._maybe_split()
+        self._schedule_undo()
         self._note_editor_burst()
 
     def _note_editor_burst(self, now_ms=None):
@@ -2039,78 +2514,6 @@ class LiteDesigner(QWidget):
             self._edit.setFixedHeight(line_h)
         else:
             self._edit.setFixedHeight(max(line_h, int(h) + 2))
-
-    def _maybe_split(self):
-        """Double-Enter (two consecutive empty blocks) splits the slide."""
-        if self._splitting:
-            return
-        doc = self._edit.document()
-        count = doc.blockCount()
-        at = -1
-        for i in range(count - 1):
-            a = doc.findBlockByNumber(i)
-            b = doc.findBlockByNumber(i + 1)
-            if (a.text() == "" and b.text() == ""
-                    and not self._block_tagged(a) and not self._block_tagged(b)):
-                at = i
-                break
-        if at < 0:
-            return
-        self._splitting = True
-        try:
-            self._store_active()
-            # Clone blocks after the break into a fresh document.
-            from PyQt6.QtGui import QTextDocument, QTextCursor
-            new_doc = QTextDocument()
-            new_cursor = QTextCursor(new_doc)
-            first_new = True
-            for i in range(at + 2, count):
-                src = doc.findBlockByNumber(i)
-                if not first_new:
-                    new_cursor.insertBlock(src.blockFormat())
-                else:
-                    new_cursor.setBlockFormat(src.blockFormat())
-                    first_new = False
-                it = src.begin()
-                while not it.atEnd():
-                    frag = it.fragment()
-                    if frag.isValid():
-                        # Qt stores block breaks as U+2029 — drop them.
-                        text = frag.text().replace(" ", "")
-                        if text:
-                            new_cursor.insertText(text, frag.charFormat())
-                    it += 1
-            # Remove the break + moved content from the source doc.
-            cursor = QTextCursor(doc)
-            cursor.setPosition(doc.findBlockByNumber(at).position())
-            last = doc.lastBlock()
-            cursor.setPosition(last.position() + last.length() - 1,
-                               QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            if self._format.get("spacing") is not None:
-                apply_spacing_to_doc(new_doc, self._format["spacing"])
-            self._track_doc(new_doc)
-            self._slides[self._active]["text"] = doc_to_txt(
-                doc, base_spacing=self._base_spacing())
-            section = self._slides[self._active].get("section")
-            self._slides.insert(self._active + 1,
-                                {"section": section, "text": ""})
-            self._renumber_docs(self._active + 1, +1)
-            self._docs[self._active + 1] = new_doc
-            self._dirty = True
-            self._rebuild_cards()
-            self._activate(self._active + 1)
-            self._edit.moveCursor(QTextCursor.MoveOperation.Start)
-        finally:
-            self._splitting = False
-        self._schedule_preview()
-
-    @staticmethod
-    def _block_tagged(block):
-        from ui.widgets.lite_designer.rich_txt import HR_BLOCK_PROP, GAP_BLOCK_PROP
-        bfmt = block.blockFormat()
-        return (bfmt.hasProperty(HR_BLOCK_PROP)
-                or bfmt.hasProperty(GAP_BLOCK_PROP))
 
     # ─── preview ────────────────────────────────────────────────────
 
@@ -2185,9 +2588,12 @@ class LiteDesigner(QWidget):
             return
         from core.slide_service import update_deck
         self._store_active()
-        raw = deck_to_txt(self._title, self._slides, self._format or None)
+        # Empty cards are editing placeholders (E5/E8): the saved deck
+        # carries none of them, so a reopen never resurrects a blank.
+        raw = deck_to_txt(self._title, prune_empty_slides(self._slides),
+                          self._format or None)
         if not parse_slide_txt(raw)["slides"]:
-            QMessageBox.warning(self, "Lite Designer",
+            dialogs.warning(self, "Lite Designer",
                                 "Nothing to save — the deck has no slides.")
             return
         update_deck(self._deck_id, raw_text=raw)
@@ -2214,10 +2620,106 @@ class LiteDesigner(QWidget):
                 self._props.load_theme(self._working_theme)
                 self._theme_preview.apply_theme(self._working_theme)
 
-    def _on_close(self):
-        if (self._dirty or self._theme_dirty) and not self._confirm(
-                "Discard unsaved changes?"):
+    def _sync_pane_fonts(self):
+        """Pin every text document to its widget font after show/polish.
+
+        A QTextEdit document built offscreen can keep the inherited
+        application font until a FontChange arrives; an explicit sync
+        makes the first paint deterministic.
+        """
+        try:
+            self._edit.document().setDefaultFont(self._edit.font())
+            for card in self._cards:
+                box = card._display_box
+                if box.document().defaultFont() != box.font():
+                    box.document().setDefaultFont(box.font())
+        except RuntimeError:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Tool windows are shown above the parent but do not grab input;
+        # claim activation for the user action that opened them.
+        self.raise_()
+        self.activateWindow()
+        self._sync_pane_fonts()
+        # A WM activation after show() hands focus to the first focusable
+        # widget (usually a title-bar button). The deck-editing intent is
+        # the active card's text, so claim it once, after that handoff.
+        if not self._open_focus_done:
+            self._open_focus_done = True
+            QTimer.singleShot(0, self._focus_on_open)
+
+    def _focus_on_open(self):
+        try:
+            if self._stack.currentIndex() != 0 or not self.isVisible():
+                return
+            self._activate(self._active)
+            self._edit.setFocus()
+        except RuntimeError:
+            pass
+
+    def closeEvent(self, event):
+        if self._force_close or not (self._dirty or self._theme_dirty):
+            event.accept()
             return
+        # Ask with an in-widget overlay (the editor's tier/working state
+        # survives) and veto the first close.
+        event.ignore()
+        self._show_close_confirm()
+
+    def _show_close_confirm(self):
+        if self._close_overlay is None:
+            overlay = QWidget(self)
+            overlay.setObjectName("CloseConfirm")
+            overlay.setAttribute(
+                Qt.WidgetAttribute.WA_StyledBackground, True)
+            overlay.setStyleSheet(
+                "QWidget#CloseConfirm { background: rgba(0, 0, 0, 0.55); }")
+            lay = QVBoxLayout(overlay)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addStretch()
+            row = QHBoxLayout()
+            row.addStretch()
+            card = QFrame()
+            card.setStyleSheet(
+                "QFrame { background: #26262b;"
+                " border: 1px solid rgba(255, 255, 255, 0.10);"
+                " border-radius: 10px; }"
+                "QLabel { color: #f2f2f4; background: transparent;"
+                " border: none; }")
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(22, 18, 22, 16)
+            cl.setSpacing(14)
+            cl.addWidget(QLabel("Discard unsaved changes?"))
+            btns = QHBoxLayout()
+            btns.addStretch()
+            cancel = QPushButton("Cancel")
+            cancel.setStyleSheet(_BTN_GHOST)
+            cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel.clicked.connect(overlay.hide)
+            btns.addWidget(cancel)
+            discard = QPushButton("Discard")
+            discard.setStyleSheet(_BTN_PRIMARY)
+            discard.setCursor(Qt.CursorShape.PointingHandCursor)
+            discard.clicked.connect(self._discard_and_close)
+            btns.addWidget(discard)
+            cl.addLayout(btns)
+            row.addWidget(card)
+            row.addStretch()
+            lay.addLayout(row)
+            lay.addStretch()
+            self._close_overlay = overlay
+        self._close_overlay.setGeometry(self.rect())
+        self._close_overlay.show()
+        self._close_overlay.raise_()
+        self._close_overlay.setFocus()
+
+    def _discard_and_close(self):
+        self._force_close = True
+        self.close()
+
+    def _on_close(self):
         self.close()
 
     # ─── theme tab (quick-editor behavior) ──────────────────────────

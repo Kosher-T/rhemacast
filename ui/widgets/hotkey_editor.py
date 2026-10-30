@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QFrame, QScrollArea, QSizePolicy, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent
+from ui.popups import install_combo
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QFont
 
 from ui.styles import (
@@ -17,6 +18,7 @@ from ui.styles import (
     SLATE_300, WHITE, BLUE_500, CYAN_400, EMERALD_500, AMBER_500, RED_500,
     BORDER_SUBTLE, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER,
     TEXT_SELECTION,
+    TEXT_FAINT,
 )
 
 
@@ -39,7 +41,7 @@ class HotkeyCaptureButton(QPushButton):
                 border: none;
                 border-bottom: 2px solid transparent;
                 padding: 2px 6px;
-                font-size: 11px;
+                font-size: 12px;
                 font-family: monospace;
                 font-weight: 600;
                 min-width: 100px;
@@ -317,11 +319,11 @@ class HotkeyRow(QFrame):
         info_layout.setSpacing(0)
 
         name_label = QLabel(action_name)
-        name_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 600;")
+        name_label.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 600;")
         info_layout.addWidget(name_label)
 
         desc_label = QLabel(description)
-        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         info_layout.addWidget(desc_label)
 
         layout.addLayout(info_layout, 1)
@@ -338,10 +340,10 @@ class HotkeyRow(QFrame):
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {SLATE_600};
+                color: {TEXT_FAINT};
                 border: none;
                 border-radius: 3px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -383,22 +385,22 @@ class BuiltInHotkeyRow(QFrame):
         info_layout.setSpacing(0)
         name_label = QLabel(action_name)
         name_label.setStyleSheet(
-            f"color: {WHITE}; font-size: 12px; font-weight: 600;")
+            f"color: {WHITE}; font-size: 13px; font-weight: 600;")
         info_layout.addWidget(name_label)
         desc_label = QLabel(description)
-        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         info_layout.addWidget(desc_label)
         layout.addLayout(info_layout, 1)
 
         fixed = QLabel(keys)
         fixed.setStyleSheet(
-            f"color: {SLATE_400}; font-size: 11px; font-weight: 600;"
+            f"color: {SLATE_400}; font-size: 12px; font-weight: 600;"
             " background: transparent;")
         layout.addWidget(fixed)
 
         badge = QLabel("fixed")
         badge.setStyleSheet(
-            f"color: {SLATE_600}; font-size: 9px; font-weight: 700;"
+            f"color: {TEXT_FAINT}; font-size: 12px; font-weight: 700;"
             " letter-spacing: 1px; background: transparent;")
         badge.setToolTip("Built in — not editable")
         layout.addWidget(badge)
@@ -430,11 +432,12 @@ class TranslationHotkeyRow(QFrame):
         info_layout.setSpacing(2)
 
         name_label = QLabel("Switch Translation")
-        name_label.setStyleSheet(f"color: {WHITE}; font-size: 12px; font-weight: 600;")
+        name_label.setStyleSheet(f"color: {WHITE}; font-size: 13px; font-weight: 600;")
         info_layout.addWidget(name_label)
 
         # Dropdown inline under the name
         self._combo = QComboBox()
+        install_combo(self._combo)
         self._combo.addItems(available)
         if translation in available:
             self._combo.setCurrentText(translation)
@@ -446,7 +449,7 @@ class TranslationHotkeyRow(QFrame):
                 border: none;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
                 padding: 1px 4px;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
                 min-width: 60px;
             }}
@@ -481,10 +484,10 @@ class TranslationHotkeyRow(QFrame):
         self._remove_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {SLATE_600};
+                color: {TEXT_FAINT};
                 border: none;
                 border-radius: 3px;
-                font-size: 11px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -540,6 +543,7 @@ DEFAULT_BINDINGS = {
     "next_schedule_item": ("Next Item", "Next item in the schedule", "Alt+Right", "global"),
     "prev_schedule_item": ("Prev Item", "Previous item in the schedule", "Alt+Left", "global"),
     "add_to_schedule": ("Add to Schedule", "Add selection to schedule (verse or deck, per active tab)", "Alt+Return", "global"),
+    "save_schedule": ("Save Schedule", "Save the current schedule (display tabs only)", "Ctrl+S", "global"),
     "toggle_transcription": ("Start/Stop Transcription", "Toggle live transcription", "F7", "global"),
     "double_click": ("Double Click", "Simulate mouse double-click at cursor", "F1", "global"),
     "fts_search": ("Keyword Search", "Open the Keyword search page (FTS5, stemmed, every translation)", "Ctrl+Shift+F", "scripture"),
@@ -583,7 +587,7 @@ class HotkeyEditor(QWidget):
                 border: none;
                 border-radius: 4px;
                 padding: 4px 8px;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -604,14 +608,6 @@ class HotkeyEditor(QWidget):
             QScrollArea {{
                 background: transparent;
                 border: none;
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 3px;
             }}
         """)
 
@@ -664,10 +660,10 @@ class HotkeyEditor(QWidget):
             if scope != "global":
                 self._container_layout.addSpacing(20)
             header = QLabel(title)
-            header.setStyleSheet(f"color: {WHITE}; font-size: 17px; font-weight: 800;")
+            header.setStyleSheet(f"color: {WHITE}; font-size: 17px; font-weight: 700;")
             self._container_layout.addWidget(header)
             desc = QLabel(subtitle)
-            desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+            desc.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
             self._container_layout.addWidget(desc)
             self._container_layout.addSpacing(4)
             for action_id in ids:
@@ -683,12 +679,12 @@ class HotkeyEditor(QWidget):
         self._container_layout.addSpacing(20)
         builtin_header = QLabel("Built-in Navigation")
         builtin_header.setStyleSheet(
-            f"color: {WHITE}; font-size: 17px; font-weight: 800;")
+            f"color: {WHITE}; font-size: 17px; font-weight: 700;")
         self._container_layout.addWidget(builtin_header)
         builtin_desc = QLabel(
             "Fixed shortcuts for navigating during a service — shown for "
             "reference, not editable")
-        builtin_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        builtin_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         self._container_layout.addWidget(builtin_desc)
         self._container_layout.addSpacing(4)
         for name, description, keys in BUILT_IN_BINDINGS.values():
@@ -698,11 +694,11 @@ class HotkeyEditor(QWidget):
         self._container_layout.addSpacing(16)
 
         trans_header = QLabel("Translation Shortcuts")
-        trans_header.setStyleSheet(f"color: {WHITE}; font-size: 14px; font-weight: 800;")
+        trans_header.setStyleSheet(f"color: {WHITE}; font-size: 14px; font-weight: 700;")
         self._container_layout.addWidget(trans_header)
 
         trans_desc = QLabel("Bind a key to instantly switch to a specific translation")
-        trans_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        trans_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         self._container_layout.addWidget(trans_desc)
 
         self._container_layout.addSpacing(4)
@@ -725,7 +721,7 @@ class HotkeyEditor(QWidget):
                 border: 1px dashed {ACCENT_BORDER};
                 border-radius: 6px;
                 padding: 8px 16px;
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 600;
             }}
             QPushButton:hover {{

@@ -18,6 +18,7 @@ from ui.styles import BLUE_500
 from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT,
     ACCENT, ACCENT_HOVER, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
+    ACCENT_TEXT,
 )
 import core.theme_loader
 
@@ -30,8 +31,8 @@ _POPUP_STYLE = (
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 16px;"
     "  color: " + TEXT_PRIMARY + ";"
-    "  font-family: 'Nunito', sans-serif;"
-    "  font-size: 11px;"
+    "  font-family: 'Inter', sans-serif;"
+    "  font-size: 12px;"
     "}"
 )
 
@@ -46,24 +47,24 @@ _TITLE_LABEL_STYLE = (
     "background: transparent;"
     "border: none;"
     "color: " + TEXT_PRIMARY + ";"
-    "font-size: 12px;"
+    "font-size: 13px;"
     "font-weight: 700;"
 )
 
 _BADGE_STYLE = (
     "background: " + ACCENT_SOFT + ";"
-    "color: " + ACCENT + ";"
+    "color: " + ACCENT_TEXT + ";"
     "border: 1px solid " + ACCENT_BORDER + ";"
     "border-radius: 4px;"
     "padding: 1px 8px;"
-    "font-size: 10px;"
+    "font-size: 12px;"
     "font-weight: 700;"
 )
 
 _ICON_STYLE = (
     "background: transparent;"
     "border: none;"
-    "color: " + ACCENT + ";"
+    "color: " + ACCENT_TEXT + ";"
     "font-size: 14px;"
 )
 
@@ -74,7 +75,7 @@ _BTN_GHOST = (
     "  border: 1px solid rgba(255, 255, 255, 0.08);"
     "  border-radius: 4px;"
     "  padding: 4px 12px;"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  font-weight: 600;"
     "}"
     "QPushButton:hover {"
@@ -90,7 +91,7 @@ _BTN_PRIMARY = (
     "  border: none;"
     "  border-radius: 4px;"
     "  padding: 4px 16px;"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"
@@ -104,11 +105,11 @@ _BTN_PRIMARY = (
 _BTN_EXPAND = (
     "QPushButton {"
     "  background: " + ACCENT_SOFT + ";"
-    "  color: " + ACCENT + ";"
+    "  color: " + ACCENT_TEXT + ";"
     "  border: 1px solid " + ACCENT_BORDER + ";"
     "  border-radius: 4px;"
     "  padding: 4px 14px;"
-    "  font-size: 10px;"
+    "  font-size: 12px;"
     "  font-weight: 700;"
     "}"
     "QPushButton:hover {"

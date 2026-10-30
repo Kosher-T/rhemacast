@@ -599,14 +599,14 @@ def test_hotkey_switch_then_click_still_switches(qapp, tmpdb):
 def test_deck_panel_tabs_match_the_bible_panel_row(qapp, tmpdb):
     """One text-tab row implementation, so the two panels read the same."""
     from ui.panels.deck_list_panel import DeckListPanel
-    from ui.panels.text_tabs import TEXT_TAB_QSS
+    from ui.panels.text_tabs import text_tab_qss
     deck = DeckListPanel()
     bible_panel = None
     _OPEN.append(deck)
     assert deck._decks_tab_btn.text() == "Decks"
     assert deck._outputs_tab_btn.text() == "Outputs"
     # Same stylesheet in both panels — a design change lands in one place.
-    assert deck._outputs_tab_btn.styleSheet() == TEXT_TAB_QSS
+    assert deck._outputs_tab_btn.styleSheet() == text_tab_qss()
 
 
 def test_search_pages_drop_their_duplicate_heading(qapp, tmpdb):

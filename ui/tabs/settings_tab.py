@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QTextEdit, QFontComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from ui.popups import install_combo
 from ui.widgets.hotkey_editor import HotkeyEditor
 
 from ui.styles import (
@@ -19,6 +20,8 @@ from ui.styles import (
     AMBER_500, BORDER_SUBTLE,
     ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER,
     TEXT_SELECTION,
+    TEXT_FAINT,
+    ACCENT_TEXT,
 )
 
 # Load translations from persistent storage
@@ -52,7 +55,7 @@ SIDEBAR_ITEM_STYLE = f"""
         border-radius: 6px;
         padding: 10px 12px;
         text-align: left;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 600;
     }}
     QPushButton:hover {{
@@ -73,7 +76,7 @@ ACTIVE_SIDEBAR_STYLE = f"""
         border-radius: 6px;
         padding: 10px 12px;
         text-align: left;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 700;
     }}
 """
@@ -85,7 +88,7 @@ COMBO_STYLE = f"""
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 6px;
         padding: 8px 12px;
-        font-size: 12px;
+        font-size: 13px;
         min-width: 140px;
         max-width: 220px;
     }}
@@ -123,7 +126,7 @@ SPIN_STYLE = f"""
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 6px;
         padding: 6px 12px;
-        font-size: 12px;
+        font-size: 13px;
         min-width: 80px;
     }}
     QSpinBox:focus {{ border-color: {BLUE_500}; }}
@@ -180,10 +183,10 @@ TOGGLE_STYLE = f"""
 """
 
 LABEL_STYLE = f"color: {WHITE}; font-size: 14px; font-weight: 700;"
-SUBTITLE_STYLE = f"color: {SLATE_500}; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;"
-SECTION_LABEL_STYLE = f"color: {SLATE_400}; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;"
-VALUE_STYLE = f"color: {BLUE_500}; font-size: 12px; font-family: monospace; font-weight: 600;"
-TOGGLE_LABEL_STYLE = f"color: {SLATE_300}; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;"
+SUBTITLE_STYLE = f"color: {SLATE_500}; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;"
+SECTION_LABEL_STYLE = f"color: {SLATE_400}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;"
+VALUE_STYLE = f"color: {BLUE_500}; font-size: 13px; font-family: monospace; font-weight: 600;"
+TOGGLE_LABEL_STYLE = f"color: {SLATE_300}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;"
 
 
 class SettingsSidebarItem(QPushButton):
@@ -201,7 +204,7 @@ class SettingsSidebarItem(QPushButton):
         
         # Text
         text_label = QLabel(text)
-        text_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 600; background: transparent;")
+        text_label.setStyleSheet(f"color: {SLATE_400}; font-size: 13px; font-weight: 600; background: transparent;")
         layout.addWidget(text_label)
         layout.addStretch()
         
@@ -216,7 +219,7 @@ class SettingsSidebarItem(QPushButton):
                     border-radius: 6px;
                     padding: 10px 12px;
                     text-align: left;
-                    font-size: 12px;
+                    font-size: 13px;
                     font-weight: 700;
                 }}
             """)
@@ -256,8 +259,7 @@ class SettingsTab(QWidget):
 # Sidebar items
         self._sidebar_items = {}
         sidebar_categories = [
-            "Audio Ingestion",
-            "Recording",
+            "Audio",
             "AI Models",
             "Display & Broadcast",
             "Interface",
@@ -282,6 +284,7 @@ class SettingsTab(QWidget):
         
         # ── Content Area ──
         content_scroll = QScrollArea()
+        self._content_scroll = content_scroll
         content_scroll.setWidgetResizable(True)
         content_scroll.setFrameShape(QFrame.Shape.NoFrame)
         content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -289,19 +292,6 @@ class SettingsTab(QWidget):
             QScrollArea {{
                 background: transparent;
                 border: none;
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 3px;
-                min-height: 30px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
             }}
         """)
         
@@ -317,17 +307,16 @@ class SettingsTab(QWidget):
         # Create section widgets
         self._sections = {}
         self._font_groups = {}
-        self._create_audio_ingestion_section()
+        self._create_audio_section()
         self._create_ai_models_section()
         self._create_display_broadcast_section()
         self._create_interface_section()
         self._create_database_section()
-        self._create_recording_section()
         self._create_gpu_hardware_section()
         self._create_hotkeys_section()
-        
-        # Initially show Audio Ingestion
-        self._switch_section("Audio Ingestion")
+
+        # Initially show Audio
+        self._switch_section("Audio")
         
         content_scroll.setWidget(self._content_widget)
         root_layout.addWidget(content_scroll, 1)
@@ -350,7 +339,7 @@ class SettingsTab(QWidget):
         
         # Title
         title = QLabel("Live Hardware Status")
-        title.setStyleSheet(f"color: {SLATE_500}; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;")
+        title.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;")
         layout.addWidget(title)
         
         # GPU VRAM
@@ -359,7 +348,7 @@ class SettingsTab(QWidget):
         
         vram_header = QHBoxLayout()
         vram_label = QLabel("GPU VRAM")
-        vram_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        vram_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
         self._vram_value = QLabel("0.0 / 0.0 GB")
         self._vram_value.setStyleSheet(VALUE_STYLE)
         vram_header.addWidget(vram_label)
@@ -394,9 +383,9 @@ class SettingsTab(QWidget):
         
         temp_header = QHBoxLayout()
         temp_label = QLabel("GPU Temp")
-        temp_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        temp_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
         self._temp_value = QLabel("0°C")
-        self._temp_value.setStyleSheet(f"color: {EMERALD_500}; font-size: 12px; font-family: monospace; font-weight: 600;")
+        self._temp_value.setStyleSheet(f"color: {EMERALD_500}; font-size: 13px; font-family: monospace; font-weight: 600;")
         temp_header.addWidget(temp_label)
         temp_header.addStretch()
         temp_header.addWidget(self._temp_value)
@@ -448,7 +437,7 @@ class SettingsTab(QWidget):
                     color = AMBER_500
                 else:
                     color = RED_500
-                self._temp_value.setStyleSheet(f"color: {color}; font-size: 12px; font-family: monospace; font-weight: 600;")
+                self._temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-family: monospace; font-weight: 600;")
                 pct = min(100, max(0, (temp - 30) / 52 * 100))
                 self._temp_fill.setFixedWidth(int(self._temp_bar.width() * pct / 100))
                 self._temp_fill.setStyleSheet(f"QFrame {{ background: {color}; border-radius: 2px; }}")
@@ -457,6 +446,7 @@ class SettingsTab(QWidget):
     
     def _switch_section(self, name: str):
         """Switch the visible content section."""
+        self._current_section = name
         # Update sidebar buttons
         for n, item in self._sidebar_items.items():
             item.set_active(n == name)
@@ -464,9 +454,61 @@ class SettingsTab(QWidget):
         # Show/hide sections
         for n, widget in self._sections.items():
             widget.setVisible(n == name)
+
+    # ── Unload contract (see MainWindow._unload_tab) ─────────────────────
+
+    def can_unload(self):
+        """Index builds and key capture are live work: finish them first."""
+        if getattr(self, "_build_process", None) is not None:
+            return False, (
+                "Settings cannot be unloaded while an index build is running. "
+                "Wait for it to finish, then unload the tab.")
+        timer = getattr(self, "_build_timer", None)
+        if timer is not None and timer.isActive():
+            return False, (
+                "Settings cannot be unloaded while an index build is running. "
+                "Wait for it to finish, then unload the tab.")
+        queue = getattr(self, "_build_queue", None)
+        if queue and getattr(self, "_build_queue_idx", 0) < len(queue):
+            return False, (
+                "Settings cannot be unloaded while the index build queue is "
+                "still running. Wait for it to finish.")
+        from ui.widgets.hotkey_editor import KeyboardHandler
+        target = KeyboardHandler._target
+        if target is not None and getattr(target, "_capturing", False):
+            return False, (
+                "Finish the hotkey capture first — unloading Settings would "
+                "cancel it.")
+        return True, ""
+
+    def current_state(self) -> dict:
+        scroll = 0
+        try:
+            scroll = self._content_scroll.verticalScrollBar().value()
+        except (AttributeError, RuntimeError):
+            pass
+        return {"section": getattr(self, "_current_section", "Audio"),
+                "scroll": scroll}
+
+    def restore_state(self, state: dict) -> None:
+        section = state.get("section", "Audio")
+        if section in self._sections:
+            self._switch_section(section)
+        scroll = int(state.get("scroll", 0) or 0)
+        if scroll:
+            from PyQt6.QtCore import QTimer
+
+            def _restore():
+                try:
+                    self._content_scroll.verticalScrollBar().setValue(scroll)
+                except RuntimeError:
+                    pass
+
+            QTimer.singleShot(0, _restore)
     
-    def _create_audio_ingestion_section(self):
-        """Create the Audio Ingestion section with device selection, sample rate, and DeepFilterNet."""
+    def _create_audio_section(self):
+        """Create the Audio section: ingestion (device, sample rate) and
+        recording (format, storage)."""
         section = QWidget()
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -478,14 +520,14 @@ class SettingsTab(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
 
-        title = QLabel("Audio Ingestion")
+        title = QLabel("Audio")
         title.setStyleSheet(LABEL_STYLE)
         header_layout.addWidget(title)
-        
-        subtitle = QLabel("Select and configure your primary audio source")
+
+        subtitle = QLabel("Select your audio source and recording format")
         subtitle.setStyleSheet(SUBTITLE_STYLE)
         header_layout.addWidget(subtitle)
-        
+
         layout.addWidget(header)
         
         # Grid of controls
@@ -505,6 +547,7 @@ class SettingsTab(QWidget):
         device_layout.addWidget(device_label)
         
         self._device_combo = QComboBox()
+        install_combo(self._device_combo)
         self._device_combo.setStyleSheet(COMBO_STYLE)
         # Populate from audio capture
         self._populate_audio_devices()
@@ -523,6 +566,7 @@ class SettingsTab(QWidget):
         rate_layout.addWidget(rate_label)
         
         self._rate_combo = QComboBox()
+        install_combo(self._rate_combo)
         self._rate_combo.setStyleSheet(COMBO_STYLE)
         self._rate_combo.addItems([
             "16,000 Hz (Optimal for Whisper)",
@@ -533,10 +577,13 @@ class SettingsTab(QWidget):
         
         grid_layout.addWidget(rate_col)
         layout.addWidget(grid)
-        
+
+        # Recording: format + storage, merged into the same Audio section.
+        self._add_recording_group(layout)
+
         layout.addStretch()
-        
-        self._sections["Audio Ingestion"] = section
+
+        self._sections["Audio"] = section
         self._content_layout.addWidget(section)
     
     def _populate_audio_devices(self):
@@ -625,7 +672,7 @@ class SettingsTab(QWidget):
             card_layout.addWidget(t)
             
             d = QLabel(desc)
-            d.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+            d.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
             card_layout.addWidget(d)
             
             layout.addWidget(card)
@@ -678,6 +725,7 @@ class SettingsTab(QWidget):
         theme_layout.addWidget(theme_label)
         
         self._theme_combo = QComboBox()
+        install_combo(self._theme_combo)
         self._theme_combo.setStyleSheet(COMBO_STYLE)
         from core.theme_loader import get_themes_by_kind, SCRIPTURE
         for name, data in get_themes_by_kind(SCRIPTURE).items():
@@ -699,7 +747,7 @@ class SettingsTab(QWidget):
         output_sub = QLabel(
             "Each display tab owns its output set; add or remove outputs in "
             "the tab's Outputs page. Mode changes apply immediately.")
-        output_sub.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        output_sub.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         output_sub.setWordWrap(True)
         output_layout.addWidget(output_sub)
 
@@ -711,7 +759,7 @@ class SettingsTab(QWidget):
         mode_row.setSpacing(12)
         mode_label = QLabel("Broadcast Mode")
         mode_label.setStyleSheet(
-            f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+            f"color: {SLATE_300}; font-size: 13px; font-weight: 600;")
         mode_label.setToolTip(
             "Simultaneous: every tab broadcasts through its own set at the "
             "same time (each tab keeps its own Preview/Live). Prioritized: "
@@ -719,6 +767,7 @@ class SettingsTab(QWidget):
             "other sets (tabs share one Preview/Live).")
         mode_row.addWidget(mode_label)
         self._output_mode_combo = QComboBox()
+        install_combo(self._output_mode_combo)
         self._output_mode_combo.setStyleSheet(COMBO_STYLE)
         self._output_mode_combo.addItem("Simultaneous", MODE_SIMULTANEOUS)
         self._output_mode_combo.addItem("Prioritized", MODE_PRIORITIZED)
@@ -733,12 +782,12 @@ class SettingsTab(QWidget):
 
         self._shared_display_label = QLabel()
         self._shared_display_label.setStyleSheet(
-            f"color: {SLATE_500}; font-size: 10px;")
+            f"color: {SLATE_500}; font-size: 12px;")
         output_layout.addWidget(self._shared_display_label)
         self._refresh_shared_display_label()
 
         self._output_roster = QLabel()
-        self._output_roster.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        self._output_roster.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         output_layout.addWidget(self._output_roster)
         self._refresh_output_roster()
 
@@ -759,11 +808,12 @@ class SettingsTab(QWidget):
         row5.setSpacing(12)
 
         sn_label = QLabel("Slide Keys Display")
-        sn_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        sn_label.setStyleSheet(f"color: {SLATE_300}; font-size: 13px; font-weight: 600;")
         sn_label.setToolTip("What the display does while section-hopping with Ctrl+Left/Right")
         row5.addWidget(sn_label)
 
         self._song_nav_combo = QComboBox()
+        install_combo(self._song_nav_combo)
         self._song_nav_combo.setStyleSheet(COMBO_STYLE)
         self._song_nav_combo.addItem("Send on Ctrl release", "deferred")
         self._song_nav_combo.addItem("Update instantly", "instant")
@@ -781,10 +831,11 @@ class SettingsTab(QWidget):
         row6.setSpacing(12)
 
         mb_label = QLabel("Media Background While Blank")
-        mb_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 600;")
+        mb_label.setStyleSheet(f"color: {SLATE_500}; font-size: 13px; font-weight: 600;")
         row6.addWidget(mb_label)
 
         self._song_nav_media_combo = QComboBox()
+        install_combo(self._song_nav_media_combo)
         self._song_nav_media_combo.setStyleSheet(COMBO_STYLE)
         self._song_nav_media_combo.addItem("Remain visible", "remain")
         self._song_nav_media_combo.addItem("Disappear with text", "disappear")
@@ -802,7 +853,7 @@ class SettingsTab(QWidget):
         row7.setSpacing(12)
 
         hc_label = QLabel("History Context Verses")
-        hc_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        hc_label.setStyleSheet(f"color: {SLATE_300}; font-size: 13px; font-weight: 600;")
         hc_label.setToolTip("Verses shown before/after a verse in the History preview strip")
         row7.addWidget(hc_label)
 
@@ -829,7 +880,7 @@ class SettingsTab(QWidget):
         qv_row.setSpacing(12)
 
         qv_label = QLabel("Quick Verse Timeout")
-        qv_label.setStyleSheet(f"color: {SLATE_300}; font-size: 12px; font-weight: 600;")
+        qv_label.setStyleSheet(f"color: {SLATE_300}; font-size: 13px; font-weight: 600;")
         qv_label.setToolTip("Gap allowed between quick-verse keystrokes before the typed number is discarded")
         qv_row.addWidget(qv_label)
 
@@ -875,7 +926,9 @@ class SettingsTab(QWidget):
 
         Each control saves only its own key on change, so untouched axes
         stay unset and today's rendering is preserved. Consumers pick
-        settings up live (Bible list) or on next show/search/open.
+        settings up live (Bible list, tab names, panel headers, schedule
+        rows) or on next show/search/open (slide strips, deck list,
+        designer, search results).
         """
         section = QWidget()
         section.setVisible(False)
@@ -894,7 +947,7 @@ class SettingsTab(QWidget):
         self._add_font_group(
             layout, prefix="bible.verse", title="Bible Verses",
             subtitle="Verse list text. Applies instantly.",
-            size_min=8, size_max=16, size_default=12, weight_default=400,
+            size_min=8, size_max=16, size_default=13, weight_default=400,
             preview_text="And God said, Let there be light: "
                          "and there was light.",
             family_key="bible.verse_font_family",
@@ -904,7 +957,7 @@ class SettingsTab(QWidget):
         self._add_font_group(
             layout, prefix="bible.ref", title="Bible Reference",
             subtitle="Book chapter:verse. Applies instantly.",
-            size_min=7, size_max=14, size_default=11, weight_default=700,
+            size_min=7, size_max=14, size_default=12, weight_default=700,
             preview_text="GEN 1:3",
             family_key="bible.verse_ref_font_family",
             weight_key="bible.verse_ref_font_weight",
@@ -922,7 +975,7 @@ class SettingsTab(QWidget):
         self._add_font_group(
             layout, prefix="slides.deck", title="Deck List",
             subtitle="Deck titles. Applies when Slides is next shown.",
-            size_min=9, size_max=18, size_default=12, weight_default=700,
+            size_min=9, size_max=18, size_default=13, weight_default=700,
             preview_text="Amazing Grace",
             family_key="slides.deck_font_family",
             weight_key="slides.deck_font_weight",
@@ -939,7 +992,7 @@ class SettingsTab(QWidget):
         self._add_font_group(
             layout, prefix="search.result", title="Search Results",
             subtitle="Keyword and Semantic result text. Applies to new searches.",
-            size_min=8, size_max=16, size_default=9, weight_default=400,
+            size_min=8, size_max=16, size_default=13, weight_default=400,
             preview_text="For God so loved the world, that he gave…",
             family_key="search.result_font_family",
             weight_key="search.result_font_weight",
@@ -947,11 +1000,28 @@ class SettingsTab(QWidget):
         self._add_font_group(
             layout, prefix="search.ref", title="Search Result Reference",
             subtitle="Result citations. Applies to new searches.",
-            size_min=7, size_max=14, size_default=10, weight_default=700,
+            size_min=7, size_max=14, size_default=12, weight_default=700,
             preview_text="JHN 3:16",
             family_key="search.ref_font_family",
             weight_key="search.ref_font_weight",
             size_key="search.ref_font_size")
+        self._add_font_group(
+            layout, prefix="tabs.names", title="Tab Names",
+            subtitle="Top tab bar and sub-page tabs (Outputs, Keyword, "
+                     "Semantic). Applies instantly.",
+            size_min=8, size_max=20, size_default=12, weight_default=600,
+            preview_text="Scriptures   Decks   Library   Settings")
+        self._add_font_group(
+            layout, prefix="panel.labels", title="Panel Labels",
+            subtitle="All-caps panel headers — Preview, Live, Schedule, "
+                     "STT Monitor. Applies instantly.",
+            size_min=8, size_max=28, size_default=13, weight_default=600,
+            preview_text="OPERATOR PREVIEW   ·   LIVE   ·   SCHEDULE")
+        self._add_font_group(
+            layout, prefix="schedule.cards", title="Schedule Cards",
+            subtitle="Schedule list rows. Applies instantly.",
+            size_min=8, size_max=24, size_default=12, weight_default=600,
+            preview_text="[KJV] John 3:16        Default")
 
         layout.addStretch()
 
@@ -969,7 +1039,8 @@ class SettingsTab(QWidget):
         from PyQt6.QtGui import QFont, QFontDatabase
         from PyQt6.QtWidgets import QApplication, QFontComboBox
         from core.database import get_setting, set_setting
-        from ui.app_theme import INTERFACE_FONT_WEIGHTS, build_interface_font
+        from ui.app_theme import (INTERFACE_FONT_WEIGHTS, build_interface_font,
+                                  notify_interface_font_changed)
 
         family_setting = family_key or f"{prefix}.font_family"
         weight_setting = weight_key or f"{prefix}.font_weight"
@@ -984,7 +1055,7 @@ class SettingsTab(QWidget):
         head.setStyleSheet(SECTION_LABEL_STYLE)
         card_layout.addWidget(head)
         sub = QLabel(subtitle)
-        sub.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        sub.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         sub.setWordWrap(True)
         card_layout.addWidget(sub)
 
@@ -992,6 +1063,7 @@ class SettingsTab(QWidget):
         families = set(QFontDatabase.families())
 
         fam_combo = QFontComboBox()
+        install_combo(fam_combo)
         fam_combo.setStyleSheet(COMBO_STYLE)
         fam_combo.setToolTip("Font family")
         saved_family = get_setting(family_setting, "")
@@ -1003,6 +1075,7 @@ class SettingsTab(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
         wt_combo = QComboBox()
+        install_combo(wt_combo)
         wt_combo.setStyleSheet(COMBO_STYLE)
         wt_combo.setToolTip("Font weight")
         for value, label in INTERFACE_FONT_WEIGHTS:
@@ -1061,18 +1134,21 @@ class SettingsTab(QWidget):
             set_setting(family_setting,
                         fam_combo.currentFont().family())
             refresh()
+            notify_interface_font_changed(prefix)
             if on_change is not None:
                 on_change()
 
         def save_weight(*_args):
             set_setting(weight_setting, str(wt_combo.currentData()))
             refresh()
+            notify_interface_font_changed(prefix)
             if on_change is not None:
                 on_change()
 
         def save_size(*_args):
             set_setting(size_setting, str(size_spin.value()))
             refresh()
+            notify_interface_font_changed(prefix)
             if on_change is not None:
                 on_change()
 
@@ -1199,7 +1275,7 @@ class SettingsTab(QWidget):
             header_row.addWidget(name_label)
 
             status_label = QLabel("Loading...")
-            status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+            status_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
             header_row.addWidget(status_label)
 
             header_row.addStretch()
@@ -1210,11 +1286,11 @@ class SettingsTab(QWidget):
             build_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: {ACCENT_SOFT};
-                    color: {ACCENT};
+                    color: {ACCENT_TEXT};
                     border: 1px solid {ACCENT_BORDER};
                     border-radius: 4px;
                     padding: 4px 12px;
-                    font-size: 10px;
+                    font-size: 12px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
@@ -1222,7 +1298,7 @@ class SettingsTab(QWidget):
                 }}
                 QPushButton:disabled {{
                     background: rgba(255, 255, 255, 0.05);
-                    color: {SLATE_600};
+                    color: {TEXT_FAINT};
                     border: 1px solid rgba(255, 255, 255, 0.1);
                 }}
             """)
@@ -1233,7 +1309,7 @@ class SettingsTab(QWidget):
 
             # Description
             desc_label = QLabel(desc)
-            desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+            desc_label.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
             card_layout.addWidget(desc_label)
 
             # Every card registers its status label here. The FTS5 card
@@ -1247,12 +1323,15 @@ class SettingsTab(QWidget):
                 # IS a search-time one: which translations a query fans out
                 # across, and that is the operator's choice.
                 self._build_fts_translation_picker(card_layout)
+                # Same card, same search-time family: how long the lane
+                # waits after the last keystroke before it queries.
+                self._build_fts_auto_delay_row(card_layout)
             else:
                 # Indexes built from a chosen set of translations get the
                 # tag picker that feeds their rebuild command.
                 # Translation tags container
                 trans_label = QLabel("Translations:")
-                trans_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+                trans_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
                 card_layout.addWidget(trans_label)
 
                 tags_container = QWidget()
@@ -1267,6 +1346,7 @@ class SettingsTab(QWidget):
                 add_row.setSpacing(4)
 
                 add_combo = QComboBox()
+                install_combo(add_combo)
                 add_combo.setStyleSheet(f"""
                     QComboBox {{
                         background: rgba(0, 0, 0, 0.3);
@@ -1274,7 +1354,7 @@ class SettingsTab(QWidget):
                         border: 1px solid {BORDER_SUBTLE};
                         border-radius: 4px;
                         padding: 4px 8px;
-                        font-size: 10px;
+                        font-size: 12px;
                         min-width: 120px;
                         max-height: 24px;
                     }}
@@ -1341,7 +1421,7 @@ class SettingsTab(QWidget):
         topical_header.addWidget(topical_name)
 
         topical_status = QLabel("Loading...")
-        topical_status.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        topical_status.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         topical_header.addWidget(topical_status)
 
         topical_header.addStretch()
@@ -1352,11 +1432,11 @@ class SettingsTab(QWidget):
         topical_build_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT_SOFT};
-                color: {ACCENT};
+                color: {ACCENT_TEXT};
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 4px;
                 padding: 4px 12px;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -1369,7 +1449,7 @@ class SettingsTab(QWidget):
         topical_layout.addLayout(topical_header)
 
         topical_desc = QLabel("Stories, parables, and miracles index (uses topical_data.json)")
-        topical_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        topical_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         topical_layout.addWidget(topical_desc)
 
         self._topical_status = topical_status
@@ -1389,7 +1469,7 @@ class SettingsTab(QWidget):
         keyword_header.addWidget(keyword_name)
 
         keyword_status = QLabel("Loading...")
-        keyword_status.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        keyword_status.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         keyword_header.addWidget(keyword_status)
 
         keyword_header.addStretch()
@@ -1400,11 +1480,11 @@ class SettingsTab(QWidget):
         keyword_build_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT_SOFT};
-                color: {ACCENT};
+                color: {ACCENT_TEXT};
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 4px;
                 padding: 4px 12px;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -1417,7 +1497,7 @@ class SettingsTab(QWidget):
         keyword_layout.addLayout(keyword_header)
 
         keyword_desc = QLabel("Per-verse topics (Nave's) + lemma glosses (Strong's) — synonyms the verse text never spells out")
-        keyword_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        keyword_desc.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         keyword_desc.setWordWrap(True)
         keyword_layout.addWidget(keyword_desc)
 
@@ -1426,10 +1506,11 @@ class SettingsTab(QWidget):
         display_row = QHBoxLayout()
         display_row.setSpacing(8)
         display_label = QLabel("Display translation:")
-        display_label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        display_label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
         display_row.addWidget(display_label)
 
         keyword_display_combo = QComboBox()
+        install_combo(keyword_display_combo)
         keyword_display_combo.setStyleSheet(f"""
             QComboBox {{
                 background: rgba(0, 0, 0, 0.3);
@@ -1437,7 +1518,7 @@ class SettingsTab(QWidget):
                 border: 1px solid {BORDER_SUBTLE};
                 border-radius: 4px;
                 padding: 4px 8px;
-                font-size: 10px;
+                font-size: 12px;
                 min-width: 120px;
                 max-height: 24px;
             }}
@@ -1480,7 +1561,7 @@ class SettingsTab(QWidget):
                 border: 1px solid rgba(34, 197, 94, 0.3);
                 border-radius: 6px;
                 padding: 6px 20px;
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
@@ -1488,7 +1569,7 @@ class SettingsTab(QWidget):
             }}
             QPushButton:disabled {{
                 background: rgba(255, 255, 255, 0.05);
-                color: {SLATE_600};
+                color: {TEXT_FAINT};
                 border: 1px solid rgba(255, 255, 255, 0.1);
             }}
         """)
@@ -1517,7 +1598,7 @@ class SettingsTab(QWidget):
                 border: 1px solid {BORDER_SUBTLE};
                 border-radius: 4px;
                 padding: 6px;
-                font-size: 10px;
+                font-size: 12px;
                 font-family: monospace;
             }}
         """)
@@ -1542,11 +1623,11 @@ class SettingsTab(QWidget):
         tag.setStyleSheet(f"""
             QPushButton {{
                 background: {ACCENT_SOFT};
-                color: {ACCENT};
+                color: {ACCENT_TEXT};
                 border: 1px solid {ACCENT_BORDER};
                 border-radius: 4px;
                 padding: 2px 8px;
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -1603,7 +1684,7 @@ class SettingsTab(QWidget):
 
         if not widgets["current_translations"]:
             empty = QLabel("No translations selected")
-            empty.setStyleSheet(f"color: {SLATE_600}; font-size: 10px; font-style: italic;")
+            empty.setStyleSheet(f"color: {TEXT_FAINT}; font-size: 12px; font-style: italic;")
             tags_layout.addWidget(empty)
 
     def _populate_add_combo(self, index_key: str):
@@ -1620,6 +1701,86 @@ class SettingsTab(QWidget):
         """Handle combo selection - auto-add on selection."""
         if idx >= 0:
             self._add_translation_to_index(index_key)
+
+    def _build_fts_auto_delay_row(self, card_layout):
+        """How long the Keyword lane waits after the last keystroke.
+
+        A search-time setting like the translation picker above, so it
+        persists straight to `search.auto_delay_ms` and the panel reads
+        it live on the next keystroke — no restart, no index rebuild.
+        "Every keystroke" is 0; the rest are fixed slots so the operator
+        cannot pick a delay that stalls the lane.
+        """
+        from core.constants import (
+            SEARCH_AUTO_DELAY_MS_DEFAULT, SEARCH_AUTO_DELAY_MS_SLOTS,
+        )
+        from core.database import get_setting, set_setting
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        label = QLabel("Auto-search:")
+        label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
+        row.addWidget(label)
+
+        combo = QComboBox()
+        install_combo(combo)
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background: rgba(0, 0, 0, 0.3);
+                color: {SLATE_300};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+                min-width: 120px;
+                max-height: 24px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {SLATE_400};
+            }}
+        """)
+        combo.addItem("Every keystroke", 0)
+        for ms in SEARCH_AUTO_DELAY_MS_SLOTS:
+            combo.addItem(f"after {ms} ms", ms)
+        try:
+            saved = int(get_setting("search.auto_delay_ms",
+                                    str(SEARCH_AUTO_DELAY_MS_DEFAULT)))
+        except (TypeError, ValueError):
+            saved = SEARCH_AUTO_DELAY_MS_DEFAULT
+        idx = combo.findData(saved)
+        if idx < 0:
+            # Hand-edited value between slots: snap to the nearest slot
+            # and store it, so the combo never shows a delay that will
+            # not run. 0 and the default are always exact matches.
+            saved = min(SEARCH_AUTO_DELAY_MS_SLOTS,
+                        key=lambda ms: abs(ms - saved)) if saved > 0 \
+                else SEARCH_AUTO_DELAY_MS_DEFAULT
+            idx = combo.findData(saved)
+            set_setting("search.auto_delay_ms", str(saved))
+        combo.setCurrentIndex(idx)
+        combo.currentIndexChanged.connect(self._on_search_auto_delay_changed)
+        row.addWidget(combo)
+        self._search_auto_delay_combo = combo
+
+        hint = QLabel("wait after the last keystroke")
+        hint.setStyleSheet(f"color: {TEXT_FAINT}; font-size: 12px;")
+        row.addWidget(hint)
+        row.addStretch()
+
+        card_layout.addLayout(row)
+
+    def _on_search_auto_delay_changed(self, idx: int):
+        """Persist the chosen auto-search delay (0 = every keystroke)."""
+        from core.database import set_setting
+        combo = self._search_auto_delay_combo
+        value = combo.itemData(idx) if idx >= 0 else None
+        if value is None:
+            return
+        set_setting("search.auto_delay_ms", str(int(value)))
 
     # ── FTS5 search translations (search-time, not build-time) ────────────
 
@@ -1638,10 +1799,10 @@ class SettingsTab(QWidget):
         header = QHBoxLayout()
         header.setSpacing(6)
         label = QLabel("Search translations:")
-        label.setStyleSheet(f"color: {SLATE_400}; font-size: 10px; font-weight: 700;")
+        label.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-weight: 700;")
         header.addWidget(label)
         self._fts_trans_count = QLabel("")
-        self._fts_trans_count.setStyleSheet(f"color: {SLATE_500}; font-size: 10px;")
+        self._fts_trans_count.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         header.addWidget(self._fts_trans_count)
         header.addStretch()
         card_layout.addLayout(header)
@@ -1656,6 +1817,7 @@ class SettingsTab(QWidget):
         add_row = QHBoxLayout()
         add_row.setSpacing(4)
         combo = QComboBox()
+        install_combo(combo)
         combo.setStyleSheet(f"""
             QComboBox {{
                 background: rgba(0, 0, 0, 0.3);
@@ -1663,7 +1825,7 @@ class SettingsTab(QWidget):
                 border: 1px solid {BORDER_SUBTLE};
                 border-radius: 4px;
                 padding: 4px 8px;
-                font-size: 10px;
+                font-size: 12px;
                 min-width: 120px;
                 max-height: 24px;
             }}
@@ -1702,7 +1864,7 @@ class SettingsTab(QWidget):
                 item.widget().deleteLater()
         if not current:
             empty = QLabel("No translations selected")
-            empty.setStyleSheet(f"color: {SLATE_600}; font-size: 10px; font-style: italic;")
+            empty.setStyleSheet(f"color: {TEXT_FAINT}; font-size: 12px; font-style: italic;")
             w["tags_layout"].addWidget(empty)
         for t in current:
             tag = QPushButton(f"  {t}  ×")
@@ -1711,11 +1873,11 @@ class SettingsTab(QWidget):
             tag.setStyleSheet(f"""
                 QPushButton {{
                     background: {ACCENT_SOFT};
-                    color: {ACCENT};
+                    color: {ACCENT_TEXT};
                     border: 1px solid {ACCENT_BORDER};
                     border-radius: 4px;
                     padding: 2px 8px;
-                    font-size: 10px;
+                    font-size: 12px;
                     font-weight: 600;
                 }}
                 QPushButton:hover {{
@@ -1825,11 +1987,11 @@ class SettingsTab(QWidget):
                 conn.close()
         except Exception as e:
             label.setText(f"Error reading index: {e}")
-            label.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+            label.setStyleSheet(f"color: {RED_500}; font-size: 12px;")
             return
         if not row:
             label.setText("Not built")
-            label.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            label.setStyleSheet(f"color: {AMBER_500}; font-size: 12px;")
             return
         tokenizer = ""
         for part in row[0].split(","):
@@ -1853,11 +2015,11 @@ class SettingsTab(QWidget):
                     note.append(f"stale {', '.join(extra)}")
             label.setText(f"{indexed:,} indexed  •  needs rebuild — "
                           + "; ".join(note))
-            label.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            label.setStyleSheet(f"color: {AMBER_500}; font-size: 12px;")
             return
         label.setText(f"{indexed:,} indexed  •  Porter stemming  •  "
                       f"{len(chosen)} translation(s)")
-        label.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+        label.setStyleSheet(f"color: {EMERALD_500}; font-size: 12px;")
 
     def _load_index_status(self):
         """Load and display current index status from fingerprint files."""
@@ -1891,7 +2053,7 @@ class SettingsTab(QWidget):
                     built_at = data.get("built_at", "")[:10]
 
                     widgets["status_label"].setText(f"{verse_count:,} verses  •  {built_at}")
-                    widgets["status_label"].setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+                    widgets["status_label"].setStyleSheet(f"color: {EMERALD_500}; font-size: 12px;")
 
                     # Set current translations
                     widgets["current_translations"] = sorted(translations)
@@ -1899,10 +2061,10 @@ class SettingsTab(QWidget):
                     self._populate_add_combo(key)
                 except Exception as e:
                     widgets["status_label"].setText("Error reading fingerprint")
-                    widgets["status_label"].setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+                    widgets["status_label"].setStyleSheet(f"color: {RED_500}; font-size: 12px;")
             else:
                 widgets["status_label"].setText("Not built")
-                widgets["status_label"].setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+                widgets["status_label"].setStyleSheet(f"color: {AMBER_500}; font-size: 12px;")
                 widgets["current_translations"] = []
                 self._refresh_translation_tags(key)
                 self._populate_add_combo(key)
@@ -1916,13 +2078,13 @@ class SettingsTab(QWidget):
                 with open(topical_path, "rb") as f:
                     lookup = pickle.load(f)
                 self._topical_status.setText(f"{len(lookup)} topics  •  Ready")
-                self._topical_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+                self._topical_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 12px;")
             except Exception:
                 self._topical_status.setText("Error reading topical index")
-                self._topical_status.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+                self._topical_status.setStyleSheet(f"color: {RED_500}; font-size: 12px;")
         else:
             self._topical_status.setText("Not built")
-            self._topical_status.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            self._topical_status.setStyleSheet(f"color: {AMBER_500}; font-size: 12px;")
 
         # Keyword index status + display-translation combo
         meta_path = os.path.join(indexes_dir, "keywords_meta.json")
@@ -1933,13 +2095,13 @@ class SettingsTab(QWidget):
                 verses = meta.get("verses_indexed", 0)
                 built_at = meta.get("built_at", "")[:10]
                 self._keyword_status.setText(f"{verses:,} verses  •  {built_at}")
-                self._keyword_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 10px;")
+                self._keyword_status.setStyleSheet(f"color: {EMERALD_500}; font-size: 12px;")
             except Exception:
                 self._keyword_status.setText("Error reading keyword index")
-                self._keyword_status.setStyleSheet(f"color: {RED_500}; font-size: 10px;")
+                self._keyword_status.setStyleSheet(f"color: {RED_500}; font-size: 12px;")
         else:
             self._keyword_status.setText("Not built")
-            self._keyword_status.setStyleSheet(f"color: {AMBER_500}; font-size: 10px;")
+            self._keyword_status.setStyleSheet(f"color: {AMBER_500}; font-size: 12px;")
         self._refresh_keyword_display_combo()
 
     def _refresh_keyword_display_combo(self):
@@ -2164,14 +2326,12 @@ class SettingsTab(QWidget):
         if hasattr(self, "_keyword_build_btn"):
             self._keyword_build_btn.setEnabled(enabled)
 
-    def _create_recording_section(self):
-        """Create the Recording section."""
-        section = QWidget()
-        section.setVisible(False)
-        layout = QVBoxLayout(section)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+    def _add_recording_group(self, layout: QVBoxLayout):
+        """Append the recording controls (format + storage) to *layout*.
 
+        Called from `_create_audio_section` so ingestion and recording sit
+        under the single Audio subtab; the controls are unchanged.
+        """
         title = QLabel("Recording")
         title.setStyleSheet(LABEL_STYLE)
         layout.addWidget(title)
@@ -2196,13 +2356,14 @@ class SettingsTab(QWidget):
         info_layout.addWidget(t)
 
         d = QLabel("WAV is lossless; MP3/FLAC/OGG require ffmpeg")
-        d.setStyleSheet(f"color: {SLATE_500}; font-size: 11px;")
+        d.setStyleSheet(f"color: {SLATE_500}; font-size: 12px;")
         info_layout.addWidget(d)
 
         card_layout.addWidget(info)
         card_layout.addStretch()
 
         self._rec_format_combo = QComboBox()
+        install_combo(self._rec_format_combo)
         self._rec_format_combo.addItems(["WAV", "MP3", "FLAC", "OGG"])
         self._rec_format_combo.setFixedWidth(120)
         self._rec_format_combo.setStyleSheet(COMBO_STYLE)
@@ -2234,17 +2395,12 @@ class SettingsTab(QWidget):
         dir_info_l.addWidget(dt)
 
         dd = QLabel("data/recordings/")
-        dd.setStyleSheet(f"color: {SLATE_400}; font-size: 11px; font-family: monospace;")
+        dd.setStyleSheet(f"color: {SLATE_400}; font-size: 12px; font-family: monospace;")
         dir_info_l.addWidget(dd)
 
         dir_layout.addWidget(dir_info)
         layout.addWidget(dir_card)
 
-        layout.addStretch()
-
-        self._sections["Recording"] = section
-        self._content_layout.addWidget(section)
-    
     def _create_gpu_hardware_section(self):
         """Create the GPU & Hardware section."""
         section = QWidget()
@@ -2332,7 +2488,7 @@ class SettingsTab(QWidget):
             limit_layout.setSpacing(2)
             
             l = QLabel(label_text)
-            l.setStyleSheet(f"color: {SLATE_500}; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;")
+            l.setStyleSheet(f"color: {SLATE_500}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;")
             limit_layout.addWidget(l)
             
             v = QLabel(value_text)
