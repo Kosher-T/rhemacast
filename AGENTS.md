@@ -135,3 +135,66 @@ Shutdown cascade: poison pills pushed through Queue A → B → DB queue.
 - Queue A backpressure: never drop audio; failover triggers if depth > 400
 - GPU thermal limits: critical at 82°C, safe at 70°C — defined in `core/constants.py`
 - `data/schedules/` is gitignored — it holds the operator's live service plans, not source
+
+## Settings Field Chrome — handover (2026-10-30)
+
+`ui/field_chrome.py` now owns every Settings tab combo and spin box (the
+font row, the seven standard combos, both standard spins, and the four
+compact Database/Keywords combos). The shared `COMBO_STYLE` / `SPIN_STYLE`
+remain in `settings_tab.py` for other tabs but must not be applied to
+Settings fields again.
+
+Non-negotiables, learned from the reverted attempt:
+
+- **One stylesheet, replacing not appending.** `COMBO_STYLE` and
+  `SPIN_STYLE` both declare `::down-arrow`. QStyleSheetStyle paints every
+  matching subcontrol rule, so keeping the old sheet while adding the new
+  one paints two marks. `field_chrome.apply_combo/apply_spin` set the
+  widget stylesheet; never append a second arrow rule.
+- **State selectors go on the subcontrol.** `QComboBox:hover::down-arrow`,
+  `:disabled::down-arrow` and `QSpinBox:hover::up-arrow` do not brighten
+  the image and position a second copy at the widget centre. Use
+  `::down-arrow:hover`, `::down-arrow:disabled`, `::up-arrow:hover` and
+  repeat `subcontrol-origin` / `subcontrol-position` in every arrow rule.
+  This is the exact cause of the old "chevron mid-field plus chevron at
+  the right edge" symptom.
+- **QSS heights are content-box heights.** `COMBO_HEIGHT` is the outer
+  height (28); the helper subtracts the 2px border. Compact is 27px
+  (17 content + 8 padding + 2 border). Never feed outer heights straight
+  to `min-height` / `max-height`.
+- **Spin buttons live inside the inner rect.** `subcontrol-origin:
+  padding`, width `SPIN_BUTTON_WIDTH`, height half the inner height,
+  top/bottom right, no gap. No fill (it would poke through the rounded
+  corners). `padding-right` is derived from the button width.
+- **Chevrons are generated PNGs.** Lazy QImage/QPainter files under
+  `<tempdir>/rhemacast-field-arrows-<hash>/`, 12×12 plus @2x 24×24,
+  written tmp-file + `os.replace`, referenced with a plain
+  `Path.as_posix()` URL. QPixmap before QGuiApplication crashes. Never
+  install an application stylesheet after the bundled Inter font;
+  `core/ui.py`'s order (Fusion → sheet → typography → palette) holds.
+  No `core/ui.py` change is needed for this chrome.
+
+Verification:
+
+- `tests/harness/field_chrome.py` renders textless fields, excludes the
+  border, and counts connected components. Expected: 1 per combo, 2 per
+  spin, in normal/hover/focus/disabled. Do not weaken this to "an arrow
+  is visible".
+- `tests/test_settings_fields.py` (39), `tests/test_tokens.py` (26),
+  `tests/test_style_dialogs.py` (13), each run separately with
+  `QT_QPA_PLATFORM=offscreen` and `timeout 120`.
+- `tests/test_interface_font.py` (13) and `tests/test_search_auto_delay.py`
+  (6) also construct SettingsTab and pass.
+- `tests/test_output_sets.py` passes its 25 tests, then the interpreter
+  segfaults during headless QtWebEngine teardown. That is a process-exit
+  issue, not a test failure; do not chase it as a styling regression.
+
+Known state:
+
+- Focus paints the accent border only; the chevron stays at normal
+  brightness. Hover brightens it; disabled dims it.
+- Pressed spin buttons deliberately have no fill.
+- Compact combos keep their measured 27px height, 120px min-width, no
+  max-width and 12px type; radius moved from 4 to the shared 6.
+- The restyle is commit `1772879` on local `master`. Phase patches and
+  screenshots were in `/tmp` and are not versioned.
