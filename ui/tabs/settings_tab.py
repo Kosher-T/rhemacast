@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from ui.popups import install_combo
+from ui import field_chrome
 from ui.widgets.hotkey_editor import HotkeyEditor
 
 from ui.styles import (
@@ -548,7 +549,7 @@ class SettingsTab(QWidget):
         
         self._device_combo = QComboBox()
         install_combo(self._device_combo)
-        self._device_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._device_combo)
         # Populate from audio capture
         self._populate_audio_devices()
         device_layout.addWidget(self._device_combo)
@@ -567,7 +568,7 @@ class SettingsTab(QWidget):
         
         self._rate_combo = QComboBox()
         install_combo(self._rate_combo)
-        self._rate_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._rate_combo)
         self._rate_combo.addItems([
             "16,000 Hz (Optimal for Whisper)",
             "44,100 Hz",
@@ -726,7 +727,7 @@ class SettingsTab(QWidget):
         
         self._theme_combo = QComboBox()
         install_combo(self._theme_combo)
-        self._theme_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._theme_combo)
         from core.theme_loader import get_themes_by_kind, SCRIPTURE
         for name, data in get_themes_by_kind(SCRIPTURE).items():
             self._theme_combo.addItem(data.get("label", name), name)
@@ -768,7 +769,7 @@ class SettingsTab(QWidget):
         mode_row.addWidget(mode_label)
         self._output_mode_combo = QComboBox()
         install_combo(self._output_mode_combo)
-        self._output_mode_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._output_mode_combo)
         self._output_mode_combo.addItem("Simultaneous", MODE_SIMULTANEOUS)
         self._output_mode_combo.addItem("Prioritized", MODE_PRIORITIZED)
         current_mode = get_output_mode()
@@ -814,7 +815,7 @@ class SettingsTab(QWidget):
 
         self._song_nav_combo = QComboBox()
         install_combo(self._song_nav_combo)
-        self._song_nav_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._song_nav_combo)
         self._song_nav_combo.addItem("Send on Ctrl release", "deferred")
         self._song_nav_combo.addItem("Update instantly", "instant")
         self._song_nav_combo.addItem("Blank while navigating", "blank")
@@ -836,7 +837,7 @@ class SettingsTab(QWidget):
 
         self._song_nav_media_combo = QComboBox()
         install_combo(self._song_nav_media_combo)
-        self._song_nav_media_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._song_nav_media_combo)
         self._song_nav_media_combo.addItem("Remain visible", "remain")
         self._song_nav_media_combo.addItem("Disappear with text", "disappear")
         saved_media = get_setting("slides.nav_media_bg", "remain")
@@ -861,7 +862,7 @@ class SettingsTab(QWidget):
         self._history_context_spin.setRange(0, 10)
         self._history_context_spin.setValue(int(get_setting("history.context_verses", "3")))
         self._history_context_spin.setSuffix(" verses")
-        self._history_context_spin.setStyleSheet(SPIN_STYLE)
+        field_chrome.apply_spin(self._history_context_spin)
         self._history_context_spin.valueChanged.connect(self._on_history_context_changed)
         row7.addWidget(self._history_context_spin)
 
@@ -900,7 +901,7 @@ class SettingsTab(QWidget):
                                             min(QUICK_VERSE_TIMEOUT_MS_MAX,
                                                 saved_timeout)))
         self._quick_verse_spin.setSuffix(" ms")
-        self._quick_verse_spin.setStyleSheet(SPIN_STYLE)
+        field_chrome.apply_spin(self._quick_verse_spin)
         self._quick_verse_spin.valueChanged.connect(self._on_quick_verse_timeout_changed)
         qv_row.addWidget(self._quick_verse_spin)
 
@@ -1064,7 +1065,8 @@ class SettingsTab(QWidget):
 
         fam_combo = QFontComboBox()
         install_combo(fam_combo)
-        fam_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(
+            fam_combo, field_chrome.SETTINGS_FONT_FAMILY_COMBO)
         fam_combo.setToolTip("Font family")
         saved_family = get_setting(family_setting, "")
         if saved_family not in families:
@@ -1076,7 +1078,8 @@ class SettingsTab(QWidget):
         row.setSpacing(8)
         wt_combo = QComboBox()
         install_combo(wt_combo)
-        wt_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(
+            wt_combo, field_chrome.SETTINGS_FONT_WEIGHT_COMBO)
         wt_combo.setToolTip("Font weight")
         for value, label in INTERFACE_FONT_WEIGHTS:
             wt_combo.addItem(label, value)
@@ -1098,7 +1101,7 @@ class SettingsTab(QWidget):
         size_spin.setValue(max(size_min, min(size_max, saved_size)))
         size_spin.setSuffix(" px")
         size_spin.setToolTip("Font size")
-        size_spin.setStyleSheet(SPIN_STYLE)
+        field_chrome.apply_spin(size_spin, field_chrome.SETTINGS_FONT_SIZE_SPIN)
         row.addWidget(size_spin)
         card_layout.addLayout(row)
 
@@ -1347,27 +1350,9 @@ class SettingsTab(QWidget):
 
                 add_combo = QComboBox()
                 install_combo(add_combo)
-                add_combo.setStyleSheet(f"""
-                    QComboBox {{
-                        background: rgba(0, 0, 0, 0.3);
-                        color: {SLATE_300};
-                        border: 1px solid {BORDER_SUBTLE};
-                        border-radius: 4px;
-                        padding: 4px 8px;
-                        font-size: 12px;
-                        min-width: 120px;
-                        max-height: 24px;
-                    }}
-                    QComboBox::drop-down {{
-                        border: none;
-                        width: 20px;
-                    }}
-                    QComboBox::down-arrow {{
-                        border-left: 4px solid transparent;
-                        border-right: 4px solid transparent;
-                        border-top: 5px solid {SLATE_400};
-                    }}
-                """)
+                field_chrome.apply_combo(
+                    add_combo, field_chrome.SETTINGS_COMPACT_COMBO,
+                    compact=True)
                 add_combo.setPlaceholderText("Add...")
                 add_row.addWidget(add_combo)
 
@@ -1511,30 +1496,17 @@ class SettingsTab(QWidget):
 
         keyword_display_combo = QComboBox()
         install_combo(keyword_display_combo)
-        keyword_display_combo.setStyleSheet(f"""
-            QComboBox {{
-                background: rgba(0, 0, 0, 0.3);
-                color: {SLATE_300};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 12px;
-                min-width: 120px;
-                max-height: 24px;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                width: 20px;
-            }}
-            QComboBox::down-arrow {{
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid {SLATE_400};
-            }}
+        field_chrome.apply_combo(
+            keyword_display_combo, field_chrome.SETTINGS_COMPACT_COMBO,
+            compact=True)
+        # Keep this row's existing popup wash; the field chrome above owns
+        # only the closed combo, not the dropdown.
+        keyword_display_combo.setStyleSheet(
+            keyword_display_combo.styleSheet() + f"""
             QComboBox QAbstractItemView {{
                 background: rgba(0, 0, 0, 0.9);
                 color: {SLATE_300};
-        selection-background-color: {TEXT_SELECTION};
+                selection-background-color: {TEXT_SELECTION};
             }}
         """)
         keyword_display_combo.currentTextChanged.connect(self._on_keyword_display_changed)
@@ -1725,24 +1697,8 @@ class SettingsTab(QWidget):
 
         combo = QComboBox()
         install_combo(combo)
-        combo.setStyleSheet(f"""
-            QComboBox {{
-                background: rgba(0, 0, 0, 0.3);
-                color: {SLATE_300};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 12px;
-                min-width: 120px;
-                max-height: 24px;
-            }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
-            QComboBox::down-arrow {{
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid {SLATE_400};
-            }}
-        """)
+        field_chrome.apply_combo(
+            combo, field_chrome.SETTINGS_COMPACT_COMBO, compact=True)
         combo.addItem("Every keystroke", 0)
         for ms in SEARCH_AUTO_DELAY_MS_SLOTS:
             combo.addItem(f"after {ms} ms", ms)
@@ -1818,24 +1774,8 @@ class SettingsTab(QWidget):
         add_row.setSpacing(4)
         combo = QComboBox()
         install_combo(combo)
-        combo.setStyleSheet(f"""
-            QComboBox {{
-                background: rgba(0, 0, 0, 0.3);
-                color: {SLATE_300};
-                border: 1px solid {BORDER_SUBTLE};
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 12px;
-                min-width: 120px;
-                max-height: 24px;
-            }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
-            QComboBox::down-arrow {{
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid {SLATE_400};
-            }}
-        """)
+        field_chrome.apply_combo(
+            combo, field_chrome.SETTINGS_COMPACT_COMBO, compact=True)
         combo.setPlaceholderText("Add...")
         add_row.addWidget(combo)
         add_row.addStretch()
@@ -2366,7 +2306,7 @@ class SettingsTab(QWidget):
         install_combo(self._rec_format_combo)
         self._rec_format_combo.addItems(["WAV", "MP3", "FLAC", "OGG"])
         self._rec_format_combo.setFixedWidth(120)
-        self._rec_format_combo.setStyleSheet(COMBO_STYLE)
+        field_chrome.apply_combo(self._rec_format_combo)
         from core.database import get_setting as _gs, set_setting as _ss
         saved = _gs("recording.format", "WAV")
         idx = self._rec_format_combo.findText(saved)

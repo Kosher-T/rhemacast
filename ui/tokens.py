@@ -131,6 +131,32 @@ BADGE_PAD_Y = 2
 BADGE_PAD_X = SPACE_8
 BADGE_BORDER_WIDTH = 1
 
+# ─── Settings field chrome (ui/field_chrome.py) ─────────────────────────────
+# Outer heights, border included. QSS min-/max-height sizes the content box,
+# so the helper subtracts 2 × FIELD_BORDER_WIDTH; do not feed these values to
+# QSS min-height directly (that is how the old fields ended up 30px tall).
+COMBO_HEIGHT = 28
+COMBO_MIN_WIDTH = 140
+COMBO_MAX_WIDTH = 220
+COMBO_BUTTON_WIDTH = 24
+SPIN_BUTTON_WIDTH = 20
+FIELD_BORDER_WIDTH = 1
+
+# Compact variant for the dense Database / Keywords rows. The measured
+# legacy height was 27 (12px text, 4px vertical padding, 1px border); it is
+# preserved exactly, with the same generated chevrons as the standard fields.
+COMPACT_COMBO_HEIGHT = 27
+COMPACT_COMBO_MIN_WIDTH = 120
+COMPACT_COMBO_BUTTON_WIDTH = 20
+COMPACT_COMBO_PADDING_Y = 4
+
+# Generated chevron roles. Normal and hover clear the 3:1 non-text floor on
+# BG_FIELD (tests/test_tokens.py); disabled is deliberately dimmer — it is a
+# non-interactive affordance and must read as unavailable, not as text.
+ARROW_COLOR = TEXT_SECONDARY
+ARROW_COLOR_HOVER = TEXT_PRIMARY
+ARROW_COLOR_DISABLED = "#5a5a63"
+
 CARD_OBJECT_NAME = "scheduleCard"
 
 # ─── Option rows (the Outputs theme list) ────────────────────────────────────

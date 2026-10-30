@@ -23,10 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFontComboBox, QGridLayout, QLabel, QMenu,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from ui import dialogs, tokens
+from ui import dialogs, field_chrome, tokens
 from ui.app_style import install as install_app_style
 from ui.app_theme import apply_palette
 from ui.popups import install_combo, menu_qss
@@ -50,7 +50,7 @@ class Gallery(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RhemaCast — dialog & popup gallery (dev)")
-        self.resize(820, 620)
+        self.resize(900, 820)
         self._nonmodal: dialogs.MessageDialog | None = None
 
         root = QVBoxLayout(self)
@@ -74,6 +74,7 @@ class Gallery(QWidget):
 
         root.addLayout(self._message_section())
         root.addLayout(self._input_section())
+        root.addLayout(self._settings_fields_section())
         root.addLayout(self._popup_section())
         root.addStretch(1)
 
@@ -133,6 +134,128 @@ class Gallery(QWidget):
             self._button("Multiline editor", self._multiline),
             self._button("Add Translation", self._add_translation),
         ]))
+        return box
+
+    def _settings_fields_section(self) -> QVBoxLayout:
+        """Every Settings field variant and state, side by side.
+
+        Normal controls are live: hover them, tab/click for focus, and the
+        two buttons focus the size field or open a real compact popup. The
+        bottom row is a disabled set so the dimmed chevron is visible
+        without touching the live controls.
+        """
+        box = QVBoxLayout()
+        box.setSpacing(tokens.SPACE_8)
+        box.addWidget(self._section_label("Settings fields"))
+
+        def field_label(text: str) -> QLabel:
+            label = QLabel(text)
+            label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            return label
+
+        family = QFontComboBox()
+        install_combo(family)
+        field_chrome.apply_combo(
+            family, field_chrome.SETTINGS_FONT_FAMILY_COMBO)
+
+        weight = QComboBox()
+        install_combo(weight)
+        weight.addItems(["Regular", "Medium", "SemiBold", "Bold"])
+        weight.setCurrentIndex(1)
+        field_chrome.apply_combo(
+            weight, field_chrome.SETTINGS_FONT_WEIGHT_COMBO)
+
+        size = QSpinBox()
+        size.setRange(8, 16)
+        size.setValue(13)
+        size.setSuffix(" px")
+        field_chrome.apply_spin(size, field_chrome.SETTINGS_FONT_SIZE_SPIN)
+
+        standard_combo = QComboBox()
+        install_combo(standard_combo)
+        standard_combo.addItems(["Microphone (PipeWire)", "Line In (ALSA)"])
+        field_chrome.apply_combo(standard_combo)
+
+        standard_spin = QSpinBox()
+        standard_spin.setRange(0, 10)
+        standard_spin.setValue(3)
+        standard_spin.setSuffix(" verses")
+        field_chrome.apply_spin(standard_spin)
+
+        compact = QComboBox()
+        install_combo(compact)
+        compact.addItems(["KJV", "NIV", "ESV"])
+        field_chrome.apply_combo(
+            compact, field_chrome.SETTINGS_COMPACT_COMBO, compact=True)
+
+        disabled_combo = QComboBox()
+        install_combo(disabled_combo)
+        disabled_combo.addItems(["KJV", "NIV", "ESV"])
+        field_chrome.apply_combo(
+            disabled_combo, field_chrome.SETTINGS_COMPACT_COMBO,
+            compact=True)
+        disabled_combo.setEnabled(False)
+
+        disabled_spin = QSpinBox()
+        disabled_spin.setRange(8, 16)
+        disabled_spin.setValue(13)
+        disabled_spin.setSuffix(" px")
+        field_chrome.apply_spin(
+            disabled_spin, field_chrome.SETTINGS_FONT_SIZE_SPIN)
+        disabled_spin.setEnabled(False)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(tokens.SPACE_12)
+        grid.setVerticalSpacing(tokens.SPACE_4)
+        grid.addWidget(field_label("Font family"), 0, 0, 1, 2)
+        grid.addWidget(field_label("Weight"), 0, 2)
+        grid.addWidget(field_label("Size"), 0, 3)
+        grid.addWidget(family, 1, 0, 1, 2)
+        grid.addWidget(weight, 1, 2)
+        grid.addWidget(size, 1, 3)
+        grid.addWidget(field_label("Standard combo"), 2, 0)
+        grid.addWidget(field_label("Standard spin"), 2, 1)
+        grid.addWidget(field_label("Compact combo"), 2, 2, 1, 2)
+        grid.addWidget(standard_combo, 3, 0)
+        grid.addWidget(standard_spin, 3, 1)
+        grid.addWidget(compact, 3, 2, 1, 2)
+        grid.addWidget(field_label("Disabled"), 4, 0)
+        grid.addWidget(disabled_combo, 5, 0)
+        grid.addWidget(disabled_spin, 5, 1)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnStretch(3, 1)
+        box.addLayout(grid)
+
+        hint = QLabel(
+            "Hover a field for the hover state; tab or click for focus; "
+            "the bottom row is disabled. The buttons drive focus and a real "
+            "popup so the open state can be inspected too.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        box.addWidget(hint)
+
+        focus_button = QPushButton("Focus size field")
+        focus_button.setMinimumHeight(tokens.BUTTON_HEIGHT)
+        focus_button.clicked.connect(lambda: size.setFocus())
+        popup_button = QPushButton("Open compact popup")
+        popup_button.setMinimumHeight(tokens.BUTTON_HEIGHT)
+        popup_button.clicked.connect(compact.showPopup)
+        buttons = QGridLayout()
+        buttons.setHorizontalSpacing(tokens.SPACE_8)
+        buttons.addWidget(focus_button, 0, 0)
+        buttons.addWidget(popup_button, 0, 1)
+        buttons.setColumnStretch(2, 1)
+        box.addLayout(buttons)
+
+        # Referenced by the platform-theme render script; not product API.
+        self._field_demo = {
+            "family": family, "weight": weight, "size": size,
+            "standard_combo": standard_combo, "standard_spin": standard_spin,
+            "compact": compact, "disabled_combo": disabled_combo,
+            "disabled_spin": disabled_spin,
+        }
         return box
 
     def _popup_section(self) -> QVBoxLayout:

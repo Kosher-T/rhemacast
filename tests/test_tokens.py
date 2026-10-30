@@ -350,3 +350,22 @@ def test_popup_surfaces_are_token_based():
 
     combo = combo_view_qss()
     assert tokens.BG_FIELD in combo and tokens.BORDER_POPOVER in combo
+
+
+# ── Settings field chrome: arrow roles and metrics ─────────────────────────
+
+def test_settings_arrow_roles_clear_the_non_text_floor():
+    for color in (tokens.ARROW_COLOR, tokens.ARROW_COLOR_HOVER):
+        ratio = _contrast(color, tokens.BG_FIELD)
+        assert ratio >= 3.0, (color, tokens.BG_FIELD, round(ratio, 2))
+    assert _contrast(tokens.ARROW_COLOR_DISABLED,
+                     tokens.BG_FIELD) < _contrast(tokens.ARROW_COLOR,
+                                                  tokens.BG_FIELD)
+
+
+def test_settings_field_metrics_split_the_inner_height_exactly():
+    inner = tokens.COMBO_HEIGHT - 2 * tokens.FIELD_BORDER_WIDTH
+    assert tokens.COMBO_HEIGHT == 28
+    assert tokens.SPIN_BUTTON_WIDTH > 0
+    assert inner % 2 == 0, "the two spin buttons must fill the inner rect"
+    assert tokens.COMBO_MIN_WIDTH <= tokens.COMBO_MAX_WIDTH
