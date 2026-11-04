@@ -1,0 +1,157 @@
+{
+  "schema_version": 2,
+  "name": "two_container_v2",
+  "label": "Two Containers (v2)",
+  "description": "Verse in an upper container (layer 10); reference and translation in a decorated lower-third container (layer 20). Content inset lives on body.padding; the citation enters 140ms after the verse.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "transparent",
+    "fit": "contain"
+  },
+  "containers": [
+    {
+      "id": "verse",
+      "label": "Verse text",
+      "kind": "scripture",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 60, "y": 40 },
+      "width": 1800,
+      "height": 820,
+      "min_width": 0,
+      "max_width": null,
+      "min_height": 0,
+      "max_height": null,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": 0,
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "opacity": 1.0,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "verse_rise", "duration_ms": 650 },
+        "out": "gentle_out"
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 0,
+          "padding": 0,
+          "padding_top": 24,
+          "padding_right": 32,
+          "padding_bottom": 24,
+          "padding_left": 32
+        },
+        "text": {
+          "visible": true,
+          "autosize": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": 76,
+          "min_size": 42,
+          "max_size": 104,
+          "weight": 700,
+          "line_height": 1.08,
+          "letter_spacing": -0.5,
+          "text_shadow": "0 4px 18px rgba(0, 0, 0, 0.45)",
+          "text_outline": "none",
+          "text_transform": "none",
+          "text_align": "center",
+          "margin_top": 0,
+          "margin_right": 0,
+          "margin_bottom": 0,
+          "margin_left": 0,
+          "padding": 0
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1
+        }
+      }
+    },
+    {
+      "id": "citation",
+      "label": "Reference + translation",
+      "kind": "scripture",
+      "layer": 20,
+      "visible": true,
+      "position": { "anchor": "bottom_left", "x": 60, "y": 48 },
+      "width": 1800,
+      "height": 150,
+      "min_width": 0,
+      "max_width": null,
+      "min_height": 0,
+      "max_height": null,
+      "background": "@ink_soft",
+      "border": { "shared": "gold_frame" },
+      "border_radius": 18,
+      "box_shadow": { "shared": "soft" },
+      "backdrop_filter": "blur(14px) saturate(1.15)",
+      "opacity": 1.0,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "verse_rise", "duration_ms": 650, "delay_ms": 140 },
+        "out": "gentle_out"
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 0,
+          "padding": 0,
+          "padding_top": 16,
+          "padding_right": 28,
+          "padding_bottom": 16,
+          "padding_left": 28
+        },
+        "reference": {
+          "visible": true,
+          "position": "below_verse",
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "size": 38,
+          "weight": 800,
+          "line_height": 1.2,
+          "letter_spacing": "0.1em",
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "text_shadow": "none",
+          "text_outline": "none",
+          "margin_top": 0,
+          "margin_right": 0,
+          "margin_bottom": 0,
+          "margin_left": 0,
+          "padding": 0
+        },
+        "translation": {
+          "visible": true,
+          "position": "right_of_reference",
+          "color": "@lime",
+          "font_family": "inherit",
+          "size": "inherit",
+          "weight": 700,
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "margin_top": 0,
+          "margin_right": 0,
+          "margin_bottom": 0,
+          "margin_left": 12,
+          "padding": 0
+        }
+      }
+    }
+  ]
+}

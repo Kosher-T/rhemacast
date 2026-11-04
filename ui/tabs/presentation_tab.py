@@ -465,12 +465,16 @@ class PresentationTab(QWidget):
         (Converting here would double-escape the spans into visible text.)
         """
         from core.theme_loader import resolve_theme
+        from core.theme_compat import project_legacy
         output_id = output_id or self._main_output_id()
         theme_name = self._themes_by_output.get(output_id, "default")
         # Per-kind fallback: slide content never falls back app-wide to the
         # scripture theme.
         fallback = "slides" if content == "slide" else "default"
         theme_name, theme_data = resolve_theme(theme_name, fallback=fallback)
+        # Phase-2 bridge: resolved v2 -> the v1 shape the current renderer
+        # speaks. Phase 3 removes this projection.
+        theme_data = project_legacy(theme_data)
         payload = {
             "action": "display",
             "text": text,

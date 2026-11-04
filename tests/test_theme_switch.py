@@ -90,10 +90,16 @@ def test_resolve_known_theme_returns_isolated_copy(tmp_path):
     from core.theme_loader import get_theme, resolve_theme
     name, data = resolve_theme("default")
     assert name == "default"
-    assert data == get_theme("default")
+    # Contract (docs/theme_schema_v2.md): resolve_theme() returns the resolved
+    # v2 theme; get_theme() stays raw for the designer.
+    assert data.get("schema_version") == 2
+    assert isinstance(data.get("containers"), list)
+    assert get_theme("default").get("schema_version") is None
     assert data is not get_theme("default")
-    data["text"] = "MUTATED"
-    assert get_theme("default").get("text") != "MUTATED"
+    data["containers"][0]["blocks"]["text"]["color"] = "MUTATED"
+    _, again = resolve_theme("default")
+    assert again["containers"][0]["blocks"]["text"]["color"] != "MUTATED"
+    assert "MUTATED" not in str(get_theme("default"))
 
 
 # ── payload completeness (both tabs, bogus configured themes) ─────────

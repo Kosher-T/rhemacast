@@ -1,0 +1,108 @@
+{
+  "schema_version": 2,
+  "name": "fullscreen_v2",
+  "label": "Fullscreen (v2 reference)",
+  "description": "The SAFE_THEME reference: 60,40/1800x1000 transparent container, 80px autosizing verse, gold reference below, lime translation to its right.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "transparent",
+    "fit": "contain"
+  },
+  "containers": [
+    {
+      "id": "main",
+      "label": "Verse",
+      "kind": "scripture",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 60, "y": 40 },
+      "width": 1800,
+      "height": 1000,
+      "min_width": 1800,
+      "max_width": 1800,
+      "min_height": 0,
+      "max_height": null,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": 0,
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "opacity": 1.0,
+      "overflow": "hidden",
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 0,
+          "padding": 0
+        },
+        "text": {
+          "visible": true,
+          "autosize": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": 80,
+          "min_size": 60,
+          "max_size": 96,
+          "weight": 700,
+          "line_height": 1.08,
+          "letter_spacing": "-0.02em",
+          "word_spacing": 0,
+          "text_shadow": "none",
+          "text_outline": "none",
+          "text_transform": "none",
+          "text_align": "center",
+          "font_style": "normal",
+          "text_decoration": "none",
+          "opacity": 1.0,
+          "max_lines": null,
+          "direction": "ltr",
+          "margin_top": 0,
+          "margin_right": 0,
+          "margin_bottom": 24,
+          "margin_left": 0,
+          "padding": 0
+        },
+        "reference": {
+          "visible": true,
+          "position": "below_verse",
+          "color": "#D4AF37",
+          "font_family": "'Nunito', sans-serif",
+          "size": 48,
+          "weight": 800,
+          "line_height": 1.2,
+          "letter_spacing": "0.1em",
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "text_shadow": "none",
+          "text_outline": "none",
+          "margin_top": 0,
+          "margin_right": 0,
+          "margin_bottom": 0,
+          "margin_left": 0
+        },
+        "translation": {
+          "visible": true,
+          "position": "right_of_reference",
+          "color": "#AAFF00",
+          "margin_left": 8
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "color": "#D4AF37",
+          "font_family": "'Nunito', sans-serif",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1
+        }
+      }
+    }
+  ]
+}

@@ -1517,11 +1517,19 @@ class DisplayView(QWebEngineView):
         """Apply a theme without changing the displayed content."""
         if not self._page_ready:
             return
+        # Phase-2 bridge: the embedded renderer is still the v1 engine, so a
+        # resolved v2 theme is projected before it crosses into JS.
+        from core.theme_compat import project_legacy
+        theme_data = project_legacy(theme_data)
         js = "applyTheme(" + json.dumps(theme_data) + ")"
         self.page().runJavaScript(js)
 
     def _run_payload(self, payload: dict, callback=None):
         """Execute handlePayload() with the given payload in the page."""
+        # Phase-2 bridge: the embedded renderer is still the v1 engine.
+        if isinstance(payload, dict) and isinstance(payload.get("theme_data"), dict):
+            from core.theme_compat import project_legacy
+            payload = dict(payload, theme_data=project_legacy(payload["theme_data"]))
         if not self._page_ready:
             self._pending_payload = payload
             self._pending_cb = callback

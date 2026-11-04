@@ -105,8 +105,8 @@ class SlideCard(QFrame):
         sp.setHeightForWidth(True)
         self.setSizePolicy(sp)
 
-        from core.theme_loader import theme_container
-        t = theme_container(theme).get("text", {}) or theme.get("text", {})
+        from core.theme_loader import container_block
+        t = container_block(theme, "text")
         text_color = t.get("color", "#ffffff")
         font_family = t.get("font_family", "'Nunito', sans-serif")
         try:

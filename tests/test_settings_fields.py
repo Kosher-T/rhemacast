@@ -111,7 +111,9 @@ def test_arrow_files_are_distinct_per_state_and_scale(qapp):
     for name, path in paths.items():
         image = QImage(path)
         assert not image.isNull(), (name, path)
-        expected = 24 if name.endswith("@2x") else 12
+        expected = tokens.ARROW_SIZE
+        if name.endswith("@2x"):
+            expected *= 2
         assert (image.width(), image.height()) == (expected, expected), name
         assert os.path.getsize(path) > 0, name
         digests[name] = hashlib.sha256(open(path, "rb").read()).hexdigest()
@@ -303,6 +305,20 @@ def test_qss_is_scoped_and_every_arrow_rule_is_positioned(helper, prefix):
         up_image = re.search(r"url\(([^)]+)\)", up).group(1)
         down_image = re.search(r"url\(([^)]+)\)", down).group(1)
         assert up_image != down_image
+
+
+def test_field_geometry_comes_from_tokens(qapp):
+    """The QSS must not restate a pixel size the tokens already own."""
+    for helper in (field_chrome.combo_qss, field_chrome.spin_qss):
+        qss = helper("sizeProbe")
+        for selector, body in _blocks(qss):
+            if "-arrow" not in selector:
+                continue
+            assert f"width: {tokens.ARROW_SIZE}px" in body, selector
+            assert f"height: {tokens.ARROW_SIZE}px" in body, selector
+
+    spin = field_chrome.spin_qss("sizeProbe")
+    assert f"min-width: {tokens.SPIN_MIN_WIDTH}px" in spin
 
 
 def test_qt_stylesheet_uses_plain_absolute_paths():

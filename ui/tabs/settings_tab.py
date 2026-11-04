@@ -16,10 +16,10 @@ from ui import field_chrome
 from ui.widgets.hotkey_editor import HotkeyEditor
 
 from ui.styles import (
-    SLATE_950, SLATE_800, SLATE_700, SLATE_600, SLATE_500, SLATE_400,
+    SLATE_950, SLATE_700, SLATE_600, SLATE_500, SLATE_400,
     SLATE_300, WHITE, BLUE_500, CYAN_400, EMERALD_500, RED_500,
     AMBER_500, BORDER_SUBTLE,
-    ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG, SELECTION_BORDER,
+    ACCENT, ACCENT_SOFT, ACCENT_BORDER, SELECTION_BG,
     TEXT_SELECTION,
     TEXT_FAINT,
     ACCENT_TEXT,
@@ -80,67 +80,6 @@ ACTIVE_SIDEBAR_STYLE = f"""
         font-size: 13px;
         font-weight: 700;
     }}
-"""
-
-COMBO_STYLE = f"""
-    QComboBox {{
-        background: rgba(0, 0, 0, 0.4);
-        color: {SLATE_300};
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-        padding: 8px 12px;
-        font-size: 13px;
-        min-width: 140px;
-        max-width: 220px;
-    }}
-    QComboBox:hover {{
-        border-color: {SELECTION_BORDER};
-    }}
-    QComboBox:focus {{
-        border-color: {BLUE_500};
-    }}
-    QComboBox::drop-down {{
-        border: none;
-        width: 24px;
-    }}
-    QComboBox::down-arrow {{
-        image: none;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {SLATE_400};
-        margin-right: 8px;
-    }}
-    QComboBox QAbstractItemView {{
-        background: {SLATE_800};
-        color: {WHITE};
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-        selection-background-color: {TEXT_SELECTION};
-        padding: 4px;
-    }}
-"""
-
-SPIN_STYLE = f"""
-    QSpinBox {{
-        background: rgba(0, 0, 0, 0.4);
-        color: {SLATE_300};
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-        padding: 6px 12px;
-        font-size: 13px;
-        min-width: 80px;
-    }}
-    QSpinBox:focus {{ border-color: {BLUE_500}; }}
-    QSpinBox::up-button, QSpinBox::down-button {{
-        background: rgba(255, 255, 255, 0.1);
-        border: none;
-        width: 20px;
-    }}
-    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-        background: rgba(255, 255, 255, 0.2);
-    }}
-    QSpinBox::up-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {SLATE_400}; }}
-    QSpinBox::down-arrow {{ border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid {SLATE_400}; }}
 """
 
 SLIDER_STYLE = f"""

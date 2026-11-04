@@ -55,10 +55,9 @@ SETTINGS_FIELD_SPIN = "settingsFieldSpin"
 SETTINGS_COMPACT_COMBO = "settingsCompactCombo"
 
 # ─── Generated chevrons ──────────────────────────────────────────────────────
-# One 12×12 canvas with an 8×5 glyph centred in it. @2x is drawn at twice
-# every dimension rather than upscaled, so the round caps stay clean.
+# One tokens.ARROW_SIZE canvas with an 8×5 glyph centred in it. @2x is drawn
+# at twice every dimension rather than upscaled, so the round caps stay clean.
 _ARROW_VERSION = 1
-_ARROW_SIZE = 12
 _ARROW_GLYPH_WIDTH = 8.0
 _ARROW_GLYPH_HEIGHT = 5.0
 _ARROW_PEN_WIDTH = 1.5
@@ -78,7 +77,7 @@ def _cache_key() -> str:
     """Short stable hash of everything that changes the pixels."""
     payload = "|".join((
         str(_ARROW_VERSION),
-        str(_ARROW_SIZE),
+        str(tokens.ARROW_SIZE),
         repr(_ARROW_GLYPH_WIDTH),
         repr(_ARROW_GLYPH_HEIGHT),
         repr(_ARROW_PEN_WIDTH),
@@ -109,7 +108,7 @@ def _draw_chevron(image: QImage, direction: str, color: str, scale: int) -> None
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
 
-        centre = _ARROW_SIZE * scale / 2.0
+        centre = tokens.ARROW_SIZE * scale / 2.0
         half_width = _ARROW_GLYPH_WIDTH * scale / 2.0
         half_height = _ARROW_GLYPH_HEIGHT * scale / 2.0
         if direction == "down":
@@ -130,7 +129,7 @@ def _draw_chevron(image: QImage, direction: str, color: str, scale: int) -> None
 
 
 def _write_chevron(path: Path, direction: str, color: str, scale: int) -> None:
-    size = _ARROW_SIZE * scale
+    size = tokens.ARROW_SIZE * scale
     image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
     _draw_chevron(image, direction, color, scale)
 
@@ -286,22 +285,22 @@ def combo_qss(object_name: str,
         QComboBox#{object_name}::down-arrow {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-normal"])};
         }}
         QComboBox#{object_name}::down-arrow:hover {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-hover"])};
         }}
         QComboBox#{object_name}::down-arrow:disabled {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-disabled"])};
         }}
     """
@@ -332,7 +331,7 @@ def spin_qss(object_name: str,
             font-size: {tokens.TYPE_BODY}px;
             min-height: {_content_height(tokens.COMBO_HEIGHT)}px;
             max-height: {_content_height(tokens.COMBO_HEIGHT)}px;
-            min-width: 80px;
+            min-width: {tokens.SPIN_MIN_WIDTH}px;
         }}
         QSpinBox#{object_name}:hover {{
             border-color: {tokens.ACCENT_BORDER};
@@ -364,43 +363,43 @@ def spin_qss(object_name: str,
         QSpinBox#{object_name}::up-arrow {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["up-normal"])};
         }}
         QSpinBox#{object_name}::down-arrow {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-normal"])};
         }}
         QSpinBox#{object_name}::up-arrow:hover {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["up-hover"])};
         }}
         QSpinBox#{object_name}::down-arrow:hover {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-hover"])};
         }}
         QSpinBox#{object_name}::up-arrow:disabled {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["up-disabled"])};
         }}
         QSpinBox#{object_name}::down-arrow:disabled {{
             subcontrol-origin: padding;
             subcontrol-position: center;
-            width: 12px;
-            height: 12px;
+            width: {tokens.ARROW_SIZE}px;
+            height: {tokens.ARROW_SIZE}px;
             image: {_url(arrows["down-disabled"])};
         }}
     """

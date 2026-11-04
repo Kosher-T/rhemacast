@@ -8,6 +8,7 @@ theme_changed(dict) on every edit.
 """
 
 import copy
+import re
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -24,6 +25,34 @@ from ui.styles import (
     SLATE_600, TEXT_SELECTION,
     ACCENT_TEXT,
 )
+
+_NUMBER_TEXT = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _length_value(text: str):
+    """Designer text -> v2 length (number for px, string for %/em/auto)."""
+    text = str(text).strip()
+    if not text:
+        return None
+    if text.endswith("%") or text.endswith("em") or text.lower() in ("auto", "inherit"):
+        return text
+    if text.endswith("px"):
+        text = text[:-2].strip()
+    if _NUMBER_TEXT.fullmatch(text):
+        number = float(text)
+        return int(number) if number.is_integer() else number
+    return text
+
+
+def _number_value(text: str, *, integer: bool = False):
+    """Designer text -> JSON number, or None when it is not numeric."""
+    raw = str(text).strip()
+    if raw.endswith("px"):
+        raw = raw[:-2].strip()
+    if not _NUMBER_TEXT.fullmatch(raw):
+        return None
+    number = float(raw)
+    return int(round(number)) if integer else (int(number) if number.is_integer() else number)
 
 
 # ─── Shared Styles ────────────────────────────────────────────────────────────
@@ -501,6 +530,7 @@ class ThemePropertiesPanel(QWidget):
         self._theme_label = "Default"
         self._source_theme: dict = {}
         self._active_container = "main"
+        self._is_v2 = False
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -740,12 +770,18 @@ class ThemePropertiesPanel(QWidget):
         self.theme_changed.emit(theme)
 
     def _collect_theme(self) -> dict:
-        """Read all widget values into a theme dict (nested containers).
+        """Read all widget values into a theme dict.
 
         Starts from the loaded source so sibling containers, top-level keys
         and unknown entries survive a round trip; only the active container
         and managed top-level keys are overwritten.
+
+        A v2 theme gets the array adapter: geometry lives in `position`,
+        padding in `blocks.body`, content blocks are merged (never replaced),
+        and no legacy flex/container-padding keys are written.
         """
+        if self._is_v2:
+            return self._collect_theme_v2()
         import copy as _copy
         theme: dict = _copy.deepcopy(self._source_theme)
         theme["name"] = self._theme_name
@@ -821,32 +857,214 @@ class ThemePropertiesPanel(QWidget):
 
         return theme
 
+    # ── v2 adapter ─────────────────────────────────────────────────────────
+
+    def _v2_container(self, theme: dict) -> dict:
+        """The active container dict inside a v2 `containers` array."""
+        containers = theme.get("containers")
+        if not isinstance(containers, list):
+            containers = []
+            theme["containers"] = containers
+        for item in containers:
+            if isinstance(item, dict) and item.get("id") == self._active_container:
+                return item
+        if containers and isinstance(containers[0], dict):
+            self._active_container = containers[0].get("id", "main")
+            return containers[0]
+        container = {"id": self._active_container}
+        containers.append(container)
+        return container
+
+    def _v2_block(self, container: dict, key: str) -> dict:
+        blocks = container.get("blocks")
+        if not isinstance(blocks, dict):
+            return {}
+        block = blocks.get(key)
+        return block if isinstance(block, dict) else {}
+
+    def _v2_blocks(self, container: dict) -> dict:
+        blocks = container.get("blocks")
+        if not isinstance(blocks, dict):
+            blocks = {}
+            container["blocks"] = blocks
+        return blocks
+
+    def _collect_theme_v2(self) -> dict:
+        theme: dict = copy.deepcopy(self._source_theme)
+        theme["name"] = self._theme_name
+        theme["label"] = self._theme_label
+        cont = self._v2_container(theme)
+        blocks = self._v2_blocks(cont)
+
+        # ── Form: geometry, padding, decoration ──
+        for key, row in self._container_rows.items():
+            value = row.get_value()
+            if key in ("flex_direction", "justify_content", "align_items"):
+                # Legacy flex keys are not v2 parameters; never write them.
+                continue
+            if key in ("x", "y"):
+                number = _number_value(value)
+                if number is None:
+                    continue
+                position = cont.get("position")
+                if not isinstance(position, dict):
+                    position = {}
+                    cont["position"] = position
+                position[key] = number
+                continue
+            if key == "padding":
+                number = _number_value(value)
+                if number is None:
+                    continue
+                body = blocks.get("body")
+                if not isinstance(body, dict):
+                    body = {}
+                    blocks["body"] = body
+                body["padding"] = number
+                for side in ("top", "right", "bottom", "left"):
+                    body[f"padding_{side}"] = number
+                continue
+            if not str(value).strip():
+                continue
+            if key in ("background", "border", "box_shadow", "backdrop_filter"):
+                # Structured values (a border object, a shadow object) are
+                # shown with `str()`; keep the original object unless the
+                # operator actually edited the row.
+                source = cont.get(key)
+                if isinstance(source, dict) and str(source) == str(value):
+                    continue
+                cont[key] = str(value)
+            elif key == "border_radius":
+                cont[key] = _length_value(value)
+            else:
+                converted = _length_value(value)
+                if converted is not None:
+                    cont[key] = converted
+
+        # ── Managed content blocks: merge, never replace ──
+        if self._element_toggles["text"].is_enabled():
+            block = blocks.get("text")
+            if not isinstance(block, dict):
+                block = {}
+            block.update({
+                "color": self._text_color.get_value(),
+                "font_family": self._text_font.get_value(),
+                "size": _length_value(self._text_size.get_value()),
+                "weight": _number_value(self._text_weight.get_value(), integer=True),
+                "line_height": _number_value(self._text_line_height.get_value()),
+                "letter_spacing": _length_value(self._text_spacing.get_value()),
+                "text_shadow": self._text_shadow.get_value(),
+                "min_size": _length_value(self._text_min_size.get_value()),
+                "max_size": _length_value(self._text_max_size.get_value()),
+                "visible": True,
+            })
+            blocks["text"] = block
+        elif isinstance(blocks.get("text"), dict):
+            blocks["text"]["visible"] = False
+
+        if self._element_toggles["reference"].is_enabled():
+            block = blocks.get("reference")
+            if not isinstance(block, dict):
+                block = {}
+            block.update({
+                "color": self._ref_color.get_value(),
+                "font_family": self._ref_font.get_value(),
+                "size": _length_value(self._ref_size.get_value()),
+                "weight": _number_value(self._ref_weight.get_value(), integer=True),
+                "text_transform": self._ref_transform.get_value(),
+                "letter_spacing": _length_value(self._ref_letter_spacing.get_value()),
+                "visible": True,
+            })
+            blocks["reference"] = block
+        elif isinstance(blocks.get("reference"), dict):
+            blocks["reference"]["visible"] = False
+
+        if self._element_toggles["translation"].is_enabled():
+            block = blocks.get("translation")
+            if not isinstance(block, dict):
+                block = {}
+            block.update({
+                "color": self._trans_color.get_value(),
+                "margin_left": _length_value(self._trans_margin.get_value()),
+                "visible": True,
+            })
+            blocks["translation"] = block
+        elif isinstance(blocks.get("translation"), dict):
+            blocks["translation"]["visible"] = False
+
+        if self._element_toggles["verse_num"].is_enabled():
+            block = blocks.get("verse_num")
+            if not isinstance(block, dict):
+                block = {}
+            block.update({
+                "color": self._vn_color.get_value(),
+                "font_family": self._vn_font.get_value(),
+                "visible": True,
+            })
+            blocks["verse_num"] = block
+        elif isinstance(blocks.get("verse_num"), dict):
+            blocks["verse_num"]["visible"] = False
+
+        return theme
+
     def load_theme(self, theme_dict: dict):
-        """Populate all widgets from a theme dict."""
+        """Populate all widgets from a theme dict (v1 or v2)."""
         self._loading = True
         theme = copy.deepcopy(theme_dict)
         self._source_theme = copy.deepcopy(theme_dict)
         self._theme_name = theme.get("name", "default")
         self._theme_label = theme.get("label", theme.get("name", "Default"))
+        from core.theme_compat import looks_v2
+        self._is_v2 = looks_v2(theme)
+
         containers = theme.get("containers")
-        if isinstance(containers, dict) and containers:
+        if self._is_v2:
+            items = [c for c in containers if isinstance(c, dict)] \
+                if isinstance(containers, list) else []
+            if items:
+                self._active_container = items[0].get("id", "main")
+                container = items[0]
+            else:
+                self._active_container = "main"
+                container = {}
+        elif isinstance(containers, dict) and containers:
             self._active_container = next(iter(containers))
+            container = containers[self._active_container]
         else:
             self._active_container = "main"
             # Legacy flat theme: treat top-level blocks as the container.
-            containers = {"main": {
+            container = {
                 k: theme.get(k, {}) for k in
                 ("container", "body", "text", "reference", "translation",
-                 "verse_num") if isinstance(theme.get(k), dict)}}
-        container = containers[self._active_container]
+                 "verse_num") if isinstance(theme.get(k), dict)}
+            if isinstance(theme.get("container"), dict):
+                container = dict(theme["container"], **container)
+
         # Geometry rows show blank (auto) when the container does not place
         # itself; styling rows fall back like the other tabs.
-        for key, row in self._container_rows.items():
-            value = container.get(key, "")
-            row.set_value("" if value == "" else str(value))
+        if self._is_v2:
+            position = container.get("position")
+            position = position if isinstance(position, dict) else {}
+            blocks = container.get("blocks")
+            blocks = blocks if isinstance(blocks, dict) else {}
+            body = blocks.get("body") if isinstance(blocks.get("body"), dict) else {}
+            for key, row in self._container_rows.items():
+                if key in ("x", "y"):
+                    value = position.get(key, "")
+                elif key == "padding":
+                    value = body.get("padding", "")
+                elif key in ("flex_direction", "justify_content", "align_items"):
+                    value = ""
+                else:
+                    value = container.get(key, "")
+                row.set_value("" if value is None else str(value))
+        else:
+            for key, row in self._container_rows.items():
+                value = container.get(key, "")
+                row.set_value("" if value == "" else str(value))
 
         # ── Text ──
-        text = container.get("text", {})
+        text = self._element_block(container, "text")
         self._text_color.set_value(text.get("color", "#ffffff"))
         self._text_font.set_value(text.get("font_family", "'Nunito', sans-serif"))
         self._text_size.set_value(text.get("size", "44px"))
@@ -858,7 +1076,7 @@ class ThemePropertiesPanel(QWidget):
         self._text_max_size.set_value(text.get("max_size", "58px"))
 
         # ── Reference ──
-        ref = container.get("reference", {})
+        ref = self._element_block(container, "reference")
         self._ref_color.set_value(ref.get("color", "#cccccc"))
         self._ref_font.set_value(ref.get("font_family", "'Nunito', sans-serif"))
         self._ref_size.set_value(ref.get("size", "34px"))
@@ -867,24 +1085,34 @@ class ThemePropertiesPanel(QWidget):
         self._ref_letter_spacing.set_value(ref.get("letter_spacing", "0.1em"))
 
         # ── Translation ──
-        trans = container.get("translation", {})
+        trans = self._element_block(container, "translation")
         self._trans_color.set_value(trans.get("color", "#999999"))
         self._trans_margin.set_value(trans.get("margin_left", "8px"))
 
         # ── Verse number ──
-        vn = container.get("verse_num", {})
+        vn = self._element_block(container, "verse_num")
         self._vn_color.set_value(vn.get("color", "#cccccc"))
         self._vn_font.set_value(vn.get("font_family", "'Nunito', sans-serif"))
 
-        # ── Element toggles (all enabled if present) ──
+        # ── Element toggles (v2: `visible`, v1: block presence) ──
         for key, toggle in self._element_toggles.items():
-            section = container.get(key, {})
-            toggle._toggle.setChecked(bool(section))
-            toggle._enabled = bool(section)
-            toggle._toggle.setStyleSheet(toggle._toggle_style(bool(section)))
+            section = self._element_block(container, key)
+            enabled = bool(section)
+            if self._is_v2 and enabled:
+                enabled = section.get("visible", True) is not False
+            toggle._toggle.setChecked(enabled)
+            toggle._enabled = enabled
+            toggle._toggle.setStyleSheet(toggle._toggle_style(enabled))
             toggle._apply_row_style()
 
         self._loading = False
+
+    def _element_block(self, container: dict, key: str) -> dict:
+        """One managed content block, v2 (`blocks`) or v1 (direct key)."""
+        if self._is_v2:
+            return self._v2_block(container, key)
+        section = container.get(key)
+        return section if isinstance(section, dict) else {}
 
     def get_theme(self) -> dict:
         """Return the current theme dict."""

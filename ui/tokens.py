@@ -140,7 +140,12 @@ COMBO_MIN_WIDTH = 140
 COMBO_MAX_WIDTH = 220
 COMBO_BUTTON_WIDTH = 24
 SPIN_BUTTON_WIDTH = 20
+SPIN_MIN_WIDTH = 80
 FIELD_BORDER_WIDTH = 1
+
+# Chevron canvas edge in CSS pixels; the @2x twin is twice this. The drawing
+# code and the QSS width/height both read this token, so they cannot drift.
+ARROW_SIZE = 12
 
 # Compact variant for the dense Database / Keywords rows. The measured
 # legacy height was 27 (12px text, 4px vertical padding, 1px border); it is

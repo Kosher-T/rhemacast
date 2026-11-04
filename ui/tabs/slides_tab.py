@@ -287,6 +287,7 @@ class SlidesTab(QWidget):
                        book: str = "", chapter: str = "",
                        verse: str = "") -> dict:
         from core.theme_loader import resolve_theme
+        from core.theme_compat import project_legacy
         output_id = output_id or self._main_output_id()
         if is_slide:
             theme_name = self._themes_by_output.get(output_id, "slides")
@@ -296,6 +297,9 @@ class SlidesTab(QWidget):
         else:
             theme_name = self._verse_themes_by_output.get(output_id, "default")
             theme_name, theme_data = resolve_theme(theme_name)
+        # Phase-2 bridge: resolved v2 -> the v1 shape the current renderer
+        # speaks. Phase 3 removes this projection.
+        theme_data = project_legacy(theme_data)
         # The citation line is the BARE reference. `ref` already carries the
         # translation prefix ("[NKJV] Genesis 1:9"), and the renderer prints
         # the translation separately — sending ref as the reference put

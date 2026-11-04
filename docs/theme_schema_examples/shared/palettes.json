@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "colors": {
+    "gold": "#D4AF37",
+    "lime": "#AAFF00",
+    "white": "#ffffff",
+    "ink": "rgba(0, 0, 0, 0.6)",
+    "ink_soft": "rgba(15, 23, 42, 0.55)"
+  }
+}

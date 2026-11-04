@@ -106,8 +106,23 @@ class ThemePreview(QWidget):
         layout.addWidget(self._ar, 1)
 
     def apply_theme(self, theme_data: dict):
-        """Apply a theme to the preview viewport."""
+        """Apply a theme to the preview viewport.
+
+        A raw v2 theme is resolved first so the preview shows exactly what a
+        broadcast would show (defaults filled, migration applied). Raw v1
+        themes pass straight through — the renderer already speaks v1.
+        """
         verse = SAMPLE_VERSES.get(self._verse_key, SAMPLE_VERSES["popup"])
+        if isinstance(theme_data, dict):
+            from core.theme_compat import looks_v2
+            if looks_v2(theme_data):
+                from core.theme_schema import normalize_theme
+                from core.theme_loader import FREEFORM, SCRIPTURE
+                kind = theme_data.get("kind")
+                if kind not in (SCRIPTURE, FREEFORM):
+                    kind = FREEFORM if isinstance(theme_data.get("slide"), dict) else SCRIPTURE
+                theme_data, _report = normalize_theme(
+                    theme_data, kind=kind, name=theme_data.get("name"))
         payload = {
             "action": "display",
             "text": verse["text"],
