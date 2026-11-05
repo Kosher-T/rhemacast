@@ -32,6 +32,25 @@ theme dict + error log naming the bad configured name. A renderer must be
 able to render any payload in isolation, with no memory of previous
 payloads.
 
+### `theme_data` v2 shape
+
+Starting with Theme Schema v2 (`schema_version: 2`), `theme_data` is a fully
+resolved dictionary populated and validated by Python before broadcast:
+
+- **`schema_version`**: integer `2`.
+- **`kind`**: `"scripture"` or `"freeform"`.
+- **`canvas`**: `{ "width": 1920, "height": 1080, "background": "...", "fit": "none"|"contain" }`.
+- **`containers`**: Array of ordered container objects. Each container defines:
+  - `id`: unique string identifier (e.g., `"main"`, `"verse"`, `"citation"`).
+  - `layer`: integer z-index order (higher draws on top).
+  - `visible`: boolean toggle.
+  - `position`: `{ "anchor": "...", "x": ..., "y": ... }` where anchor is explicit (`top_left`, etc.) or keyword (`center`, `top`, `bottom`, `left`, `right`, `fill`).
+  - Form/decoration: `width`, `height`, `min_width`, `max_width`, `min_height`, `max_height`, `background`, `border`, `border_radius`, `box_shadow`, `backdrop_filter`, `opacity`, `overflow`.
+  - `animation`: slot mapping (`entry`, `transition.in`, `transition.out`, `exit`).
+  - `blocks`: dictionary of content blocks (`body`, `text`, `reference`, `translation`, `verse_num` for scripture; `body`, `title`, `text` for freeform).
+- **`animations`**: Dictionary of resolved animation definitions referenced by container animation slots.
+- **Shared references**: All shared names (`{ "shared": "<name>" }`, `@color`) are resolved to concrete values prior to broadcast. Renderers receive self-contained payloads with zero lookup dependencies.
+
 ## Renderer three-step (all renderers, all kinds, no exceptions)
 
 ```

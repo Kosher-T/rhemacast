@@ -1,0 +1,123 @@
+{
+  "schema_version": 2,
+  "animations": {
+    "fade_in": {
+      "type": "fade_in",
+      "label": "Fade In",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "fade_out": {
+      "type": "fade_out",
+      "label": "Fade Out",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "fade_up": {
+      "type": "fade_up",
+      "label": "Fade Up",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "fade_down": {
+      "type": "fade_down",
+      "label": "Fade Down",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "scale_up": {
+      "type": "scale_up",
+      "label": "Scale Up",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "scale_down": {
+      "type": "scale_down",
+      "label": "Scale Down",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "slide_up": {
+      "type": "slide_up",
+      "label": "Slide Up",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "slide_down": {
+      "type": "slide_down",
+      "label": "Slide Down",
+      "duration_ms": 600,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center"
+    },
+    "typewriter": {
+      "type": "typewriter",
+      "label": "Typewriter",
+      "duration_ms": 900,
+      "delay_ms": 0,
+      "easing": "linear",
+      "reveal": "char",
+      "cursor": {
+        "char": "▌",
+        "color": "currentColor",
+        "blink_ms": 500,
+        "hide_after_ms": 600
+      }
+    },
+    "verse_rise": {
+      "type": "custom",
+      "label": "Verse rise",
+      "duration_ms": 700,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": 0, "translate_y": 36, "scale": 0.98, "blur": 6 },
+        { "at": 70, "opacity": 0.85, "translate_y": 6, "scale": 1.0, "blur": 0 },
+        { "at": 100, "opacity": "base", "translate_y": 0, "scale": 1, "blur": 0 }
+      ]
+    },
+    "gentle_out": {
+      "type": "custom",
+      "label": "Gentle out",
+      "duration_ms": 400,
+      "delay_ms": 0,
+      "easing": "ease-in",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": "base", "translate_y": 0, "blur": 0 },
+        { "at": 100, "opacity": 0, "translate_y": 12, "blur": 4 }
+      ]
+    },
+    "lyric_typewriter": {
+      "type": "typewriter",
+      "label": "Lyric typewriter",
+      "duration_ms": 1400,
+      "delay_ms": 0,
+      "easing": "linear",
+      "reveal": "char",
+      "cursor": {
+        "char": "▌",
+        "color": "@gold",
+        "blink_ms": 500,
+        "hide_after_ms": 600
+      }
+    }
+  }
+}
+

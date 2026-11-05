@@ -76,13 +76,26 @@ async function __drive(cases) {
     // Content blocks live in the active container; the flat top level is
     // only a fallback for hand-written themes.
     let textBlock = theme.text;
-    const cnames = theme.containers && Object.keys(theme.containers);
-    if (cnames && cnames.length) {
-      const cont = Object.assign({}, theme.containers[cnames[0]]);
-      theme.containers = Object.assign({}, theme.containers);
-      theme.containers[cnames[0]] = cont;
-      cont.text = Object.assign({}, cont.text);
-      textBlock = cont.text;
+    if (Array.isArray(theme.containers) && theme.containers.length) {
+      const cont = Object.assign({}, theme.containers[0]);
+      theme.containers = [cont];
+      if (cont.blocks && cont.blocks.text) {
+        cont.blocks = Object.assign({}, cont.blocks);
+        cont.blocks.text = Object.assign({}, cont.blocks.text);
+        textBlock = cont.blocks.text;
+      } else if (cont.text) {
+        cont.text = Object.assign({}, cont.text);
+        textBlock = cont.text;
+      }
+    } else {
+      const cnames = theme.containers && Object.keys(theme.containers);
+      if (cnames && cnames.length) {
+        const cont = Object.assign({}, theme.containers[cnames[0]]);
+        theme.containers = Object.assign({}, theme.containers);
+        theme.containers[cnames[0]] = cont;
+        cont.text = Object.assign({}, cont.text);
+        textBlock = cont.text;
+      }
     }
     delete textBlock.text_outline;
     delete textBlock.text_shadow;

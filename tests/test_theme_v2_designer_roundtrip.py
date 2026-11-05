@@ -310,8 +310,12 @@ def test_a_disabled_block_still_resolves_without_warnings(qapp):
 
 
 def test_a_v1_theme_round_trips_as_v1(qapp):
-    path = Path(__file__).resolve().parent.parent / "themes" / "scripture" / "default.json"
-    source = json.loads(path.read_text(encoding="utf-8"))
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "v1_shipped_themes.json"
+    if fixture_path.exists():
+        source = json.loads(fixture_path.read_text(encoding="utf-8"))["default"]
+    else:
+        path = Path(__file__).resolve().parent.parent / "themes" / "scripture" / "default.json"
+        source = json.loads(path.read_text(encoding="utf-8"))
     panel = _panel(source)
     assert panel._is_v2 is False
 

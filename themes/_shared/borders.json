@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "borders": {
+    "gold_frame": {
+      "width": 2,
+      "style": "solid",
+      "color": "@gold",
+      "radius": 18
+    },
+    "gold_frame_heavy": {
+      "width": 4,
+      "style": "double",
+      "color": "@gold",
+      "radius": 18
+    },
+    "hairline": {
+      "width": 1,
+      "style": "solid",
+      "color": "rgba(255, 255, 255, 0.18)",
+      "radius": 12
+    }
+  }
+}
+

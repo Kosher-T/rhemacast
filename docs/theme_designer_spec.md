@@ -38,12 +38,43 @@
 
 Every visual element lives inside its own **container** (a `div` in the display HTML). Containers are the unit of layout — they hold position, dimensions, and background independently.
 
+### Schema v2 Array Containers
+In Theme Schema v2 (`schema_version: 2`, see `docs/theme_schema_v2.md`), `containers` is an ordered array of container objects:
+```json
+"containers": [
+  {
+    "id": "main",
+    "layer": 10,
+    "visible": true,
+    "position": { "anchor": "top_left", "x": 60, "y": 40 },
+    "width": 1800,
+    "height": 1000,
+    "blocks": { ... }
+  }
+]
+```
+The Theme Designer currently targets the primary container (`main` or first container in the array) while preserving the full array structure.
+
+### Round-Trip Guarantees
+The Theme Designer guarantees lossless editing of v2 themes:
+- Unknown, advanced, or unsupported keys (such as `layer`, secondary containers, `canvas.fit`, shared references, and custom animation keyframes) are preserved across load → edit → save cycles.
+- When saving, `_merge_v2_designer_save` merges GUI edits into the active container while leaving secondary containers and shared bindings untouched.
+
+### What the Designer Cannot Edit Yet (Cannot-Edit List)
+The current Designer UI is scheduled for a future dedicated revamp and currently does **not** expose controls for:
+1. **Multi-container authoring**: Adding, removing, or re-ordering containers in the array beyond the primary container.
+2. **Layer reordering**: Setting container `layer` / z-index.
+3. **Shared definitions**: Selecting or authoring `{ "shared": "name" }` borders/shadows or `@palette` color references (they are preserved on save if present).
+4. **Custom keyframe editor**: Editing the raw `keyframes: [...]` array of custom animations.
+5. **Positioning keywords**: Choosing semantic anchors (`center`, `fill`, `top`, `bottom`) instead of numeric corner coordinates.
+6. **Block repositioning across containers**: Moving reference or translation blocks into separate independent containers.
+
 ### Container Properties
 Each container has:
-- Position (x, y offsets from parent)
+- Position (x, y offsets from canvas anchor)
 - Dimensions (width, height — **fixed, never flex**)
 - Background, border, border-radius, backdrop-filter, box-shadow
-- Padding
+- Padding (content inset via `body.padding`)
 
 ### Transform Controls
 Containers are directly manipulable in the preview viewport:

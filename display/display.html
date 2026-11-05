@@ -16,20 +16,22 @@
     </style>
 </head>
 <body>
-    <div id="container" class="hidden" aria-live="polite" aria-atomic="true" role="status">
-        <div id="verse-content">
-            <h1 id="verse-text" aria-label="Verse text">In the beginning God created the heaven and the earth.</h1>
-            <p id="verse-ref"><span id="verse-ref-text" aria-label="Verse reference">Genesis 1:1</span> <span id="verse-ref-translation" aria-label="Translation">KJV</span></p>
-        </div>
-        <!-- Individual containers for absolute positioning (used when theme has containers section) -->
-        <div id="ct-text" class="rc-container" data-element="text">
-            <h1 id="verse-text-abs" aria-label="Verse text"></h1>
-        </div>
-        <div id="ct-reference" class="rc-container" data-element="reference">
-            <span id="verse-ref-text-abs" aria-label="Verse reference"></span>
-        </div>
-        <div id="ct-translation" class="rc-container" data-element="translation">
-            <span id="verse-ref-translation-abs" aria-label="Translation"></span>
+    <div id="stage">
+        <div id="container" class="hidden" aria-live="polite" aria-atomic="true" role="status">
+            <div id="verse-content">
+                <h1 id="verse-text" aria-label="Verse text">In the beginning God created the heaven and the earth.</h1>
+                <p id="verse-ref"><span id="verse-ref-text" aria-label="Verse reference">Genesis 1:1</span> <span id="verse-ref-translation" aria-label="Translation">KJV</span></p>
+            </div>
+            <!-- Individual containers for absolute positioning (used when theme has containers section) -->
+            <div id="ct-text" class="rc-container" data-element="text" style="display:none;">
+                <h1 id="verse-text-abs" aria-label="Verse text"></h1>
+            </div>
+            <div id="ct-reference" class="rc-container" data-element="reference" style="display:none;">
+                <span id="verse-ref-text-abs" aria-label="Verse reference"></span>
+            </div>
+            <div id="ct-translation" class="rc-container" data-element="translation" style="display:none;">
+                <span id="verse-ref-translation-abs" aria-label="Translation"></span>
+            </div>
         </div>
     </div>
     <script src="display.js"></script>

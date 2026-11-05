@@ -105,6 +105,13 @@ Conversion must run **only post-theme, post-layout, post-unhide**:
 
 ## Contracts
 
+### Explicit Theme Schema v2 Parameter
+Starting with Theme Schema v2 (`docs/theme_schema_v2.md`), `text_outline` is an **explicit first-class parameter** available on all content blocks (`text`, `reference`, `translation`, `verse_num`, `title`):
+- Format: `"<width>px <color>"` (e.g. `"6px #000000"`, `"4px @gold"`), or `"none"`.
+- Range: `1px` to `12px` (clamped to `OUTLINE_MAX_PX` in `core/constants.py`).
+- Precedence: When `text_outline` is defined on a block (or deck slide format), it triggers outward SVG stroke rendering.
+- V1 Migration: The schema migrator (`core/theme_migrate.py`) inspects legacy v1 `text_shadow` values. If a theme used a pure 4-way or 8-way ring of zero-blur shadows (e.g. `-2px -2px 0 #000, 2px -2px ...`), it is automatically upgraded to an explicit `text_outline: "Npx #color"`. Mixed shadows (ring + drop shadow with blur) keep the drop shadow in `text_shadow` while synthesizing the outline.
+
 - Stored value: `"Npx #rrggbb"` (deck format line, inline run, theme
   `text_outline`), legacy bare `"#rrggbb"` (= 1px), `"none"`/`"off"` for an
   explicit off that beats an inherited outline. Case-insensitive everywhere

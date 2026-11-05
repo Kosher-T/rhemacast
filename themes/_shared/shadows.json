@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "shadows": {
+    "soft": {
+      "x": 0,
+      "y": 24,
+      "blur": 48,
+      "spread": -12,
+      "color": "rgba(0, 0, 0, 0.55)"
+    },
+    "ring": {
+      "x": 0,
+      "y": 0,
+      "blur": 0,
+      "spread": 1,
+      "color": "rgba(255, 255, 255, 0.08)",
+      "inset": true
+    }
+  }
+}
+

@@ -51,43 +51,65 @@ All communication uses `QWebEnginePage.runJavaScript()` (Python → JS) and `QWe
 
 ---
 
-## 3. JSON Schema (Extended Theme Format)
+## 3. JSON Schema & Theme Formats
 
-The current theme schema (`themes/default.json`) defines 4 groups: `container`, `text`, `reference`, `translation`. The designer extends this with **layout positioning** and **element visibility**, while remaining backward-compatible.
+> [!NOTE]
+> The normative, comprehensive theme schema specification is defined in **`docs/theme_schema_v2.md`**. All new themes use Schema Version 2.
+
+### Schema Version 2 (Current Normative Format)
+In Schema v2 (`schema_version: 2`), themes define a canvas and an array of containers. Each container holds its own form/position properties and a dictionary of content `blocks`:
 
 ```json
 {
+  "schema_version": 2,
   "name": "my_theme",
   "label": "My Custom Theme",
-  "description": "User-created theme",
-  "author": "Operator",
-  "version": 2,
-
+  "kind": "scripture",
   "canvas": {
     "width": 1920,
     "height": 1080,
-    "background": "transparent"
+    "background": "transparent",
+    "fit": "contain"
   },
+  "containers": [
+    {
+      "id": "main",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 60, "y": 40 },
+      "width": 1800,
+      "height": 1000,
+      "background": "transparent",
+      "border": "none",
+      "border_radius": 0,
+      "box_shadow": "none",
+      "blocks": {
+        "body": { "valign": "center", "padding": 0 },
+        "text": { "color": "#ffffff", "size": 80, "autosize": true },
+        "reference": { "color": "@gold", "size": 48 },
+        "translation": { "color": "@lime" },
+        "verse_num": { "mode": "inline", "color": "@gold" }
+      }
+    }
+  ]
+}
+```
 
+### Legacy Format (v1 / Pre-v2 — Historical Reference)
+Earlier iterations of RhemaCast used flat top-level blocks (`container`, `text`, `reference`, `translation`) or a dictionary of containers. The Python loader (`core/theme_migrate.py`) automatically and losslessly migrates these v1 files to Schema v2 in memory upon load:
+
+```json
+{
+  "name": "my_theme_legacy",
   "container": {
     "background": "rgba(15, 23, 42, 0.6)",
     "border": "1px solid rgba(255, 255, 255, 0.1)",
-    "border_radius": "24px",
-    "box_shadow": "0 25px 50px -12px rgba(0,0,0,0.5)",
-    "backdrop_filter": "blur(16px)",
     "padding": "40px",
-    "max_width": "80%",
-    "min_width": "60%",
-    "x": 960, "y": 920,
-    "anchor": "bottom-center",
-    "visible": true
+    "x": 60, "y": 40
   },
-
-  "text": {
-    "color": "#f8fafc",
-    "font_family": "Inter",
-    "size": "2.5rem",
-    "weight": 800,
+  "text": { ... }
+}
+```
     "line_height": "1.4",
     "text_shadow": "0 4px 12px rgba(0,0,0,0.4)",
     "letter_spacing": "-0.02em",

@@ -566,3 +566,301 @@ console.log(JSON.stringify([decorated, struck, plain]));
         assert struck["ouW"] == 0 and struck["ouC"] == "", (renderer, struck)
         assert plain["deco"] == "none", (renderer, plain)
         assert plain["shadow"] == "none", (renderer, plain)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_position_anchors_and_keywords(renderer):
+    """v2 positioning computes exact left/top coordinates matching spec."""
+    body = """
+const cases = [
+  { anchor: "top_left", x: 10, y: 20 },
+  { anchor: "top_right", x: 15, y: 25 },
+  { anchor: "bottom_left", x: 30, y: 40 },
+  { anchor: "bottom_right", x: 35, y: 45 },
+  { anchor: "center", x: 0, y: 0 },
+  { anchor: "center", x: 10, y: -10 },
+  { anchor: "left", x: 50 },
+  { anchor: "right", x: 50 },
+  { anchor: "top", y: 60 },
+  { anchor: "bottom", y: 70 },
+  { anchor: "fill" },
+];
+const W = 1920, H = 1080, w = 600, h = 300;
+const results = cases.map(c => _computePosition(c, w, h, W, H));
+console.log(JSON.stringify(results));
+"""
+    results = run(renderer, body)
+    assert results[0] == {"left": 10, "top": 20}
+    assert results[1] == {"left": 1305, "top": 25}
+    assert results[2] == {"left": 30, "top": 740}
+    assert results[3] == {"left": 1285, "top": 735}
+    assert results[4] == {"left": 660, "top": 390}
+    assert results[5] == {"left": 670, "top": 380}
+    assert results[6] == {"left": 50, "top": 390}
+    assert results[7] == {"left": 1270, "top": 390}
+    assert results[8] == {"left": 660, "top": 60}
+    assert results[9] == {"left": 660, "top": 710}
+    assert results[10] == {"left": 0, "top": 0, "width": 1920, "height": 1080}
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_percentage_math(renderer):
+    """Percentages resolve against canvas width/height (1920x1080)."""
+    body = """
+const res = [
+  _resolveLength("10%", 1920),
+  _resolveLength("50%", 1080),
+  _resolveLength("100px", 1920),
+  _resolveLength(250, 1080),
+];
+console.log(JSON.stringify(res));
+"""
+    res = run(renderer, body)
+    assert res == [192.0, 540.0, 100.0, 250.0]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_theme_container_and_blocks_resolution(renderer):
+    """themeContainer and _getContainerBlocks resolve both v1 and v2 shapes."""
+    body = """
+const v2Theme = {
+  schema_version: 2,
+  containers: [
+    {
+      id: "verse",
+      layer: 10,
+      visible: true,
+      position: { anchor: "top_left", x: 60, y: 40 },
+      blocks: {
+        text: { color: "#ffffff", size: 48 },
+        body: { valign: "center", padding_top: 20 },
+      }
+    },
+    {
+      id: "citation",
+      layer: 20,
+      visible: true,
+      blocks: {
+        reference: { color: "#gold", position: "below_verse" },
+        translation: { color: "#lime", position: "left_of_reference" }
+      }
+    }
+  ]
+};
+const contVerse = themeContainer(v2Theme, "verse");
+const blocksVerse = _getContainerBlocks(contVerse);
+const contCit = themeContainer(v2Theme, "citation");
+const blocksCit = _getContainerBlocks(contCit);
+
+console.log(JSON.stringify({
+  verseId: contVerse.id,
+  verseColor: blocksVerse.text.color,
+  versePaddingTop: blocksVerse.body.padding_top,
+  citRefColor: blocksCit.reference.color,
+  citTransPos: blocksCit.translation.position,
+}));
+"""
+    res = run(renderer, body)
+    assert res["verseId"] == "verse"
+    assert res["verseColor"] == "#ffffff"
+    assert res["versePaddingTop"] == 20
+    assert res["citRefColor"] == "#gold"
+    assert res["citTransPos"] == "left_of_reference"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_reference_and_translation_placement(renderer):
+    """Reference above/below verse and translation relative positions reorder DOM."""
+    body = """
+const themeAbove = {
+  schema_version: 2,
+  containers: [{
+    id: "main",
+    blocks: {
+      reference: { position: "above_verse" },
+      translation: { position: "left_of_reference" }
+    }
+  }]
+};
+applyTheme(themeAbove);
+const vt = document.getElementById("verse-text");
+const vr = document.getElementById("verse-ref");
+const vrt = document.getElementById("verse-ref-text");
+const vrtl = document.getElementById("verse-ref-translation");
+const vc = document.getElementById("verse-content");
+const aboveRes = {
+  refAboveVerse: vc.children.indexOf(vr) < vc.children.indexOf(vt),
+  transLeftOfRef: vr.children.indexOf(vrtl) < vr.children.indexOf(vrt)
+};
+
+const themeBelow = {
+  schema_version: 2,
+  containers: [{
+    id: "main",
+    blocks: {
+      reference: { position: "below_verse" },
+      translation: { position: "right_of_reference" }
+    }
+  }]
+};
+applyTheme(themeBelow);
+const belowRes = {
+  refAboveVerse: vc.children.indexOf(vr) < vc.children.indexOf(vt),
+  transLeftOfRef: vr.children.indexOf(vrtl) < vr.children.indexOf(vrt)
+};
+console.log(JSON.stringify({ above: aboveRes, below: belowRes }));
+"""
+    res = run(renderer, body)
+    assert res["above"]["refAboveVerse"] is True
+    assert res["above"]["transLeftOfRef"] is True
+    assert res["below"]["refAboveVerse"] is False
+    assert res["below"]["transLeftOfRef"] is False
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_block_visibility_toggles(renderer):
+    """visible: false hides the corresponding block element."""
+    body = """
+const theme = {
+  schema_version: 2,
+  containers: [{
+    id: "main",
+    blocks: {
+      text: { visible: false },
+      reference: { visible: false },
+      translation: { visible: false }
+    }
+  }]
+};
+applyTheme(theme);
+const vt = document.getElementById("verse-text");
+const vrt = document.getElementById("verse-ref-text");
+const vrtl = document.getElementById("verse-ref-translation");
+console.log(JSON.stringify({
+  vtDisplay: vt.style.display,
+  vrtDisplay: vrt.style.display,
+  vrtlDisplay: vrtl.style.display
+}));
+"""
+    res = run(renderer, body)
+    assert res["vtDisplay"] == "none"
+    assert res["vrtDisplay"] == "none"
+    assert res["vrtlDisplay"] == "none"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_multi_container_payload_rendering(renderer):
+    """A two-container scripture theme renders separate dynamic containers with layers and positions."""
+    body = """
+const payload = {
+  action: "display",
+  text: "For God so loved the world",
+  reference: "John 3:16",
+  translation: "NKJV",
+  theme_data: {
+    schema_version: 2,
+    canvas: { width: 1920, height: 1080, fit: "contain" },
+    containers: [
+      {
+        id: "verse",
+        layer: 10,
+        position: { anchor: "top_left", x: 60, y: 40 },
+        width: 1800,
+        height: 820,
+        blocks: {
+          text: { color: "#ffffff", size: 60 },
+          body: { padding_top: 24, gap: 10 }
+        }
+      },
+      {
+        id: "citation",
+        layer: 20,
+        position: { anchor: "bottom_left", x: 60, y: 48 },
+        width: 1800,
+        height: 150,
+        blocks: {
+          reference: { color: "#gold", position: "below_verse" },
+          translation: { color: "#lime", position: "right_of_reference" }
+        }
+      }
+    ]
+  }
+};
+handlePayload(payload);
+const vCont = document.getElementById("rc-cont-verse");
+const cCont = document.getElementById("rc-cont-citation");
+console.log(JSON.stringify({
+  vZIndex: vCont ? vCont.style.zIndex : null,
+  cZIndex: cCont ? cCont.style.zIndex : null,
+  vTop: vCont ? vCont.style.top : null,
+  cTop: cCont ? cCont.style.top : null,
+  vWidth: vCont ? vCont.style.width : null,
+  vHeight: vCont ? vCont.style.height : null,
+}));
+"""
+    res = run(renderer, body)
+    assert res["vZIndex"] == 10
+    assert res["cZIndex"] == 20
+    assert res["vTop"] == "40px"
+    assert res["cTop"] == "882px"
+    assert res["vWidth"] == "1800px"
+    assert res["vHeight"] == "820px"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_canvas_fit_scaling(renderer):
+    """canvas.fit='contain' applies transform scaling and centering to stage."""
+    body = """
+const theme = {
+  schema_version: 2,
+  canvas: { width: 1920, height: 1080, fit: "contain" },
+  containers: [{ id: "main" }]
+};
+window.innerWidth = 960;
+window.innerHeight = 540;
+applyTheme(theme);
+const stg = document.getElementById("stage");
+console.log(JSON.stringify({
+  transform: stg.style.transform,
+  width: stg.style.width,
+  height: stg.style.height
+}));
+"""
+    res = run(renderer, body)
+    assert "scale(0.5)" in res["transform"]
+    assert res["width"] == "1920px"
+    assert res["height"] == "1080px"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_animation_slot_resolution_and_keyframes(renderer):
+    """Slot resolution maps definitions and overrides correctly."""
+    body = """
+const registry = {
+  fade_up: { type: "fade_up", duration_ms: 600, easing: "ease-out" },
+  custom_rise: {
+    type: "custom",
+    duration_ms: 700,
+    easing: "spring",
+    keyframes: [
+      { at: 0, opacity: 0, translate_y: 20 },
+      { at: 100, opacity: 1, translate_y: 0 }
+    ]
+  }
+};
+const res1 = _resolveSlotDef("fade_up", registry);
+const res2 = _resolveSlotDef({ use: "fade_up", duration_ms: 850 }, registry);
+const res3 = _resolveSlotDef({ type: "scale_up", duration_ms: 500 }, registry);
+const res4 = _resolveSlotDef("none", registry);
+console.log(JSON.stringify([res1, res2, res3, res4]));
+"""
+    res = run(renderer, body)
+    assert res[0]["type"] == "fade_up"
+    assert res[0]["duration_ms"] == 600
+    assert res[1]["type"] == "fade_up"
+    assert res[1]["duration_ms"] == 850
+    assert res[2]["type"] == "scale_up"
+    assert res[2]["duration_ms"] == 500
+    assert res[3] is None
+
+

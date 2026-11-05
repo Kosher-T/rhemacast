@@ -127,137 +127,73 @@ The Operator UI continuously polls the `len(connected_clients)` value from the W
 
 ## Component 2: The HTML/CSS/JS Renderer
 
-A static HTML file acts as the WebSocket client. It receives JSON payloads and updates the DOM to render the scripture text. All visual styling is handled natively by CSS.
+The display client (`display/display.html`, `display/themes.css`, and `display/display.js`) acts as the WebSocket client. It receives JSON payloads, resolves themes, and updates the DOM. The operator preview widget (`ui/widgets/display_view.py`) embeds the identical engine.
 
-### Base HTML Structure
+### Stage Root & Canvas Scaling
+
+The display layout operates on a fixed 1920×1080 design canvas inside a root stage wrapper:
 
 ```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RhemaCast — Scripture Display</title>
   <link rel="stylesheet" href="themes.css">
 </head>
 <body>
-  <div id="scripture-container" class="hidden">
-    <p id="verse-text"></p>
-    <p id="verse-ref"></p>
-    <p id="verse-translation"></p>
+  <div id="stage">
+    <!-- Single-container canonical hierarchy -->
+    <div id="container">
+      <div id="verse-content">
+        <div id="verse-text"></div>
+        <div id="verse-ref">
+          <span id="verse-ref-text"></span>
+          <span id="verse-ref-translation"></span>
+        </div>
+      </div>
+    </div>
+    <!-- Multi-container dynamic elements (rc-cont-{id}) appended here -->
   </div>
-
   <script src="display.js"></script>
 </body>
 </html>
 ```
 
-### JavaScript Client
+#### Canvas Fit & Scaling
+- `#stage` is dimensioned to `1920px × 1080px` with `transform-origin: 0 0`.
+- In `canvas.fit: "contain"` mode, `applyCanvasFit()` scales `#stage` to fit any browser window or preview viewport:
+  $$\text{scale} = \min\left(\frac{\text{window.innerWidth}}{1920}, \frac{\text{window.innerHeight}}{1080}\right)$$
+  The stage is centered with automatic letterboxing or pillarboxing:
+  `transform: translate(dx, dy) scale(scale)`
+- In `canvas.fit: "none"` mode (standard for OBS browser sources at 1920×1080), `#stage` stays unscaled at 1:1 pixel parity.
 
-```javascript
-const WS_URL = 'ws://localhost:8765';
-let socket;
+### Single-Container vs. Multi-Container Execution
 
-function connect() {
-  socket = new WebSocket(WS_URL);
-  
-  socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    
-    switch (data.action) {
-      case 'display':
-        showVerse(data);
-        break;
-      case 'clear':
-        clearDisplay();
-        break;
-      case 'update_theme':
-        setTheme(data.theme);
-        break;
-    }
-  };
-  
-  socket.onclose = () => {
-    // Auto-reconnect after 2 seconds
-    setTimeout(connect, 2000);
-  };
-}
+The renderer supports two operational paths based on the theme definition:
 
-function showVerse(data) {
-  const container = document.getElementById('scripture-container');
-  document.getElementById('verse-text').textContent = data.text;
-  document.getElementById('verse-ref').textContent = data.ref;
-  document.getElementById('verse-translation').textContent = data.translation;
-  
-  // Apply theme via CSS class swap
-  container.className = `theme-${data.theme}`;
-  
-  // Animate in
-  container.classList.add('visible');
-  container.classList.remove('hidden');
-}
+1. **Single-Container Path (v1 or single-container v2)**:
+   - Uses the canonical `#container` element.
+   - Container form styles (dimensions, background, border, padding) are applied as inline styles.
+   - Text, reference, and translation blocks are positioned inside `#verse-content`.
+   - Block order is dynamic: `reference.position: "above_verse"` moves `#verse-ref` above `#verse-text` via `insertBefore()`.
 
-function clearDisplay() {
-  const container = document.getElementById('scripture-container');
-  container.classList.add('hidden');
-  container.classList.remove('visible');
-}
+2. **Multi-Container Path (v2 themes with $\ge 2$ visible containers)**:
+   - `#container` is hidden.
+   - Dedicated container divs (`<div id="rc-cont-{id}" class="rc-dynamic-container">`) are created as direct children of `#stage`.
+   - Each container is assigned its own `layer` (z-index), independent position, form styling, and content block stack.
+   - A container can render any subset of blocks (e.g. verse text in container 1, citation line in container 2).
 
-function setTheme(themeId) {
-  const container = document.getElementById('scripture-container');
-  // Remove all theme-* classes, add the new one
-  container.className = container.className.replace(/theme-\S+/g, '');
-  container.classList.add(`theme-${themeId}`);
-}
+### Animation Engine (Web Animations API)
+Transitions and entrance/exit animations are executed via the browser's native Web Animations API (`element.animate()`). Animation definitions specify keyframes, durations, easings, delays, and typewriter cursor configurations.
 
-connect();
+### Theme Application Lifecycle
+
 ```
-
-### Theme System (CSS)
-
-Visual themes are implemented as CSS classes. Switching themes requires zero JavaScript DOM manipulation beyond a single class swap — fonts, kerning, colors, drop-shadows, and animations are all handled natively by the browser's CSS engine.
-
-```css
-/* Base styles */
-#scripture-container {
-  position: fixed;
-  bottom: 10%;
-  left: 50%;
-  transform: translateX(-50%);
-  text-align: center;
-  max-width: 80%;
-  transition: opacity 0.5s ease, transform 0.3s ease;
-}
-
-#scripture-container.hidden {
-  opacity: 0;
-  transform: translateX(-50%) translateY(20px);
-  pointer-events: none;
-}
-
-#scripture-container.visible {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-/* Theme: Default */
-.theme-default #verse-text {
-  font-family: 'Georgia', serif;
-  font-size: 3rem;
-  color: #ffffff;
-  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
-  line-height: 1.4;
-}
-
-.theme-default #verse-ref {
-  font-family: 'Arial', sans-serif;
-  font-size: 1.5rem;
-  color: #cccccc;
-  margin-top: 0.5em;
-}
-
-/* Theme: Communion */
-.theme-communion #verse-text {
+1. resetTheme()     — clears inline overrides, restores child order, resets classes
+2. applyTheme()     — evaluates containers, resolves dimensions/positions, sets CSS vars
+3. handlePayload()  — updates text/ref content, runs autoFitText(), triggers WAAPI animations
+```
   font-family: 'Palatino', serif;
   font-size: 2.8rem;
   color: #f5e6d3;

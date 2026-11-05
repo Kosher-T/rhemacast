@@ -29,8 +29,18 @@ body, html {
     padding-bottom: var(--rc-padding-bottom, 80px);
 }
 
+#stage {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    transform-origin: 0 0;
+}
+
 /* Glassmorphism Container — defaults, overridden by theme via JS */
-#container {
+#container, .rc-container {
     max-width: var(--rc-max-width, 80%);
     min-width: var(--rc-min-width, 60%);
     width: var(--rc-width, auto);
@@ -53,7 +63,7 @@ body, html {
     transform: translateY(0) scale(1);
 }
 
-#container.hidden {
+#container.hidden, .rc-container.hidden {
     opacity: 0;
     transform: translateY(40px) scale(0.98);
     pointer-events: none;
@@ -141,4 +151,18 @@ body, html {
     font-weight: inherit;
     color: var(--rc-translation-color, #64748b);
     margin-left: var(--rc-translation-margin-left, 8px);
+}
+
+.rc-cursor {
+    display: inline-block;
+    vertical-align: baseline;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1;
+    margin-left: 0.05em;
+    animation: rc-blink 1s step-start infinite;
+}
+
+@keyframes rc-blink {
+    50% { opacity: 0; }
 }

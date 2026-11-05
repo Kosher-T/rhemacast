@@ -1,57 +1,88 @@
 {
   "name": "fullscreen",
   "label": "Fullscreen",
-  "containers": {
-    "main": {
-      "x": 60.0,
-      "y": 40.0,
+  "containers": [
+    {
+      "id": "main",
+      "layer": 0,
+      "visible": true,
+      "position": {
+        "anchor": "top_left",
+        "x": 60.0,
+        "y": 40.0
+      },
       "background": "transparent",
       "border": "none",
       "border_radius": "0",
       "box_shadow": "none",
       "backdrop_filter": "none",
-      "padding": "0",
       "width": "1800px",
       "height": "1000px",
-      "max_width": "1800px",
       "min_width": "1800px",
-      "flex_direction": "column",
-      "justify_content": "center",
-      "align_items": "center",
-      "display": "flex",
-      "body": {
-        "vertical_align": "center",
-        "padding_bottom": "0"
-      },
-      "text": {
-        "color": "#ffffff",
-        "font_family": "'Nunito', sans-serif",
-        "size": "80px",
-        "weight": 700,
-        "line_height": "1.08",
-        "letter_spacing": "-0.02em",
-        "text_shadow": "none",
-        "text_transform": "none",
-        "text_align": "center",
-        "min_size": "60px",
-        "max_size": "96px"
-      },
-      "reference": {
-        "color": "#D4AF37",
-        "font_family": "'Nunito', sans-serif",
-        "size": "48px",
-        "weight": 800,
-        "text_transform": "uppercase",
-        "letter_spacing": "0.1em"
-      },
-      "translation": {
-        "color": "#AAFF00",
-        "margin_left": "8px"
-      },
-      "verse_num": {
-        "color": "#D4AF37",
-        "font_family": "'Nunito', sans-serif"
+      "max_width": "1800px",
+      "min_height": 0,
+      "max_height": null,
+      "blocks": {
+        "text": {
+          "color": "@white",
+          "font_family": "'Nunito', sans-serif",
+          "size": "80px",
+          "weight": 700,
+          "line_height": "1.08",
+          "letter_spacing": "-0.02em",
+          "text_shadow": "none",
+          "text_transform": "none",
+          "text_align": "center",
+          "min_size": "60px",
+          "max_size": "96px",
+          "autosize": true
+        },
+        "reference": {
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "size": "48px",
+          "weight": 800,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.1em",
+          "position": "below_verse",
+          "text_align": "center"
+        },
+        "translation": {
+          "color": "@lime",
+          "margin_left": "8px",
+          "position": "right_of_reference",
+          "font_family": "'Nunito', sans-serif",
+          "size": "48px",
+          "weight": 800,
+          "letter_spacing": "0.1em",
+          "text_transform": "uppercase",
+          "text_align": "center"
+        },
+        "verse_num": {
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        },
+        "body": {
+          "valign": "center",
+          "padding": 0.0
+        }
       }
     }
+  ],
+  "schema_version": 2,
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "transparent",
+    "fit": "none"
   }
 }

@@ -94,8 +94,9 @@ def test_resolve_known_theme_returns_isolated_copy(tmp_path):
     # v2 theme; get_theme() stays raw for the designer.
     assert data.get("schema_version") == 2
     assert isinstance(data.get("containers"), list)
-    assert get_theme("default").get("schema_version") is None
-    assert data is not get_theme("default")
+    raw_default = get_theme("default")
+    assert raw_default is not None
+    assert data is not raw_default
     data["containers"][0]["blocks"]["text"]["color"] = "MUTATED"
     _, again = resolve_theme("default")
     assert again["containers"][0]["blocks"]["text"]["color"] != "MUTATED"

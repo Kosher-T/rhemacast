@@ -1,14 +1,6 @@
-"""
-ui/widgets/display_view.py
-
-QWebEngineView wrapper that renders verses using the same HTML/CSS/JS as OBS.
-Live mode connects to WebSocket; Preview mode receives content via JS injection.
-"""
-
 import json
 import logging
-
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 
@@ -24,22 +16,49 @@ _DISPLAY_HTML = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html {
-    width: 1920px; height: 1080px; overflow: hidden;
-    background: #000;
+/* Local Nunito (offline-first): variable weight 200-1000, bundled in
+   display/fonts/. The Google Fonts <link> in display.html stays as a
+   fallback for subsets not bundled here. */
+@font-face {
+    font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 200 1000;
+    font-display: swap;
+    src: url('./fonts/nunito-latin.woff2') format('woff2'),
+         url('./fonts/nunito-latin-ext.woff2') format('woff2');
 }
-body {
-    width: 1920px; height: 1080px; overflow: hidden;
-    background: #000;
+
+/* Base Reset & Transparency for OBS */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body, html {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: transparent !important; /* MUST be transparent for OBS overlay */
     font-family: var(--rc-text-font-family, 'Nunito'), sans-serif;
     display: flex;
-    align-items: var(--rc-vertical-align, flex-end);
+    align-items: var(--rc-vertical-align, flex-end); /* Align to bottom for lower-thirds, center for reference */
     justify-content: center;
     padding-bottom: var(--rc-padding-bottom, 80px);
+}
+
+#stage {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
     transform-origin: 0 0;
 }
-#container {
+
+/* Glassmorphism Container — defaults, overridden by theme via JS */
+#container, .rc-container {
     max-width: var(--rc-max-width, 80%);
     min-width: var(--rc-min-width, 60%);
     width: var(--rc-width, auto);
@@ -51,18 +70,24 @@ body {
     -webkit-backdrop-filter: var(--rc-backdrop-filter, blur(16px));
     border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
     box-shadow: var(--rc-container-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset);
-
+    
     display: var(--rc-container-display, block);
     flex-direction: var(--rc-container-flex-direction, column);
     justify-content: var(--rc-container-justify-content, flex-start);
     align-items: var(--rc-container-align-items, stretch);
-
+    
     transition: none;
-    opacity: 1; transform: translateY(0) scale(1);
+    opacity: 1;
+    transform: translateY(0) scale(1);
 }
-#container.hidden {
-    opacity: 0; transform: translateY(40px) scale(0.98); pointer-events: none;
+
+#container.hidden, .rc-container.hidden {
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+    pointer-events: none;
 }
+
+/* Typography — defaults, overridden by theme via JS */
 /* True outward outline.
    -webkit-text-stroke straddles the glyph outline, so half of it grows
    INWARD and eats the letterform (at 25px the word is unreadable). Painting
@@ -111,6 +136,7 @@ body {
     min-font-size: var(--rc-text-min-size, 4px);
     max-font-size: var(--rc-text-max-size, 300px);
 }
+
 .verse-num {
     font-family: var(--rc-verse-num-font-family, inherit);
     color: var(--rc-verse-num-color, inherit);
@@ -121,6 +147,7 @@ body {
     margin-right: 0.15em;
     line-height: 1;
 }
+
 #verse-ref {
     font-family: var(--rc-ref-font-family, 'DM Sans'), sans-serif;
     font-size: var(--rc-ref-size, 1.5rem);
@@ -130,212 +157,112 @@ body {
     text-transform: var(--rc-ref-text-transform, uppercase);
     letter-spacing: var(--rc-ref-letter-spacing, 0.1em);
 }
-#verse-ref-text { font-size: inherit; font-weight: inherit; color: inherit; }
+
+#verse-ref-text {
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+}
+
 #verse-ref-translation {
-    font-size: inherit; font-weight: inherit;
+    font-size: inherit;
+    font-weight: inherit;
     color: var(--rc-translation-color, #64748b);
     margin-left: var(--rc-translation-margin-left, 8px);
+}
+
+.rc-cursor {
+    display: inline-block;
+    vertical-align: baseline;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1;
+    margin-left: 0.05em;
+    animation: rc-blink 1s step-start infinite;
+}
+
+@keyframes rc-blink {
+    50% { opacity: 0; }
 }
 
 </style>
 </head>
 <body>
-<div id="container" class="hidden">
-    <div id="verse-content">
-        <h1 id="verse-text"></h1>
-        <p id="verse-ref">
-            <span id="verse-ref-text"></span>
-            <span id="verse-ref-translation"></span>
-        </p>
+<div id="stage">
+    <div id="container" class="hidden" aria-live="polite" aria-atomic="true" role="status">
+        <div id="verse-content">
+            <h1 id="verse-text" aria-label="Verse text"></h1>
+            <p id="verse-ref">
+                <span id="verse-ref-text" aria-label="Verse reference"></span>
+                <span id="verse-ref-translation" aria-label="Translation"></span>
+            </p>
+        </div>
+        <div id="ct-text" class="rc-container" data-element="text" style="display:none;">
+            <h1 id="verse-text-abs" aria-label="Verse text"></h1>
+        </div>
+        <div id="ct-reference" class="rc-container" data-element="reference" style="display:none;">
+            <span id="verse-ref-text-abs" aria-label="Verse reference"></span>
+        </div>
+        <div id="ct-translation" class="rc-container" data-element="translation" style="display:none;">
+            <span id="verse-ref-translation-abs" aria-label="Translation"></span>
+        </div>
     </div>
 </div>
 <script>
+let _fontsReady = false;
+if (document.fonts && document.fonts.load) {
+    document.fonts.load("700 16px Nunito").then(() => { _fontsReady = true; });
+}
+const WS_HOST = window.location.hostname || "127.0.0.1";
+const OUTPUT_ID = new URLSearchParams(window.location.search).get("output") || "1";
+const WS_URL = `ws://${WS_HOST}:8765?output=${OUTPUT_ID}`;
+const RECONNECT_DELAY = 2000;
+
+let socket = null;
+let isConnecting = false;
+let _prevPayload = null;
+let _animStyleEl = null;
+
+const stage = document.getElementById("stage");
 const container = document.getElementById("container");
 const verseText = document.getElementById("verse-text");
 const verseRef = document.getElementById("verse-ref");
 const verseRefText = document.getElementById("verse-ref-text");
 const verseRefTranslation = document.getElementById("verse-ref-translation");
-let _fontsReady = false;
-document.fonts.load("700 16px Nunito").then(() => { _fontsReady = true; });
-document.fonts.ready.then(() => {
-    try { invalidateOutlines(); applyOutlineLayers(); } catch (e) {}
-});
 
-// Inline run markup: [words (k=v; k=v)] → <span>. Payloads arrive
-// HTML-escaped by sanitize_payload(); conversion happens here at render
-// time (same contract as display/display.js — keep the two in sync).
-const _INLINE_TRUE = new Set(["true", "1", "yes"]);
-const _INLINE_FALSE = new Set(["false", "0", "no"]);
-const _INLINE_KEYS = new Set(["size", "bold", "color", "italics", "case",
-    "underline", "strike", "align", "spacing", "super", "sub",
-    "outline", "shadow", "dir", "hr", "font"]);
-
-function _parseInlineColor(value) {
-    const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec((value || "").trim());
-    if (!m) return null;
-    let c = m[1];
-    if (c.length === 3) c = c.split("").map(ch => ch + ch).join("");
-    return "#" + c.toLowerCase();
-}
-
-function parseInlineParams(raw) {
-    const params = {};
-    let found = false;
-    for (const seg of (raw || "").split(";")) {
-        const s = seg.trim();
-        if (!s) continue;
-        const eq = s.indexOf("=");
-        if (eq < 0) continue;
-        const key = s.slice(0, eq).trim().toLowerCase();
-        const value = s.slice(eq + 1);
-        if (!_INLINE_KEYS.has(key)) continue;
-        if (key === "size") {
-            const n = parseInt(value, 10);
-            if (!isNaN(n)) { params.size_nominal = n; found = true; }
-        } else if (key === "bold" || key === "italics") {
-            const v = value.trim().toLowerCase();
-            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
-            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
-        } else if (key === "color") {
-            const c = _parseInlineColor(value);
-            if (c) { params.color = c; found = true; }
-        } else if (key === "case") {
-            const v = value.trim().toLowerCase();
-            if (v === "upper" || v === "lower" || v === "origin") {
-                params.case = v; found = true;
-            }
-        } else if (key === "underline" || key === "strike" || key === "super" || key === "sub" || key === "hr") {
-            const v = value.trim().toLowerCase();
-            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
-            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
-        } else if (key === "align") {
-            const v = value.trim().toLowerCase();
-            if (v === "left" || v === "center" || v === "right" || v === "justify") { params.align = v; found = true; }
-        } else if (key === "dir") {
-            const v = value.trim().toLowerCase();
-            if (v === "rtl" || v === "ltr") { params.dir = v; found = true; }
-        } else if (key === "spacing") {
-            const n = parseFloat(value);
-            if (!isNaN(n) && n >= 0.5 && n <= 3.0) { params.spacing = n; found = true; }
-        } else if (key === "outline") {
-            // legacy color-only ("#ff0000"), explicit thickness+color
-            // ("2px #ff0000"), or an explicit off ("none"/"off").
-            const v = String(value || "").trim();
-            const low = v.toLowerCase();
-            if (low === "none" || low === "off") {
-                // Explicit off: the deck overrides an inherited outline.
-                params.outline = "none"; found = true;
-            } else if (_outlineRing(v)) {
-                params.outline = v; found = true;
-            }
-        } else if (key === "shadow") {
-            // "<size>px [opacity%] [distance px] #hex"; opacity/distance are
-            // optional, "none" is an explicit off.
-            const sh = _parseShadow(value);
-            if (sh === "none") { params.shadow = "none"; found = true; }
-            else if (sh) { params.shadow = value; found = true; }
-        } else if (key === "font") {
-            const v = (value || "").replace(/[;()\[\]"']/g, "").trim();
-            if (v && v.length <= 60) { params.font = v; found = true; }
+function connect() {
+    if (isConnecting || (socket && socket.readyState === WebSocket.OPEN)) return;
+    
+    isConnecting = true;
+    console.log("Attempting WebSocket connection...");
+    
+    socket = new WebSocket(WS_URL);
+    
+    socket.onopen = () => {
+        console.log("WebSocket connected.");
+        isConnecting = false;
+    };
+    
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handlePayload(data);
+        } catch (e) {
+            console.error("Failed to parse WebSocket message:", e);
         }
-    }
-    return found ? params : null;
-}
-
-function spanStyle(p) {
-    const styles = [];
-    if (p.color) styles.push("color:" + p.color);
-    if (p.size_nominal != null) styles.push("font-size:" + p.size_nominal + "px");
-    if (p.bold === true) styles.push("font-weight:700");
-    else if (p.bold === false) styles.push("font-weight:400");
-    if (p.italics === true) styles.push("font-style:italic");
-    else if (p.italics === false) styles.push("font-style:normal");
-    if (p.case === "upper") styles.push("text-transform:uppercase");
-    else if (p.case === "lower") styles.push("text-transform:lowercase");
-    else if (p.case === "origin") styles.push("text-transform:none");
-    const deco = [];
-    if (p.underline === true) deco.push("underline");
-    if (p.strike === true) deco.push("line-through");
-    if (deco.length) styles.push("text-decoration:" + deco.join(" "));
-    else if (p.underline === false || p.strike === false) styles.push("text-decoration:none");
-    if (p.align) styles.push("display:inline-block;width:100%;text-align:" + p.align);
-    if (p.spacing != null) styles.push("line-height:" + p.spacing);
-    // An outline needs a duplicated stroke layer (see .rc-oc in the
-    // stylesheet), so it is NOT emitted here; _outlineRun() builds it from
-    // p.outline once the run element exists.
-    if (p.outline === "none") {
-        // Explicit off: drop any inherited outline and shadow for this run.
-        styles.push("text-shadow:none");
-    }
-    if (p.shadow === "none") {
-        styles.push("text-shadow:none");
-    } else if (p.shadow) {
-        const sc = _shadowCss(p.shadow);
-        if (sc) styles.push(sc);
-    }
-    if (p.dir) styles.push("direction:" + p.dir + ";unicode-bidi:embed");
-    if (p.font) styles.push("font-family:'" + String(p.font).replace(/'/g, "") + "'");
-    return styles.join(";");
-}
-
-function renderInlineColors(text) {
-    const raw = text || "";
-    const runRe = /\[([^\[\]]+?)(?:\s*\(([^()]*)\))?\]/g;
-    let out = "", last = 0, m;
-    while ((m = runRe.exec(raw)) !== null) {
-        // Bare \n markers outside brackets convert straight to breaks.
-        out += raw.slice(last, m.index).replace(/\\n/g, "<br/>");
-        const runText = m[1], runParams = m[2];
-        if (runParams === undefined) {
-            if (runText.trim() === "\\n") {
-                out += '<span style=""><br/></span>';  // bare [\n] gap
-            } else {
-                out += m[0];  // literal — keep brackets as typed
-            }
-        } else {
-            const parsed = parseInlineParams(runParams);
-            if (parsed) {
-                if (parsed.hr === true) {
-                    out += '<div style="border-top:2px solid currentColor;margin:8px 0"></div>';
-                } else {
-                    const disp = runText.trim();
-                    let inner = disp;
-                    if (parsed.super === true) inner = "<sup>" + disp + "</sup>";
-                    else if (parsed.sub === true) inner = "<sub>" + disp + "</sub>";
-                    if (disp === "" || disp === "\\n") {
-                        out += '<span style="' + spanStyle(parsed) + '"><br/></span>';
-                    } else {
-                        // An outline becomes a duplicated stroke layer behind
-                        // the glyphs; everything else rides the inline style.
-                        // Explicit offs ride as data markers: the block SVG
-                        // conversion destroys the inline text-shadow:none,
-                        // so it must know which runs opted out of the
-                        // stroke and of the inherited shadow.
-                        const noAttrs = [];
-                        if (parsed.outline === "none") noAttrs.push("outline");
-                        if (parsed.shadow === "none") noAttrs.push("shadow");
-                        const noStr = noAttrs.length
-                            ? ' data-rc-no="' + noAttrs.join(" ") + '"' : "";
-                        const body = (parsed.outline && parsed.outline !== "none")
-                            ? _outlineRun(inner, _attrEscape(disp), parsed.outline)
-                            : inner;
-                        out += '<span' + noStr + ' style="' + spanStyle(parsed) + '">' + body + '</span>';
-                    }
-                }
-            } else {
-                const legacyText = /^(.*):\s*$/.exec(runText);
-                const legacyHex = _parseInlineColor(runParams);
-                if (legacyText && legacyHex) {
-                    out += '<span style="color:' + legacyHex + '">' + legacyText[1] + '</span>';
-                } else {
-                    out += m[0];
-                }
-            }
-        }
-        last = m.index + m[0].length;
-    }
-    out += raw.slice(last).replace(/\\n/g, "<br/>");
-    return out.replace(/\r?\n/g, "<br/>");
+    };
+    
+    socket.onclose = () => {
+        console.log("WebSocket disconnected. Reconnecting in 2 seconds...");
+        isConnecting = false;
+        socket = null;
+        setTimeout(connect, RECONNECT_DELAY);
+    };
+    
+    socket.onerror = (err) => {
+        console.error("WebSocket error observed:", err);
+        socket.close();
+    };
 }
 
 function resetTheme() {
@@ -363,13 +290,945 @@ function resetTheme() {
     props.forEach(p => root.style.removeProperty(p));
     // The outline layer is DOM state, not just variables: drop it too.
     if (typeof applyOutlineLayers === "function") applyOutlineLayers();
+    if (container) {
+        container.style.position = "";
+        container.style.left = "";
+        container.style.top = "";
+        container.style.width = "";
+        container.style.height = "";
+        container.style.minWidth = "";
+        container.style.maxWidth = "";
+        container.style.minHeight = "";
+        container.style.maxHeight = "";
+        container.style.zIndex = "";
+        container.style.opacity = "";
+        container.style.overflow = "";
+        container.style.gap = "";
+        container.style.display = "";
+    }
+    const verseContent = document.getElementById("verse-content");
+    if (verseContent && verseRef && verseText) {
+        verseContent.appendChild(verseRef);
+    }
+    if (verseRef && verseRefTranslation && verseRefText) {
+        verseRef.style.display = "";
+        verseRef.style.flexDirection = "";
+        verseRef.style.alignItems = "";
+        verseRef.appendChild(verseRefTranslation);
+    }
+    if (verseText) verseText.style.display = "";
+    if (verseRefText) verseRefText.style.display = "";
+    if (verseRefTranslation) verseRefTranslation.style.display = "";
+    if (typeof document !== "undefined" && document.querySelectorAll) {
+        document.querySelectorAll(".rc-dynamic-container").forEach(el => el.remove());
+    }
 }
+
+function _resolveLength(val, canvasExtent) {
+    if (val == null || val === "auto" || val === "none") return null;
+    if (typeof val === "number") return val;
+    const s = String(val).trim();
+    if (s.endsWith("%")) {
+        const num = parseFloat(s);
+        return isNaN(num) ? null : (num / 100) * canvasExtent;
+    }
+    if (s.endsWith("px")) {
+        const num = parseFloat(s);
+        return isNaN(num) ? null : num;
+    }
+    const num = parseFloat(s);
+    return isNaN(num) ? null : num;
+}
+
+function _computePosition(pos, width, height, canvasW, canvasH) {
+    pos = pos || {};
+    let anchor = pos.anchor || "center";
+    if (!pos.anchor) {
+        if (pos.top_left) anchor = "top_left";
+        else if (pos.top_right) anchor = "top_right";
+        else if (pos.bottom_left) anchor = "bottom_left";
+        else if (pos.bottom_right) anchor = "bottom_right";
+    }
+    const hasX = pos.x != null;
+    const hasY = pos.y != null;
+    const x = _resolveLength(pos.x != null ? pos.x : 0, canvasW);
+    const y = _resolveLength(pos.y != null ? pos.y : 0, canvasH);
+    const centeredX = (canvasW - width) / 2;
+    const centeredY = (canvasH - height) / 2;
+
+    if (anchor === "top_left") return { left: x, top: y };
+    if (anchor === "top_right") return { left: canvasW - width - x, top: y };
+    if (anchor === "bottom_left") return { left: x, top: canvasH - height - y };
+    if (anchor === "bottom_right") return { left: canvasW - width - x, top: canvasH - height - y };
+    if (anchor === "center") return { left: centeredX + x, top: centeredY + y };
+    if (anchor === "top") return { left: hasX ? x : centeredX, top: y };
+    if (anchor === "bottom") return { left: hasX ? x : centeredX, top: canvasH - height - y };
+    if (anchor === "left") return { left: x, top: hasY ? y : centeredY };
+    if (anchor === "right") return { left: canvasW - width - x, top: hasY ? y : centeredY };
+    if (anchor === "fill") return { left: 0, top: 0, width: canvasW, height: canvasH };
+    return { left: centeredX + x, top: centeredY + y };
+}
+
+function _isNewContainers(ct) {
+    if (!ct || typeof ct !== "object") return false;
+    if (Array.isArray(ct)) {
+        return ct.some(v => v && typeof v === "object" &&
+            (v.blocks || typeof v.text === "object" || typeof v.body === "object"));
+    }
+    return Object.values(ct).some(v => v && typeof v === "object" &&
+        (v.blocks || typeof v.text === "object" || typeof v.body === "object"));
+}
+
+function themeContainer(theme, name) {
+    const ct = theme && theme.containers;
+    if (Array.isArray(ct)) {
+        if (!ct.length) return {};
+        if (name) {
+            const found = ct.find(c => c && c.id === name);
+            if (found) return found;
+            console.warn("Container '" + name + "' not found — using first.");
+        }
+        return ct[0] || {};
+    }
+    if (!_isNewContainers(ct)) return {};
+    const keys = Object.keys(ct);
+    if (name && ct[name] && typeof ct[name] === "object") return ct[name];
+    if (name) console.warn("Container '" + name + "' not found — using first.");
+    return (keys.length && typeof ct[keys[0]] === "object") ? ct[keys[0]] : {};
+}
+
+function _getContainerBlocks(c) {
+    if (!c || typeof c !== "object") return {};
+    const blocks = (c.blocks && typeof c.blocks === "object") ? c.blocks : {};
+    return {
+        body: blocks.body || c.body || {},
+        text: blocks.text || c.text || {},
+        reference: blocks.reference || blocks.title || c.reference || c.title || {},
+        translation: blocks.translation || c.translation || {},
+        verse_num: blocks.verse_num || c.verse_num || {},
+    };
+}
+
+let _currentTheme = null;
+let _currentContainers = [];
+
+function applyCanvasFit(canvas) {
+    const stg = document.getElementById("stage");
+    if (!stg) return;
+    const cw = (canvas && canvas.width) || 1920;
+    const ch = (canvas && canvas.height) || 1080;
+    const fit = (canvas && canvas.fit) || "contain";
+    const bg = (canvas && canvas.background) || "transparent";
+    stg.style.width = cw + "px";
+    stg.style.height = ch + "px";
+    stg.style.background = bg;
+
+    if (fit === "contain" && typeof window !== "undefined" && window.innerWidth && window.innerHeight) {
+        const scale = Math.min(window.innerWidth / cw, window.innerHeight / ch);
+        const left = (window.innerWidth - cw * scale) / 2;
+        const top = (window.innerHeight - ch * scale) / 2;
+        stg.style.transformOrigin = "0 0";
+        stg.style.transform = "translate(" + left + "px, " + top + "px) scale(" + scale + ")";
+    } else {
+        stg.style.transform = "";
+        stg.style.left = "0";
+        stg.style.top = "0";
+    }
+}
+
+if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("resize", function () {
+        if (_currentTheme && _currentTheme.canvas) {
+            applyCanvasFit(_currentTheme.canvas);
+        }
+    });
+}
+
+let _deckTextSize = null;
+
+function applyTheme(theme, slideFormat) {
+    if (!theme) return;
+    _currentTheme = theme;
+    resetTheme();
+    const root = document.documentElement;
+
+    if (theme.canvas) {
+        applyCanvasFit(theme.canvas);
+    }
+
+    let containers = [];
+    if (Array.isArray(theme.containers)) {
+        containers = theme.containers.filter(c => c && typeof c === "object" && c.visible !== false)
+                                     .sort((a, b) => (a.layer || 0) - (b.layer || 0));
+    } else if (theme.containers && typeof theme.containers === "object" && _isNewContainers(theme.containers)) {
+        containers = Object.values(theme.containers).filter(c => c && typeof c === "object" && c.visible !== false);
+    }
+    _currentContainers = containers;
+
+    const cont = themeContainer(theme);
+    const blocks = _getContainerBlocks(cont);
+    const isCont = cont && (cont.blocks || cont.position || cont.id || typeof cont.text === "object" || typeof cont.body === "object");
+    const c = isCont ? cont : (theme.container || {});
+    const t = (blocks.text && Object.keys(blocks.text).length > 0) ? blocks.text : (theme.text || {});
+    const r = (blocks.reference && Object.keys(blocks.reference).length > 0) ? blocks.reference : (theme.reference || {});
+    const tr = (blocks.translation && Object.keys(blocks.translation).length > 0) ? blocks.translation : (theme.translation || {});
+    const b = (blocks.body && Object.keys(blocks.body).length > 0) ? blocks.body : (theme.body || {});
+
+    const canvasW = (theme.canvas && theme.canvas.width) || 1920;
+    const canvasH = (theme.canvas && theme.canvas.height) || 1080;
+
+    // Container
+    if (c.background)        root.style.setProperty("--rc-container-bg", c.background);
+    if (c.border) {
+        let bVal = c.border;
+        if (typeof bVal === "object" && bVal) {
+            bVal = (bVal.width || 1) + "px " + (bVal.style || "solid") + " " + (bVal.color || "#ffffff");
+        }
+        if (bVal && bVal !== "none") root.style.setProperty("--rc-container-border", bVal);
+    }
+    if (c.border_radius != null) {
+        const br = _resolveLength(c.border_radius, canvasW);
+        root.style.setProperty("--rc-border-radius", br != null ? (br + "px") : String(c.border_radius));
+    } else if (typeof c.border === "object" && c.border && c.border.radius != null) {
+        root.style.setProperty("--rc-border-radius", c.border.radius + "px");
+    }
+    if (c.box_shadow) {
+        let bsVal = c.box_shadow;
+        if (typeof bsVal === "object" && bsVal) {
+            bsVal = (bsVal.inset ? "inset " : "") + (bsVal.x || 0) + "px " + (bsVal.y || 0) + "px " + (bsVal.blur || 0) + "px " + (bsVal.spread || 0) + "px " + (bsVal.color || "rgba(0,0,0,0.5)");
+        }
+        root.style.setProperty("--rc-container-shadow", bsVal);
+    }
+    if (c.backdrop_filter)   root.style.setProperty("--rc-backdrop-filter", c.backdrop_filter);
+    if (c.padding)           root.style.setProperty("--rc-padding", c.padding);
+    if (c.max_width != null) root.style.setProperty("--rc-max-width", typeof c.max_width === "number" ? (c.max_width + "px") : c.max_width);
+    if (c.min_width != null) root.style.setProperty("--rc-min-width", typeof c.min_width === "number" ? (c.min_width + "px") : c.min_width);
+    if (c.width != null)     root.style.setProperty("--rc-width", typeof c.width === "number" ? (c.width + "px") : c.width);
+    if (c.height != null)    root.style.setProperty("--rc-height", typeof c.height === "number" ? (c.height + "px") : c.height);
+    if (c.display)           root.style.setProperty("--rc-container-display", c.display);
+    if (c.flex_direction)    root.style.setProperty("--rc-container-flex-direction", c.flex_direction);
+    if (c.justify_content)   root.style.setProperty("--rc-container-justify-content", c.justify_content);
+    if (c.align_items)       root.style.setProperty("--rc-container-align-items", c.align_items);
+
+    container.style.position = "";
+    container.style.left = "";
+    container.style.top = "";
+    if (c.position || (typeof c.x === "number" && typeof c.y === "number")) {
+        let w = _resolveLength(c.width, canvasW);
+        let h = _resolveLength(c.height, canvasH);
+        if (w == null && c.min_width != null) w = _resolveLength(c.min_width, canvasW);
+        if (h == null && c.min_height != null) h = _resolveLength(c.min_height, canvasH);
+        if (w == null) w = canvasW;
+        if (h == null) h = canvasH;
+
+        if (c.position) {
+            const p = _computePosition(c.position, w, h, canvasW, canvasH);
+            container.style.position = "absolute";
+            container.style.left = p.left + "px";
+            container.style.top = p.top + "px";
+            if (p.width) container.style.width = p.width + "px";
+            if (p.height) container.style.height = p.height + "px";
+        } else if (typeof c.x === "number" && typeof c.y === "number") {
+            container.style.position = "absolute";
+            container.style.left = c.x + "px";
+            container.style.top = c.y + "px";
+        }
+    }
+    if (c.layer != null) container.style.zIndex = c.layer;
+    if (c.opacity != null) container.style.opacity = c.opacity;
+    if (c.overflow) container.style.overflow = c.overflow;
+
+    // Body
+    const valign = b.valign || (b.vertical_align ? (b.vertical_align.includes("start") ? "top" : b.vertical_align.includes("end") ? "bottom" : "center") : null);
+    if (valign) {
+        const jc = valign === "top" ? "flex-start" : valign === "bottom" ? "flex-end" : "center";
+        root.style.setProperty("--rc-container-justify-content", jc);
+        root.style.setProperty("--rc-vertical-align", jc);
+    } else if (b.vertical_align) {
+        root.style.setProperty("--rc-vertical-align", b.vertical_align);
+    }
+    if (b.gap != null) container.style.gap = b.gap + "px";
+    if (b.padding_top != null || b.padding_bottom != null || b.padding_left != null || b.padding_right != null || b.padding != null) {
+        const pt = (b.padding_top != null ? b.padding_top : b.padding) || 0;
+        const pr = (b.padding_right != null ? b.padding_right : b.padding) || 0;
+        const pb = (b.padding_bottom != null ? b.padding_bottom : b.padding) || 0;
+        const pl = (b.padding_left != null ? b.padding_left : b.padding) || 0;
+        root.style.setProperty("--rc-padding", `${pt}px ${pr}px ${pb}px ${pl}px`);
+        root.style.setProperty("--rc-padding-bottom", `${pb}px`);
+    } else if (b.padding_bottom) {
+        root.style.setProperty("--rc-padding-bottom", b.padding_bottom);
+    }
+
+    // Text
+    if (t.color)        root.style.setProperty("--rc-text-color", t.color);
+    if (t.size != null) root.style.setProperty("--rc-text-size", typeof t.size === "number" ? (t.size + "px") : t.size);
+    if (t.weight != null) root.style.setProperty("--rc-text-weight", String(t.weight));
+    if (t.line_height != null) root.style.setProperty("--rc-text-line-height", String(t.line_height));
+    const tOutline = _themeOutline(t);
+    if (tOutline) root.style.setProperty("--rc-text-outline", tOutline);
+    const tShadowRaw = String(t.text_shadow || "").trim();
+    const shadowIsOutline = !!tOutline
+        && _themeOutline({ text_shadow: tShadowRaw }) === tOutline;
+    if (!shadowIsOutline) {
+        if (tShadowRaw) {
+            root.style.setProperty("--rc-text-shadow",
+                _shadowIsNone(tShadowRaw) ? "none" : tShadowRaw);
+        }
+    }
+    try { invalidateOutlines(); } catch (e) {}
+    if (typeof applyOutlineLayers === "function") applyOutlineLayers();
+    if (t.letter_spacing != null) root.style.setProperty("--rc-text-letter-spacing", typeof t.letter_spacing === "number" ? (t.letter_spacing + "px") : t.letter_spacing);
+    if (t.margin_bottom != null) root.style.setProperty("--rc-text-margin-bottom", typeof t.margin_bottom === "number" ? (t.margin_bottom + "px") : t.margin_bottom);
+    if (t.min_size != null)     root.style.setProperty("--rc-text-min-size", typeof t.min_size === "number" ? (t.min_size + "px") : t.min_size);
+    if (t.max_size != null)     root.style.setProperty("--rc-text-max-size", typeof t.max_size === "number" ? (t.max_size + "px") : t.max_size);
+    if (t.font_family)  root.style.setProperty("--rc-text-font-family", t.font_family);
+    if (t.font_style)   root.style.setProperty("--rc-text-font-style", t.font_style);
+    if (t.text_decoration) root.style.setProperty("--rc-text-decoration", t.text_decoration);
+    if (t.text_transform) root.style.setProperty("--rc-text-transform", t.text_transform);
+    if (t.text_align)   root.style.setProperty("--rc-text-align", t.text_align);
+    if (t.visible === false && verseText) {
+        verseText.style.display = "none";
+    }
+
+    // Deck-level slide format overrides (cascade: theme < deck).
+    const f = slideFormat || {};
+    if (slideFormat !== undefined) {
+        _deckTextSize = (f.size_nominal != null) ? f.size_nominal : null;
+    }
+    if (f.color) root.style.setProperty("--rc-text-color", f.color);
+    if (f.size_nominal != null) root.style.setProperty("--rc-text-size", f.size_nominal + "px");
+    if (f.size_min != null) root.style.setProperty("--rc-text-min-size", f.size_min + "px");
+    if (f.size_max != null) root.style.setProperty("--rc-text-max-size", f.size_max + "px");
+    if (f.bold === true) root.style.setProperty("--rc-text-weight", "800");
+    else if (f.bold === false) root.style.setProperty("--rc-text-weight", "400");
+    if (f.italics === true) root.style.setProperty("--rc-text-font-style", "italic");
+    else if (f.italics === false) root.style.setProperty("--rc-text-font-style", "normal");
+    if (f.case === "upper") root.style.setProperty("--rc-text-transform", "uppercase");
+    else if (f.case === "lower") root.style.setProperty("--rc-text-transform", "lowercase");
+    else if (f.case === "origin") root.style.setProperty("--rc-text-transform", "none");
+    const fdeco = [];
+    if (f.underline === true) fdeco.push("underline");
+    if (f.strike === true) fdeco.push("line-through");
+    if (fdeco.length) root.style.setProperty("--rc-text-decoration", fdeco.join(" "));
+    else if (f.underline === false || f.strike === false) root.style.setProperty("--rc-text-decoration", "none");
+    if (f.align) root.style.setProperty("--rc-text-align", f.align);
+    if (f.spacing != null) root.style.setProperty("--rc-text-line-height", String(f.spacing));
+    if (f.dir) root.style.setProperty("--rc-text-direction", f.dir);
+    const deckOutline = (f.outline && f.outline !== "none") ? f.outline
+                        : (f.outline === "none" ? "none" : null);
+    if (deckOutline) root.style.setProperty("--rc-text-outline-value", deckOutline);
+    else root.style.removeProperty("--rc-text-outline-value");
+    if (f.shadow === "none" || f.shadow === "off") {
+        root.style.setProperty("--rc-text-shadow", "none");
+    } else if (f.shadow) {
+        const ds = _parseShadow(f.shadow);
+        if (ds && ds !== "none") root.style.setProperty("--rc-text-shadow", _shadowRing(ds));
+    }
+    if (f.font) root.style.setProperty("--rc-text-font-family", "'" + String(f.font).replace(/'/g, "") + "'");
+
+    // Reference
+    if (r.color)        root.style.setProperty("--rc-ref-color", r.color);
+    if (r.size != null) root.style.setProperty("--rc-ref-size", typeof r.size === "number" ? (r.size + "px") : r.size);
+    if (r.weight != null) root.style.setProperty("--rc-ref-weight", String(r.weight));
+    if (r.text_transform) root.style.setProperty("--rc-ref-text-transform", r.text_transform);
+    if (r.letter_spacing != null) root.style.setProperty("--rc-ref-letter-spacing", typeof r.letter_spacing === "number" ? (r.letter_spacing + "px") : r.letter_spacing);
+    if (r.font_family)  root.style.setProperty("--rc-ref-font-family", r.font_family);
+    if (r.visible === false && verseRefText) {
+        verseRefText.style.display = "none";
+    }
+
+    // Translation
+    if (tr.color)       root.style.setProperty("--rc-translation-color", tr.color);
+    if (tr.margin_left != null) root.style.setProperty("--rc-translation-margin-left", typeof tr.margin_left === "number" ? (tr.margin_left + "px") : tr.margin_left);
+    if (tr.visible === false && verseRefTranslation) {
+        verseRefTranslation.style.display = "none";
+    }
+
+    // Placement
+    const verseContent = document.getElementById("verse-content");
+    if (verseContent && verseRef && verseText) {
+        if (r.position === "above_verse" && typeof verseContent.insertBefore === "function") {
+            verseContent.insertBefore(verseRef, verseText);
+        } else if (typeof verseContent.appendChild === "function") {
+            verseContent.appendChild(verseRef);
+        }
+    }
+    if (verseRef && verseRefTranslation && verseRefText) {
+        if (tr.position === "left_of_reference" && typeof verseRef.insertBefore === "function") {
+            verseRef.insertBefore(verseRefTranslation, verseRefText);
+        } else if (tr.position === "above_reference") {
+            verseRef.style.display = "flex";
+            verseRef.style.flexDirection = "column-reverse";
+            verseRef.style.alignItems = "center";
+            if (typeof verseRef.appendChild === "function") verseRef.appendChild(verseRefTranslation);
+        } else if (tr.position === "below_reference") {
+            verseRef.style.display = "flex";
+            verseRef.style.flexDirection = "column";
+            verseRef.style.alignItems = "center";
+            if (typeof verseRef.appendChild === "function") verseRef.appendChild(verseRefTranslation);
+        } else {
+            verseRef.style.display = "";
+            verseRef.style.flexDirection = "";
+            verseRef.style.alignItems = "";
+            if (typeof verseRef.appendChild === "function") verseRef.appendChild(verseRefTranslation);
+        }
+    }
+
+    // Verse number
+    const vn = blocks.verse_num || theme.verse_num || {};
+    if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
+    if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
+
+    autoFitText();
+    _applyContainers(theme);
+}
+
+function extractVerseNumber(reference) {
+    if (!reference) return null;
+    const match = reference.match(/(\d+:\d+)$/);
+    if (match) {
+        return match[1].split(':').pop();
+    }
+    return null;
+}
+
+function fitOutlineLayers(containerH, minFontSize) {
+    for (let i = 0; i < 8; i++) {
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const refH = (typeof verseRef !== "undefined" && verseRef)
+            ? verseRef.offsetHeight : 0;
+        const totalH = verseText.offsetHeight + margin + refH;
+        if (totalH <= containerH) return;
+        const cur = parseFloat(verseText.style.fontSize) || minFontSize;
+        const next = Math.max(minFontSize, Math.floor(cur * 0.9));
+        if (next >= cur) return;
+        verseText.style.fontSize = next + 'px';
+        invalidateOutlines();
+        applyOutlineLayers();
+    }
+}
+
+function autoFitText() {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
+
+    invalidateOutlines();
+    if (!containerH || isNaN(containerH)) {
+        verseText.style.fontSize = '';
+        applyOutlineLayers();
+        return;
+    }
+
+    if (!verseText.textContent.trim()) return;
+
+    const minFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-min-size')) || 4;
+    let maxFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-max-size')) || 300;
+    if (_deckTextSize != null && _deckTextSize > 0) {
+        maxFontSize = _deckTextSize;
+    }
+    let lo = minFontSize, hi = maxFontSize;
+    if (_deckTextSize != null && _deckTextSize > 0) {
+        verseText.style.fontSize = _deckTextSize + 'px';
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
+        if (totalH <= containerH) {
+            lo = hi = _deckTextSize;
+        } else {
+            hi = _deckTextSize;
+            lo = Math.min(minFontSize, hi);
+        }
+    }
+    while (hi - lo > 0.5) {
+        const mid = (lo + hi) / 2;
+        verseText.style.fontSize = mid + 'px';
+
+        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
+        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
+
+        if (totalH <= containerH) { lo = mid; } else { hi = mid; }
+    }
+
+    verseText.style.fontSize = Math.floor(lo) + 'px';
+    applyOutlineLayers();
+}
+
+let _activeContainers = null;
+
+function _applyContainers(theme) {
+    const ct = theme.containers;
+    if (ct && typeof ct === "object" && (function () {
+        if (Array.isArray(ct)) return true;
+        for (const k of Object.keys(ct)) {
+            const v = ct[k];
+            if (v && typeof v === "object"
+                && (v.blocks || typeof v.text === "object" || typeof v.body === "object")) return true;
+        }
+        return false;
+    })()) return;
+    const verseContent = document.getElementById("verse-content");
+    const ctText = document.getElementById("ct-text");
+    const ctRef = document.getElementById("ct-reference");
+    const ctTrans = document.getElementById("ct-translation");
+    if (!ctText || !ctRef || !ctTrans) return;
+
+    if (!ct) {
+        _activeContainers = null;
+        if (verseContent) verseContent.style.display = "";
+        ctText.style.display = "none";
+        ctRef.style.display = "none";
+        ctTrans.style.display = "none";
+        container.style.position = "";
+        container.style.width = "";
+        container.style.height = "";
+        container.style.left = "";
+        container.style.top = "";
+        return;
+    }
+
+    _activeContainers = ct;
+    if (verseContent) verseContent.style.display = "none";
+
+    container.style.position = "absolute";
+    container.style.width = "1920px";
+    container.style.height = "1080px";
+    container.style.left = "0";
+    container.style.top = "0";
+
+    const t = theme.text || {};
+    const r = theme.reference || {};
+    const tr = theme.translation || {};
+
+    _positionContainer(ctText, ct.text, t, "text");
+    _positionContainer(ctRef, ct.reference, r, "reference");
+    _positionContainer(ctTrans, ct.translation, tr, "translation");
+}
+
+function _positionContainer(el, pos, style, type) {
+    if (!pos || pos.follows || pos.visible === false) {
+        el.style.display = "none";
+        return;
+    }
+    el.style.display = "block";
+    el.style.position = "absolute";
+    el.style.left = (pos.x - pos.width / 2) + "px";
+    el.style.top = (pos.y - pos.height / 2) + "px";
+    el.style.width = pos.width + "px";
+    el.style.height = pos.height + "px";
+    el.style.overflow = "hidden";
+
+    const inner = el.firstElementChild;
+    if (!inner) return;
+    inner.style.width = "100%";
+    inner.style.height = "100%";
+    inner.style.display = "flex";
+    inner.style.flexDirection = "column";
+    inner.style.justifyContent = "center";
+    inner.style.alignItems = "center";
+    inner.style.textAlign = "center";
+
+    if (type === "text") {
+        inner.style.color = style.color || "#ffffff";
+        inner.style.fontFamily = style.font_family || "'Nunito', sans-serif";
+        inner.style.fontWeight = style.weight || 700;
+        inner.style.lineHeight = style.line_height || "1.08";
+        inner.style.letterSpacing = style.letter_spacing || "-0.02em";
+        inner.style.textShadow = style.text_shadow || "";
+        inner.style.padding = "20px";
+    } else if (type === "reference") {
+        inner.style.color = style.color || "#cccccc";
+        inner.style.fontFamily = style.font_family || "'DM Sans', sans-serif";
+        inner.style.fontWeight = style.weight || 500;
+        inner.style.textTransform = style.text_transform || "uppercase";
+        inner.style.letterSpacing = style.letter_spacing || "0.1em";
+        inner.style.fontSize = style.size || "34px";
+    } else if (type === "translation") {
+        inner.style.color = style.color || "#999999";
+        inner.style.fontSize = "16px";
+    }
+}
+
+function _populateContainers(data) {
+    if (!_activeContainers) return;
+    const refText = data.reference || (data.book && data.chapter && data.verse
+        ? data.book + " " + data.chapter + ":" + data.verse : "");
+    const verseNum = extractVerseNumber(refText);
+
+    const ctTextInner = document.querySelector("#ct-text > *");
+    if (ctTextInner) {
+        let html = renderInlineColors(data.text);
+        if (verseNum) html = '<span class="verse-num">' + verseNum + '</span> ' + html;
+        ctTextInner.innerHTML = html;
+    }
+
+    const ctRefInner = document.querySelector("#ct-reference > *");
+    if (ctRefInner) ctRefInner.innerHTML = refText;
+
+    const ctTransInner = document.querySelector("#ct-translation > *");
+    if (ctTransInner) ctTransInner.innerHTML = data.translation || "";
+}
+
+function _renderMultiContainers(data) {
+    const stg = document.getElementById("stage") || document.body;
+    if (container) container.style.display = "none";
+    const refText = data.reference || (data.book && data.chapter && data.verse
+        ? data.book + " " + data.chapter + ":" + data.verse : "");
+    const canvasW = (_currentTheme && _currentTheme.canvas && _currentTheme.canvas.width) || 1920;
+    const canvasH = (_currentTheme && _currentTheme.canvas && _currentTheme.canvas.height) || 1080;
+
+    _currentContainers.forEach(c => {
+        let el = document.getElementById("rc-cont-" + c.id);
+        if (!el || !el.parentElement) {
+            if (!el) el = document.createElement("div");
+            el.id = "rc-cont-" + c.id;
+            el.className = "rc-dynamic-container rc-container";
+            stg.appendChild(el);
+        }
+        let w = _resolveLength(c.width, canvasW);
+        let h = _resolveLength(c.height, canvasH);
+        if (w == null && c.min_width != null) w = _resolveLength(c.min_width, canvasW);
+        if (h == null && c.min_height != null) h = _resolveLength(c.min_height, canvasH);
+        if (w == null) w = canvasW;
+        if (h == null) h = canvasH;
+
+        const pos = _computePosition(c.position, w, h, canvasW, canvasH);
+        el.style.position = "absolute";
+        el.style.left = pos.left + "px";
+        el.style.top = pos.top + "px";
+        el.style.width = (pos.width || w) + "px";
+        el.style.height = (pos.height || h) + "px";
+        if (c.min_width != null) el.style.minWidth = _resolveLength(c.min_width, canvasW) + "px";
+        if (c.max_width != null) el.style.maxWidth = _resolveLength(c.max_width, canvasW) + "px";
+        if (c.min_height != null) el.style.minHeight = _resolveLength(c.min_height, canvasH) + "px";
+        if (c.max_height != null) el.style.maxHeight = _resolveLength(c.max_height, canvasH) + "px";
+        if (c.layer != null) el.style.zIndex = c.layer;
+        if (c.opacity != null) el.style.opacity = c.opacity;
+        if (c.overflow) el.style.overflow = c.overflow;
+        if (c.background) el.style.background = c.background;
+        if (c.border && c.border !== "none") {
+            let bVal = c.border;
+            if (typeof bVal === "object" && bVal) {
+                bVal = (bVal.width || 1) + "px " + (bVal.style || "solid") + " " + (bVal.color || "#ffffff");
+            }
+            el.style.border = bVal;
+        }
+        if (c.border_radius != null) {
+            el.style.borderRadius = _resolveLength(c.border_radius, canvasW) + "px";
+        }
+        if (c.box_shadow && c.box_shadow !== "none") {
+            let bs = c.box_shadow;
+            if (typeof bs === "object" && bs) {
+                bs = (bs.inset ? "inset " : "") + (bs.x || 0) + "px " + (bs.y || 0) + "px " + (bs.blur || 0) + "px " + (bs.spread || 0) + "px " + (bs.color || "rgba(0,0,0,0.5)");
+            }
+            el.style.boxShadow = bs;
+        }
+        if (c.backdrop_filter && c.backdrop_filter !== "none") el.style.backdropFilter = c.backdrop_filter;
+
+        const blocks = _getContainerBlocks(c);
+        const b = blocks.body;
+        el.style.display = "flex";
+        el.style.flexDirection = "column";
+        const valign = b.valign || "center";
+        el.style.justifyContent = valign === "top" ? "flex-start" : valign === "bottom" ? "flex-end" : "center";
+        if (b.gap != null) el.style.gap = b.gap + "px";
+        const pt = (b.padding_top != null ? b.padding_top : b.padding) || 0;
+        const pr = (b.padding_right != null ? b.padding_right : b.padding) || 0;
+        const pb = (b.padding_bottom != null ? b.padding_bottom : b.padding) || 0;
+        const pl = (b.padding_left != null ? b.padding_left : b.padding) || 0;
+        el.style.padding = `${pt}px ${pr}px ${pb}px ${pl}px`;
+
+        el.innerHTML = "";
+        const t = blocks.text;
+        const r = blocks.reference;
+        const tr = blocks.translation;
+        const vn = blocks.verse_num;
+
+        const textHasContent = !!(data.text && t && t.visible !== false);
+        const refHasContent = !!(refText && r && r.visible !== false);
+        const transHasContent = !!(data.translation && tr && tr.visible !== false);
+
+        function makeTextEl() {
+            const h1 = document.createElement("h1");
+            h1.className = "verse-text";
+            let html = renderInlineColors(data.text);
+            const vnNum = extractVerseNumber(refText);
+            if (vnNum && vn && vn.visible !== false && (vn.mode || "inline") === "inline") {
+                html = '<span class="verse-num" style="color:' + (vn.color || "#cccccc") + '">' + vnNum + '</span> ' + html;
+            }
+            h1.innerHTML = html;
+            if (t.color) h1.style.color = t.color;
+            if (t.size != null) h1.style.fontSize = typeof t.size === "number" ? (t.size + "px") : t.size;
+            if (t.weight != null) h1.style.fontWeight = String(t.weight);
+            if (t.font_family) h1.style.fontFamily = t.font_family;
+            if (t.line_height != null) h1.style.lineHeight = String(t.line_height);
+            if (t.letter_spacing != null) h1.style.letterSpacing = typeof t.letter_spacing === "number" ? (t.letter_spacing + "px") : t.letter_spacing;
+            if (t.text_align) h1.style.textAlign = t.text_align;
+            if (t.text_transform) h1.style.textTransform = t.text_transform;
+            if (t.text_shadow && t.text_shadow !== "none") h1.style.textShadow = t.text_shadow;
+            return h1;
+        }
+
+        function makeRefEl() {
+            const p = document.createElement("p");
+            p.className = "verse-ref";
+            const sRef = document.createElement("span");
+            sRef.className = "verse-ref-text";
+            sRef.textContent = refText;
+            if (r.color) sRef.style.color = r.color;
+            if (r.size != null) sRef.style.fontSize = typeof r.size === "number" ? (r.size + "px") : r.size;
+            if (r.weight != null) sRef.style.fontWeight = String(r.weight);
+            if (r.font_family) sRef.style.fontFamily = r.font_family;
+            if (r.text_transform) sRef.style.textTransform = r.text_transform;
+            if (r.letter_spacing != null) sRef.style.letterSpacing = typeof r.letter_spacing === "number" ? (r.letter_spacing + "px") : r.letter_spacing;
+            p.appendChild(sRef);
+
+            if (transHasContent) {
+                const sTr = document.createElement("span");
+                sTr.className = "verse-ref-translation";
+                sTr.textContent = data.translation;
+                if (tr.color) sTr.style.color = tr.color;
+                if (tr.margin_left != null) sTr.style.marginLeft = typeof tr.margin_left === "number" ? (tr.margin_left + "px") : tr.margin_left;
+                if (tr.position === "left_of_reference" && typeof p.insertBefore === "function") {
+                    p.insertBefore(sTr, sRef);
+                } else if (tr.position === "above_reference") {
+                    p.style.display = "flex";
+                    p.style.flexDirection = "column-reverse";
+                    p.style.alignItems = "center";
+                    if (typeof p.appendChild === "function") p.appendChild(sTr);
+                } else if (tr.position === "below_reference") {
+                    p.style.display = "flex";
+                    p.style.flexDirection = "column";
+                    p.style.alignItems = "center";
+                    if (typeof p.appendChild === "function") p.appendChild(sTr);
+                } else {
+                    if (typeof p.appendChild === "function") p.appendChild(sTr);
+                }
+            }
+            return p;
+        }
+
+        if (textHasContent && refHasContent) {
+            if (r.position === "above_verse") {
+                el.appendChild(makeRefEl());
+                el.appendChild(makeTextEl());
+            } else {
+                el.appendChild(makeTextEl());
+                el.appendChild(makeRefEl());
+            }
+        } else if (textHasContent) {
+            el.appendChild(makeTextEl());
+        } else if (refHasContent) {
+            el.appendChild(makeRefEl());
+        } else if (transHasContent) {
+            const p = document.createElement("p");
+            const sTr = document.createElement("span");
+            sTr.textContent = data.translation;
+            if (tr.color) sTr.style.color = tr.color;
+            p.appendChild(sTr);
+            el.appendChild(p);
+        }
+    });
+}
+
+const ANIM_KEYFRAMES = {
+    fade_up:      { from: "opacity:0;transform:translateY(20px)",     to: "opacity:1;transform:translateY(0)" },
+    fade_in:      { from: "opacity:0",                                to: "opacity:1" },
+    fade_down:    { from: "opacity:1;transform:translateY(0)",        to: "opacity:0;transform:translateY(20px)" },
+    fade_out:     { from: "opacity:1",                                to: "opacity:0" },
+    scale_up:     { from: "opacity:0;transform:scale(0.85)",         to: "opacity:1;transform:scale(1)" },
+    scale_down:   { from: "opacity:1;transform:scale(1)",            to: "opacity:0;transform:scale(0.85)" },
+    slide_up:     { from: "transform:translateY(100%)",              to: "transform:translateY(0)" },
+    slide_down:   { from: "transform:translateY(0)",                 to: "transform:translateY(100%)" },
+};
+
+const ANIM_EASINGS = {
+    "ease-out":     "cubic-bezier(0.16, 1, 0.3, 1)",
+    "ease-in":      "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
+    "ease-in-out":  "cubic-bezier(0.65, 0, 0.35, 1)",
+    "linear":       "linear",
+    "spring":       "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "smooth":       "cubic-bezier(0.25, 0.1, 0.25, 1)",
+};
+
+function _injectAnimStyle() {
+    if (_animStyleEl) return;
+    _animStyleEl = document.createElement("style");
+    _animStyleEl.id = "rc-animations";
+    let css = "";
+    for (const [name, kf] of Object.entries(ANIM_KEYFRAMES)) {
+        css += `@keyframes rc-${name} { from { ${kf.from}; } to { ${kf.to}; } }\n`;
+    }
+    _animStyleEl.textContent = css;
+    document.head.appendChild(_animStyleEl);
+}
+
+function _applyAnimation(el, type, durationMs, easing) {
+    if (!type || type === "none" || !el) return;
+    const kfName = `rc-${type}`;
+    const dur = (durationMs || 600) + "ms";
+    const ease = ANIM_EASINGS[easing] || ANIM_EASINGS["ease-out"] || "ease-out";
+    el.style.animation = `${kfName} ${dur} ${ease} forwards`;
+    el.addEventListener("animationend", () => { el.style.animation = ""; }, { once: true });
+}
+
+function _resolveSlotDef(slot, registry) {
+    if (!slot || slot === "none") return null;
+    if (typeof slot === "string") {
+        if (registry && registry[slot]) return registry[slot];
+        return { type: slot, duration_ms: 600, easing: "ease-out" };
+    }
+    if (typeof slot === "object") {
+        if (slot.use) {
+            const base = (registry && registry[slot.use]) || { type: slot.use, duration_ms: 600, easing: "ease-out" };
+            return Object.assign({}, base, slot);
+        }
+        if (slot.type) return slot;
+    }
+    return null;
+}
+
+function _playElementAnimation(el, def) {
+    if (!el || !def || def.type === "none") return;
+    if (typeof el.animate === "function") {
+        const dur = def.duration_ms != null ? def.duration_ms : 600;
+        const ease = ANIM_EASINGS[def.easing] || def.easing || "ease-out";
+        const delay = def.delay_ms || 0;
+        let kfs = null;
+        if (def.type === "custom" && Array.isArray(def.keyframes)) {
+            kfs = def.keyframes.map(k => {
+                const f = { offset: (k.at || 0) / 100 };
+                if (k.opacity != null && k.opacity !== "base") f.opacity = k.opacity;
+                let tr = [];
+                if (k.translate_x != null || k.translate_y != null) {
+                    const tx = typeof k.translate_x === "number" ? (k.translate_x + "px") : (k.translate_x || "0");
+                    const ty = typeof k.translate_y === "number" ? (k.translate_y + "px") : (k.translate_y || "0");
+                    tr.push(`translate(${tx}, ${ty})`);
+                }
+                if (k.rotate != null) tr.push(`rotate(${k.rotate}deg)`);
+                if (k.scale != null) tr.push(`scale(${k.scale})`);
+                if (tr.length) f.transform = tr.join(" ");
+                if (k.blur != null && k.blur !== "base") f.filter = `blur(${typeof k.blur === "number" ? (k.blur + "px") : k.blur})`;
+                return f;
+            });
+        } else if (ANIM_KEYFRAMES[def.type]) {
+            if (def.type === "fade_in") kfs = [{ opacity: 0 }, { opacity: 1 }];
+            else if (def.type === "fade_out") kfs = [{ opacity: 1 }, { opacity: 0 }];
+            else if (def.type === "fade_up") kfs = [{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1, transform: "translateY(0)" }];
+            else if (def.type === "fade_down") kfs = [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(20px)" }];
+            else if (def.type === "scale_up") kfs = [{ opacity: 0, transform: "scale(0.85)" }, { opacity: 1, transform: "scale(1)" }];
+            else if (def.type === "scale_down") kfs = [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.85)" }];
+            else if (def.type === "slide_up") kfs = [{ transform: "translateY(100%)" }, { transform: "translateY(0)" }];
+            else if (def.type === "slide_down") kfs = [{ transform: "translateY(0)" }, { transform: "translateY(100%)" }];
+        }
+        if (kfs) {
+            try {
+                const anim = el.animate(kfs, { duration: dur, delay: delay, easing: ease, fill: "forwards" });
+                if (anim && anim.finished) {
+                    anim.finished.then(() => {
+                        try { anim.cancel(); } catch (e) {}
+                    });
+                }
+                return anim;
+            } catch (e) {}
+        }
+    }
+    _injectAnimStyle();
+    _applyAnimation(el, def.type, def.duration_ms, def.easing);
+}
+
+function _runAnimation(data, phase) {
+    const theme = data.theme_data;
+    if (!theme) return;
+    const anims = theme.animations;
+    if (anims && phase === "display_enter" && anims.display_enter) {
+        _injectAnimStyle();
+        _applyAnimation(container, anims.display_enter.type, anims.display_enter.duration_ms, anims.display_enter.easing);
+        return;
+    } else if (anims && phase === "between_slides" && anims.between_slides) {
+        _injectAnimStyle();
+        _applyAnimation(container, anims.between_slides.in_type, anims.between_slides.duration_ms, anims.between_slides.easing);
+        return;
+    }
+
+    const containers = _currentContainers.length > 0 ? _currentContainers : [themeContainer(theme)];
+    containers.forEach(c => {
+        const el = document.getElementById("rc-cont-" + c.id) || container;
+        if (c.animation) {
+            let slot = null;
+            if (phase === "display_enter") slot = c.animation.entry;
+            else if (phase === "between_slides") slot = (c.animation.transition && c.animation.transition.in) || c.animation.transition;
+            const def = _resolveSlotDef(slot, anims);
+            if (def) _playElementAnimation(el, def);
+        }
+        const blocks = _getContainerBlocks(c);
+        ["text", "reference", "translation", "title"].forEach(bName => {
+            const b = blocks[bName];
+            if (b && b.animation) {
+                let slot = null;
+                if (phase === "display_enter") slot = b.animation.entry;
+                else if (phase === "between_slides") slot = (b.animation.transition && b.animation.transition.in) || b.animation.transition;
+                const def = _resolveSlotDef(slot, anims);
+                const bEl = el.querySelector("." + (bName === "text" ? "verse-text" : "verse-ref"));
+                if (def && bEl) _playElementAnimation(bEl, def);
+            }
+        });
+    });
+}
+
+function _runExitAnimation(callback) {
+    const prevTheme = _prevPayload && _prevPayload.theme_data;
+    const anims = prevTheme && prevTheme.animations;
+    if (anims && anims.display_exit && anims.display_exit.type) {
+        const a = anims.display_exit;
+        _injectAnimStyle();
+        const kfName = `rc-${a.type}`;
+        const dur = (a.duration_ms || 400) + "ms";
+        const ease = ANIM_EASINGS[a.easing] || ANIM_EASINGS["ease-out"];
+        container.style.animation = `${kfName} ${dur} ${ease} forwards`;
+        container.addEventListener("animationend", () => {
+            container.style.animation = "";
+            callback();
+        }, { once: true });
+        return;
+    }
+    if (_currentContainers && _currentContainers.length > 0) {
+        const first = _currentContainers[0];
+        if (first.animation && first.animation.out) {
+            const def = _resolveSlotDef(first.animation.out, anims);
+            if (def) {
+                const el = document.getElementById("rc-cont-" + first.id) || container;
+                const anim = _playElementAnimation(el, def);
+                if (anim && anim.finished) {
+                    anim.finished.then(() => {
+                        callback();
+                    });
+                    return;
+                }
+            }
+        }
+    }
+    callback();
+}
+
+// ─── Inline run markup ───────────────────────────────────────────────
+// Slide text may carry [words (k=v; k=v)] runs (legacy [words: (#hex)]
+// still parses as color-only). The payload arrives HTML-escaped by
+// sanitize_payload(); this converts runs to <span> elements and single
+// newlines to <br/> at render time — the single conversion point; never
+// pre-convert server-side or spans double-escape into text.
+// A bracket whose final (...) group holds no valid params stays literal.
+const _INLINE_TRUE = new Set(["true", "1", "yes"]);
+const _INLINE_FALSE = new Set(["false", "0", "no"]);
+const _INLINE_KEYS = new Set(["size", "bold", "color", "italics", "case",
+    "underline", "strike", "align", "spacing", "super", "sub",
+    "outline", "shadow", "dir", "hr", "font"]);
+
 
 function _attrEscape(text) {
     return String(text == null ? "" : text)
         .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
         .replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
 
 // One inline run with a true outward outline: a stroke-only copy behind the
 // opaque glyphs. `inner` is the already-escaped run content (may hold <sup>,
@@ -906,9 +1765,7 @@ function _outlineParts(value) {
     return c ? { width: 1, color: c } : null;
 }
 
-// One inline run with a true outward outline: a stroke-only copy behind the
-// opaque glyphs. `inner` is the already-escaped run content (may hold <sup>,
-// <sub>); `plain` is the text the copy repeats.
+
 function _colorA(color, alpha) {
     const d = color.replace("#", "");
     const r = parseInt(d.slice(0, 2), 16), g = parseInt(d.slice(2, 4), 16),
@@ -1086,272 +1943,201 @@ function _outlineCss(value) {
         + ",var(--rc-text-shadow,0 4px 12px rgba(0,0,0,0.4))";
 }
 
-// Nested containers: `containers: {name: {x, y, ...styling, body, text,
-// ...}}`. Single-container themes resolve without a name; the geometry
-// (stage px, 1920x1080) places the container absolutely, absent geometry
-// keeps legacy flow. Legacy absolute text/reference boxes
-// (`{text: {x, y, ...}}`, no nested blocks) keep their own path below.
-function _isNewContainers(ct) {
-    if (!ct || typeof ct !== "object") return false;
-    return Object.values(ct).some(v => v && typeof v === "object" &&
-        (typeof v.text === "object" || typeof v.body === "object"));
+function _parseInlineColor(value) {
+    const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec((value || "").trim());
+    if (!m) return null;
+    let c = m[1];
+    if (c.length === 3) c = c.split("").map(ch => ch + ch).join("");
+    return "#" + c.toLowerCase();
 }
 
-function themeContainer(theme, name) {
-    const ct = theme && theme.containers;
-    if (!_isNewContainers(ct)) return {};
-    const keys = Object.keys(ct);
-    if (name && ct[name] && typeof ct[name] === "object") return ct[name];
-    if (name) console.warn("Container '" + name + "' not found — using first.");
-    return (keys.length && typeof ct[keys[0]] === "object") ? ct[keys[0]] : {};
-}
-
-// The deck's explicit text size from the latest applyTheme call. Auto-fit
-// normally picks any size between the theme's min/max, which would silently
-// swallow a deck-level `size=` the operator just set. The deck nominal is
-// authorial intent, so it becomes the fit CEILING: the text starts at that
-// size, grows never, and shrinks only when it genuinely overflows (floored
-// by the effective min). Cleared on every theme re-apply so a plain theme
-// switch (slideFormat absent) falls back to the free fit. Read by
-// autoFitText, which always follows applyTheme in the update sequence.
-let _deckTextSize = null;
-
-function applyTheme(theme, slideFormat) {
-    if (!theme) return;
-    resetTheme();
-    const root = document.documentElement;
-    // Content blocks live inside the active container; the flat top
-    // level stays as a fallback so hand-written themes keep working.
-    const cont = themeContainer(theme);
-    const hasNested = cont && (typeof cont.text === "object" || typeof cont.body === "object");
-    const c = hasNested ? cont : (theme.container || {});
-    const t = (hasNested && typeof cont.text === "object" && cont.text)
-        || theme.text || {};
-    const r = (hasNested && typeof cont.reference === "object" && cont.reference)
-        || theme.reference || {};
-    const tr = (hasNested && typeof cont.translation === "object" && cont.translation)
-        || theme.translation || {};
-    const b = (hasNested && typeof cont.body === "object" && cont.body)
-        || theme.body || {};
-
-    if (c.background)    root.style.setProperty("--rc-container-bg", c.background);
-    if (c.border)        root.style.setProperty("--rc-container-border", c.border);
-    if (c.border_radius) root.style.setProperty("--rc-border-radius", c.border_radius);
-    if (c.box_shadow)    root.style.setProperty("--rc-container-shadow", c.box_shadow);
-    if (c.backdrop_filter) root.style.setProperty("--rc-backdrop-filter", c.backdrop_filter);
-    if (c.padding)       root.style.setProperty("--rc-padding", c.padding);
-    if (c.max_width)     root.style.setProperty("--rc-max-width", c.max_width);
-    if (c.min_width)     root.style.setProperty("--rc-min-width", c.min_width);
-    if (c.width)         root.style.setProperty("--rc-width", c.width);
-    if (c.height)        root.style.setProperty("--rc-height", c.height);
-    if (c.display)       root.style.setProperty("--rc-container-display", c.display);
-    if (c.flex_direction) root.style.setProperty("--rc-container-flex-direction", c.flex_direction);
-    if (c.justify_content) root.style.setProperty("--rc-container-justify-content", c.justify_content);
-    if (c.align_items)   root.style.setProperty("--rc-container-align-items", c.align_items);
-
-    if (b.vertical_align) root.style.setProperty("--rc-vertical-align", b.vertical_align);
-    if (b.padding_bottom) root.style.setProperty("--rc-padding-bottom", b.padding_bottom);
-
-    if (t.color)         root.style.setProperty("--rc-text-color", t.color);
-    if (t.size)          root.style.setProperty("--rc-text-size", t.size);
-    if (t.weight)        root.style.setProperty("--rc-text-weight", t.weight);
-    if (t.line_height)   root.style.setProperty("--rc-text-line-height", t.line_height);
-    // The theme's outline (explicit text_outline, or a hard text_shadow in
-    // disguise) drives the same property a deck's outline= does, so a deck can
-    // broaden it or switch it off. A genuine drop shadow stays a drop shadow.
-    const tOutline = _themeOutline(t);
-    if (tOutline) root.style.setProperty("--rc-text-outline", tOutline);
-    const tShadowRaw = String(t.text_shadow || "").trim();
-    // A shadow consumed as the outline (legacy hard ring in disguise)
-    // must not ALSO paint as a shadow — that would double the outline.
-    // Any other none/off/zero shadow resolves to none EXPLICITLY: leaving
-    // the variable unset falls back to the stylesheet's default soft
-    // shadow, which paints a phantom shadow over outlined text.
-    const shadowIsOutline = !!tOutline
-        && _themeOutline({ text_shadow: tShadowRaw }) === tOutline;
-    if (!shadowIsOutline) {
-        if (tShadowRaw) {
-            root.style.setProperty("--rc-text-shadow",
-                _shadowIsNone(tShadowRaw) ? "none" : tShadowRaw);
+function parseInlineParams(raw) {
+    const params = {};
+    let found = false;
+    for (const seg of (raw || "").split(";")) {
+        const s = seg.trim();
+        if (!s) continue;
+        const eq = s.indexOf("=");
+        if (eq < 0) continue;
+        const key = s.slice(0, eq).trim().toLowerCase();
+        const value = s.slice(eq + 1);
+        if (!_INLINE_KEYS.has(key)) continue;
+        if (key === "size") {
+            const n = parseInt(value, 10);
+            if (!isNaN(n)) { params.size_nominal = n; found = true; }
+        } else if (key === "bold" || key === "italics") {
+            const v = value.trim().toLowerCase();
+            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
+            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
+        } else if (key === "color") {
+            const c = _parseInlineColor(value);
+            if (c) { params.color = c; found = true; }
+        } else if (key === "case") {
+            const v = value.trim().toLowerCase();
+            if (v === "upper" || v === "lower" || v === "origin") {
+                params.case = v; found = true;
+            }
+        } else if (key === "underline" || key === "strike" || key === "super" || key === "sub" || key === "hr") {
+            const v = value.trim().toLowerCase();
+            if (_INLINE_TRUE.has(v)) { params[key] = true; found = true; }
+            else if (_INLINE_FALSE.has(v)) { params[key] = false; found = true; }
+        } else if (key === "align") {
+            const v = value.trim().toLowerCase();
+            if (v === "left" || v === "center" || v === "right" || v === "justify") { params.align = v; found = true; }
+        } else if (key === "dir") {
+            const v = value.trim().toLowerCase();
+            if (v === "rtl" || v === "ltr") { params.dir = v; found = true; }
+        } else if (key === "spacing") {
+            const n = parseFloat(value);
+            if (!isNaN(n) && n >= 0.5 && n <= 3.0) { params.spacing = n; found = true; }
+        } else if (key === "outline") {
+            // legacy color-only ("#ff0000"), explicit thickness+color
+            // ("2px #ff0000"), or an explicit off ("none"/"off").
+            const v = String(value || "").trim();
+            const low = v.toLowerCase();
+            if (low === "none" || low === "off") {
+                // Explicit off: the deck overrides an inherited outline.
+                params.outline = "none"; found = true;
+            } else if (_outlineRing(v)) {
+                params.outline = v; found = true;
+            }
+        } else if (key === "shadow") {
+            // "<size>px [opacity%] [distance px] #hex"; opacity/distance are
+            // optional, "none" is an explicit off.
+            const sh = _parseShadow(value);
+            if (sh === "none") { params.shadow = "none"; found = true; }
+            else if (sh) { params.shadow = value; found = true; }
+        } else if (key === "font") {
+            const v = (value || "").replace(/[;()\[\]"']/g, "").trim();
+            if (v && v.length <= 60) { params.font = v; found = true; }
         }
-        // Absent entirely: leave unset, the stylesheet default applies.
     }
-    // A theme-only change carries no fresh text: restore pristine markup so
-    // the new metrics reconvert below instead of persisting stale SVGs.
-    try { invalidateOutlines(); } catch (e) {}
-    if (typeof applyOutlineLayers === "function") applyOutlineLayers();
-    if (t.letter_spacing) root.style.setProperty("--rc-text-letter-spacing", t.letter_spacing);
-    if (t.margin_bottom) root.style.setProperty("--rc-text-margin-bottom", t.margin_bottom);
-    if (t.min_size)      root.style.setProperty("--rc-text-min-size", t.min_size);
-    if (t.max_size)      root.style.setProperty("--rc-text-max-size", t.max_size);
-    if (t.font_family)   root.style.setProperty("--rc-text-font-family", t.font_family);
-    if (t.text_transform) root.style.setProperty("--rc-text-transform", t.text_transform);
-    if (t.text_align)   root.style.setProperty("--rc-text-align", t.text_align);
-
-    // Deck-level slide format overrides theme text (cascade: theme < deck).
-    const f = slideFormat || {};
-    // Key ABSENT (applyTheme(theme) alone — e.g. a pure theme re-apply)
-    // leaves the deck size that the on-screen content still carries;
-    // key PRESENT re-measures (null clears it: verses get the free fit).
-    if (slideFormat !== undefined) {
-        _deckTextSize = (f.size_nominal != null) ? f.size_nominal : null;
-    }
-    if (f.color) root.style.setProperty("--rc-text-color", f.color);
-    if (f.size_nominal != null) root.style.setProperty("--rc-text-size", f.size_nominal + "px");
-    if (f.size_min != null) root.style.setProperty("--rc-text-min-size", f.size_min + "px");
-    if (f.size_max != null) root.style.setProperty("--rc-text-max-size", f.size_max + "px");
-    if (f.bold === true) root.style.setProperty("--rc-text-weight", "800");
-    else if (f.bold === false) root.style.setProperty("--rc-text-weight", "400");
-    if (f.italics === true) root.style.setProperty("--rc-text-font-style", "italic");
-    else if (f.italics === false) root.style.setProperty("--rc-text-font-style", "normal");
-    if (f.case === "upper") root.style.setProperty("--rc-text-transform", "uppercase");
-    else if (f.case === "lower") root.style.setProperty("--rc-text-transform", "lowercase");
-    else if (f.case === "origin") root.style.setProperty("--rc-text-transform", "none");
-    const fdeco = [];
-    if (f.underline === true) fdeco.push("underline");
-    if (f.strike === true) fdeco.push("line-through");
-    if (fdeco.length) root.style.setProperty("--rc-text-decoration", fdeco.join(" "));
-    else if (f.underline === false || f.strike === false) root.style.setProperty("--rc-text-decoration", "none");
-    if (f.align) root.style.setProperty("--rc-text-align", f.align);
-    if (f.spacing != null) root.style.setProperty("--rc-text-line-height", String(f.spacing));
-    if (f.dir) root.style.setProperty("--rc-text-direction", f.dir);
-    // Deck outline: absent -> the theme's outline stays; "none" -> off.
-    // Deck outline (absent -> the theme's outline applies; "none" -> off).
-    const deckOutline = (f.outline && f.outline !== "none") ? f.outline
-                        : (f.outline === "none" ? "none" : null);
-    if (deckOutline) root.style.setProperty("--rc-text-outline-value", deckOutline);
-    else root.style.removeProperty("--rc-text-outline-value");
-    // Deck shadow: absent -> the theme's shadow stays; "none" -> off for
-    // the whole deck. The stored value is canonical ("8px 40% 3px #hex
-    // angle"), not CSS, so it converts; garbage is ignored (theme stays).
-    if (f.shadow === "none" || f.shadow === "off") {
-        root.style.setProperty("--rc-text-shadow", "none");
-    } else if (f.shadow) {
-        const ds = _parseShadow(f.shadow);
-        if (ds && ds !== "none") root.style.setProperty("--rc-text-shadow", _shadowRing(ds));
-    }
-    if (f.font) root.style.setProperty("--rc-text-font-family", "'" + String(f.font).replace(/'/g, "") + "'");
-
-    if (r.color)         root.style.setProperty("--rc-ref-color", r.color);
-    if (r.size)          root.style.setProperty("--rc-ref-size", r.size);
-    if (r.weight)        root.style.setProperty("--rc-ref-weight", r.weight);
-    if (r.text_transform) root.style.setProperty("--rc-ref-text-transform", r.text_transform);
-    if (r.letter_spacing) root.style.setProperty("--rc-ref-letter-spacing", r.letter_spacing);
-    if (r.font_family)   root.style.setProperty("--rc-ref-font-family", r.font_family);
-
-    if (tr.color)        root.style.setProperty("--rc-translation-color", tr.color);
-    if (tr.margin_left)  root.style.setProperty("--rc-translation-margin-left", tr.margin_left);
-
-    const vn = (hasNested && typeof cont.verse_num === "object" && cont.verse_num)
-        || theme.verse_num || {};
-    if (vn.color)        root.style.setProperty("--rc-verse-num-color", vn.color);
-    if (vn.font_family)  root.style.setProperty("--rc-verse-num-font-family", vn.font_family);
-
-    autoFitText();
+    return found ? params : null;
 }
 
-// Post-conversion fit: outline/shadow padding grows the content after
-// auto-fit measured pristine text. Without this loop the padded content can
-// exceed the container and clip (tops first under bottom-anchored flex).
-// Shrinks geometrically to the theme min size, then stops: deterministic,
-// at most 8 extra passes, and a no-op when everything already fits.
-function fitOutlineLayers(containerH, minFontSize) {
-    for (let i = 0; i < 8; i++) {
-        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
-        const refH = (typeof verseRef !== "undefined" && verseRef)
-            ? verseRef.offsetHeight : 0;
-        const totalH = verseText.offsetHeight + margin + refH;
-        if (totalH <= containerH) return;
-        const cur = parseFloat(verseText.style.fontSize) || minFontSize;
-        const next = Math.max(minFontSize, Math.floor(cur * 0.9));
-        if (next >= cur) return;
-        verseText.style.fontSize = next + 'px';
-        invalidateOutlines();
-        applyOutlineLayers();
+function spanStyle(p) {
+    // Shared contract with core/slide_parser._span_style — keep in sync.
+    const styles = [];
+    if (p.color) styles.push("color:" + p.color);
+    if (p.size_nominal != null) styles.push("font-size:" + p.size_nominal + "px");
+    if (p.bold === true) styles.push("font-weight:700");
+    else if (p.bold === false) styles.push("font-weight:400");
+    if (p.italics === true) styles.push("font-style:italic");
+    else if (p.italics === false) styles.push("font-style:normal");
+    if (p.case === "upper") styles.push("text-transform:uppercase");
+    else if (p.case === "lower") styles.push("text-transform:lowercase");
+    else if (p.case === "origin") styles.push("text-transform:none");
+    const deco = [];
+    if (p.underline === true) deco.push("underline");
+    if (p.strike === true) deco.push("line-through");
+    if (deco.length) styles.push("text-decoration:" + deco.join(" "));
+    else if (p.underline === false || p.strike === false) styles.push("text-decoration:none");
+    if (p.align) styles.push("display:inline-block;width:100%;text-align:" + p.align);
+    if (p.spacing != null) styles.push("line-height:" + p.spacing);
+    // An outline needs a duplicated stroke layer (see .rc-oc in the
+    // stylesheet), so it is NOT emitted here; _outlineRun() builds it from
+    // p.outline once the run element exists.
+    if (p.outline === "none") {
+        // Explicit off: drop any inherited outline and shadow for this run.
+        styles.push("text-shadow:none");
     }
+    if (p.shadow === "none") {
+        styles.push("text-shadow:none");
+    } else if (p.shadow) {
+        const sc = _shadowCss(p.shadow);
+        if (sc) styles.push(sc);
+    }
+    if (p.dir) styles.push("direction:" + p.dir + ";unicode-bidi:embed");
+    if (p.font) styles.push("font-family:'" + String(p.font).replace(/'/g, "") + "'");
+    return styles.join(";");
 }
 
-function autoFitText() {
-    const rootStyle = getComputedStyle(document.documentElement);
-    const containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
-
-    // Measure pristine text: converted SVGs carry outline padding that would
-    // otherwise make auto-fit over-shrink (and stale scopes could not
-    // rebuild). Conversion re-runs at the end, once, at the fitted size.
-    invalidateOutlines();
-    if (!containerH || isNaN(containerH)) {
-        verseText.style.fontSize = '';
-        // No fitting to do, but the outline still needs (re)building: layout
-        // is measurable here (callers invoke autoFitText once visible).
-        applyOutlineLayers();
-        return;
-    }
-
-    if (!verseText.textContent.trim()) return;
-
-    // Get min/max font size from theme
-    const minFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-min-size')) || 4;
-    let maxFontSize = parseInt(rootStyle.getPropertyValue('--rc-text-max-size')) || 300;
-    // A deck's explicit size is the fit ceiling AND the opener: measure at
-    // the exact intent first (the plain binary search would floor a
-    // converging lo just under it, giving 41px for a 42 setting); on
-    // genuine overflow the search runs below the deck size instead.
-    // (Deck min/max of `size=n,m` ride the SAME vars above, so they need
-    // no separate handling.)
-    if (_deckTextSize != null && _deckTextSize > 0) {
-        maxFontSize = _deckTextSize;
-    }
-    let lo = minFontSize, hi = maxFontSize;
-    if (_deckTextSize != null && _deckTextSize > 0) {
-        verseText.style.fontSize = _deckTextSize + 'px';  // exact intent
-        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
-        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
-        if (totalH <= containerH) {
-            lo = hi = _deckTextSize;        // fits: exact, no search
+function renderInlineColors(text) {
+    const raw = text || "";
+    const runRe = /\[([^\[\]]+?)(?:\s*\(([^()]*)\))?\]/g;
+    let out = "", last = 0, m;
+    while ((m = runRe.exec(raw)) !== null) {
+        // Bare \n markers outside brackets convert straight to breaks.
+        out += raw.slice(last, m.index).replace(/\\n/g, "<br/>");
+        const runText = m[1], runParams = m[2];
+        if (runParams === undefined) {
+            if (runText.trim() === "\\n") {
+                out += '<span style=""><br/></span>';  // bare [\n] gap
+            } else {
+                out += m[0];  // literal — keep brackets as typed
+            }
         } else {
-            hi = _deckTextSize;
-            // Shrink inside the box, but never chase a floor ABOVE the
-            // deck size (a 20px deck on a 40px-min theme stays 20px over
-            // budget — the operator's explicit size may overflow by
-            // intent; auto-fit only fills when unbounded).
-            lo = Math.min(minFontSize, hi);
+            const parsed = parseInlineParams(runParams);
+            if (parsed) {
+                if (parsed.hr === true) {
+                    out += '<div style="border-top:2px solid currentColor;margin:8px 0"></div>';
+                } else {
+                    const disp = runText.trim();
+                    let inner = disp;
+                    if (parsed.super === true) inner = "<sup>" + disp + "</sup>";
+                    else if (parsed.sub === true) inner = "<sub>" + disp + "</sub>";
+                    if (disp === "" || disp === "\\n") {
+                        out += '<span style="' + spanStyle(parsed) + '"><br/></span>';
+                    } else {
+                        // An outline becomes a duplicated stroke layer behind
+                        // the glyphs; everything else rides the inline style.
+                        // Explicit offs ride as data markers: the block SVG
+                        // conversion destroys the inline text-shadow:none,
+                        // so it must know which runs opted out of the
+                        // stroke and of the inherited shadow.
+                        const noAttrs = [];
+                        if (parsed.outline === "none") noAttrs.push("outline");
+                        if (parsed.shadow === "none") noAttrs.push("shadow");
+                        const noStr = noAttrs.length
+                            ? ' data-rc-no="' + noAttrs.join(" ") + '"' : "";
+                        const body = (parsed.outline && parsed.outline !== "none")
+                            ? _outlineRun(inner, _attrEscape(disp), parsed.outline)
+                            : inner;
+                        out += '<span' + noStr + ' style="' + spanStyle(parsed) + '">' + body + '</span>';
+                    }
+                }
+            } else {
+                const legacyText = /^(.*):\s*$/.exec(runText);
+                const legacyHex = _parseInlineColor(runParams);
+                if (legacyText && legacyHex) {
+                    out += '<span style="color:' + legacyHex + '">' + legacyText[1] + '</span>';
+                } else {
+                    out += m[0];
+                }
+            }
         }
+        last = m.index + m[0].length;
     }
-    while (hi - lo > 0.5) {
-        const mid = (lo + hi) / 2;
-        verseText.style.fontSize = mid + 'px';
-
-        const margin = parseInt(getComputedStyle(verseText).marginBottom) || 0;
-        const totalH = verseText.offsetHeight + margin + verseRef.offsetHeight;
-
-        if (totalH <= containerH) { lo = mid; } else { hi = mid; }
-    }
-
-    verseText.style.fontSize = Math.floor(lo) + 'px';
-    applyOutlineLayers();   // the outline copy must track the fitted size
-    fitOutlineLayers(containerH, minFontSize);
-}
-
-function extractVerseNumber(reference) {
-    // Empty/blank references (e.g. slides with show_title off) carry no number
-    if (!reference) return null;
-    const match = reference.match(/(\d+:\d+)$/);
-    if (match) {
-        return match[1].split(':').pop(); // Get just the verse number
-    }
-    return null;
+    out += raw.slice(last).replace(/\\n/g, "<br/>");
+    return out.replace(/\r?\n/g, "<br/>");
 }
 
 function handlePayload(data, silent) {
     if (data.action === "clear") {
-        container.classList.add("hidden");
+        if (silent) {
+            container.classList.add("hidden");
+            container.style.animation = "";
+            if (typeof document !== "undefined" && document.querySelectorAll) {
+                document.querySelectorAll(".rc-dynamic-container").forEach(el => el.classList.add("hidden"));
+            }
+            _prevPayload = null;
+            return;
+        }
+        _runExitAnimation(() => {
+            container.classList.add("hidden");
+            container.style.animation = "";
+            if (typeof document !== "undefined" && document.querySelectorAll) {
+                document.querySelectorAll(".rc-dynamic-container").forEach(el => el.classList.add("hidden"));
+            }
+        });
+        _prevPayload = null;
         return;
     }
+    
     if (data.action === "display") {
-        // Update scripture text (inline [words: (#hex)] colors rendered here)
+        const isTransition = _prevPayload && _prevPayload.action === "display";
         if (data.text) {
             let verseTextContent = renderInlineColors(data.text);
-            // Prepend verse number if reference is available
             const refText = data.reference || (data.book && data.chapter && data.verse 
                 ? data.book + " " + data.chapter + ":" + data.verse 
                 : null);
@@ -1360,30 +2146,22 @@ function handlePayload(data, silent) {
                 verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
             }
             verseText.innerHTML = verseTextContent;
-            // Fresh nodes: drop the previous payload's stash. dataset lives
-            // on the element, not the replaced children, so without this a
-            // later invalidate() would resurrect stale markup over this
-            // payload's own inline formatting.
             delete verseText.dataset.rcOcSrc;
             delete verseText.dataset.rcOcDone;
-            // No conversion here: the theme is not applied yet (and the
-            // container may still be hidden), so metrics would be stale and
-            // the markers consumed. Conversion runs post-theme at the end of
-            // autoFitText, which always follows below once visible.
         }
         
-        // Update reference and translation as separate elements.
-        // Blank fields CLEAR the line: a slide with show_title off must not
-        // leave the previous verse's reference stale on screen.
         if (data.reference) {
             verseRefText.innerHTML = data.reference;
         } else if (data.book && data.chapter && data.verse) {
             verseRefText.innerHTML = data.book + " " + data.chapter + ":" + data.verse;
         } else if (data.ref) {
-            // Legacy: if only ref is provided (no reference/translation), parse it
             const m = data.ref.match(/^\[([^\]]+)\]\s*(.+)$/);
-            if (m) { verseRefTranslation.innerHTML = m[1]; verseRefText.innerHTML = m[2]; }
-            else { verseRefText.innerHTML = data.ref; }
+            if (m) {
+                verseRefTranslation.innerHTML = m[1];
+                verseRefText.innerHTML = m[2];
+            } else {
+                verseRefText.innerHTML = data.ref;
+            }
         } else {
             verseRefText.innerHTML = "";
         }
@@ -1393,24 +2171,39 @@ function handlePayload(data, silent) {
         } else if (!data.ref) {
             verseRefTranslation.innerHTML = "";
         }
+
+        const refEmpty = !verseRefText.textContent.trim()
+            && !verseRefTranslation.textContent.trim();
+        verseRef.style.display = refEmpty ? "none" : "";
+        verseText.style.marginBottom = refEmpty ? "0px" : "";
         
-        // Contract three-step: reset is UNCONDITIONAL — a payload without
-        // theme_data renders CSS fallbacks, never leftover variables.
         resetTheme();
-        if (data.theme_data) { applyTheme(data.theme_data, data.slide_format); document.body.className = ""; }
-        else if (data.theme) { document.body.className = "theme-" + data.theme; }
-        function _showContainer() {
+        if (data.theme_data) {
+            applyTheme(data.theme_data, data.slide_format);
+            document.body.className = "";
+        } else if (data.theme) {
+            document.body.className = "theme-" + data.theme;
+        }
+        
+        if (_currentContainers && _currentContainers.length > 1) {
+            _renderMultiContainers(data);
+        } else {
             container.classList.remove("hidden");
             autoFitText();
+            _populateContainers(data);
         }
-        if (_fontsReady) { _showContainer(); }
-        else { document.fonts.ready.then(_showContainer); }
+
+        if (!silent) {
+            if (isTransition) {
+                _runAnimation(data, "between_slides");
+            } else {
+                _runAnimation(data, "display_enter");
+            }
+            _prevPayload = data;
+        }
     }
 }
 
-// Silent resync (mirror of display.js): full render, no animation
-// state, resolves after 2 presented frames so the caller can reveal
-// the view knowing current content is on screen.
 function refreshPayload(data) {
     return new Promise(function(resolve) {
         handlePayload(data, true);
@@ -1429,18 +2222,16 @@ function refreshClear() {
     });
 }
 
-const VIRTUAL_W = 1920, VIRTUAL_H = 1080;
-function resizeCanvas() {
-    const w = window.innerWidth, h = window.innerHeight;
-    const scale = Math.min(w / VIRTUAL_W, h / VIRTUAL_H);
-    document.body.style.transform = "scale(" + scale + ")";
+
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+        try { invalidateOutlines(); applyOutlineLayers(); } catch (e) {}
+    });
 }
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
+
 </script>
 </body>
 </html>"""
-
 
 class DisplayView(QWebEngineView):
     """A web view that renders verses identically to the OBS display.
@@ -1517,19 +2308,11 @@ class DisplayView(QWebEngineView):
         """Apply a theme without changing the displayed content."""
         if not self._page_ready:
             return
-        # Phase-2 bridge: the embedded renderer is still the v1 engine, so a
-        # resolved v2 theme is projected before it crosses into JS.
-        from core.theme_compat import project_legacy
-        theme_data = project_legacy(theme_data)
         js = "applyTheme(" + json.dumps(theme_data) + ")"
         self.page().runJavaScript(js)
 
     def _run_payload(self, payload: dict, callback=None):
         """Execute handlePayload() with the given payload in the page."""
-        # Phase-2 bridge: the embedded renderer is still the v1 engine.
-        if isinstance(payload, dict) and isinstance(payload.get("theme_data"), dict):
-            from core.theme_compat import project_legacy
-            payload = dict(payload, theme_data=project_legacy(payload["theme_data"]))
         if not self._page_ready:
             self._pending_payload = payload
             self._pending_cb = callback
