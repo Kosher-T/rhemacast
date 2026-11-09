@@ -1,0 +1,150 @@
+{
+  "schema_version": 2,
+  "name": "reference_frames",
+  "label": "Stream Reference — Frames",
+  "description": "Lower-third reference bar with a per-side gold frame, a soft gradient plate and a sliding frame entrance.",
+  "author": "Qosher",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "transparent",
+    "fit": "none"
+  },
+  "animations": {
+    "frame_in": {
+      "type": "custom",
+      "label": "Frame in",
+      "duration_ms": 900,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": 0, "translate_x": -26, "blur": 5 },
+        { "at": 65, "opacity": 1, "translate_x": 4, "blur": 0 },
+        { "at": 100, "opacity": "base", "translate_x": 0, "blur": 0 }
+      ]
+    },
+    "frame_out": {
+      "type": "custom",
+      "label": "Frame out",
+      "duration_ms": 520,
+      "delay_ms": 0,
+      "easing": "ease-in",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": "base", "translate_y": 0 },
+        { "at": 100, "opacity": 0, "translate_y": 12 }
+      ]
+    }
+  },
+  "containers": [
+    {
+      "id": "main",
+      "layer": 0,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 20.0, "y": 470.0 },
+      "background": "linear-gradient(90deg, rgba(8,13,28,0.0) 0%, rgba(8,13,28,0.72) 12%, rgba(8,13,28,0.72) 88%, rgba(8,13,28,0.0) 100%)",
+      "border": {
+        "width": 0,
+        "style": "solid",
+        "color": "transparent",
+        "radius": 18,
+        "sides": {
+          "top": { "width": 1, "color": "@gold" },
+          "right": { "width": 5, "color": "@gold" },
+          "bottom": { "width": 1, "color": "@gold" },
+          "left": { "width": 5, "color": "@gold" }
+        }
+      },
+      "box_shadow": { "shared": "soft" },
+      "backdrop_filter": "none",
+      "width": "1880px",
+      "height": "300px",
+      "min_width": "1880px",
+      "max_width": "1880px",
+      "min_height": 0,
+      "max_height": null,
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": "frame_in",
+        "out": "frame_out"
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 6,
+          "padding": 24
+        },
+        "text": {
+          "visible": true,
+          "color": "@white",
+          "font_family": "'Nunito', sans-serif",
+          "size": "50px",
+          "min_size": "28px",
+          "max_size": "58px",
+          "weight": 600,
+          "line_height": "1.2",
+          "text_transform": "none",
+          "text_align": "center",
+          "letter_spacing": "-0.005em",
+          "margin_bottom": "12px",
+          "text_outline": "2px #0b1220",
+          "text_shadow": "0 6px 18px rgba(0, 0, 0, 0.55)",
+          "autosize": true,
+          "animation": {
+            "entry": { "use": "fade_up", "duration_ms": 700, "delay_ms": 180 },
+            "transition": { "out": "fade_out", "in": "fade_up" },
+            "out": "fade_out"
+          }
+        },
+        "reference": {
+          "visible": true,
+          "color": "@gold",
+          "font_family": "'DM Sans', sans-serif",
+          "size": "30px",
+          "weight": 500,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.12em",
+          "position": "below_verse",
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 600, "delay_ms": 360 },
+            "out": { "use": "fade_out", "duration_ms": 400 }
+          }
+        },
+        "translation": {
+          "visible": true,
+          "color": "@lime",
+          "margin_left": "10px",
+          "position": "right_of_reference",
+          "font_family": "'DM Sans', sans-serif",
+          "size": "28px",
+          "weight": 500,
+          "letter_spacing": "0.12em",
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 500, "delay_ms": 520 },
+            "out": { "use": "fade_out", "duration_ms": 400 }
+          }
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        }
+      }
+    }
+  ]
+}

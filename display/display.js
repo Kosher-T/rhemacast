@@ -90,6 +90,16 @@ function resetTheme() {
         container.style.overflow = "";
         container.style.gap = "";
         container.style.display = "";
+        container.style.background = "";
+        container.style.border = "";
+        container.style.borderRadius = "";
+        container.style.boxShadow = "";
+        container.style.backdropFilter = "";
+        ["Top", "Right", "Bottom", "Left"].forEach(side => {
+            container.style["border" + side + "Width"] = "";
+            container.style["border" + side + "Style"] = "";
+            container.style["border" + side + "Color"] = "";
+        });
     }
     const verseContent = document.getElementById("verse-content");
     if (verseContent && verseRef && verseText) {
@@ -123,6 +133,38 @@ function _resolveLength(val, canvasExtent) {
     }
     const num = parseFloat(s);
     return isNaN(num) ? null : num;
+}
+
+function _applyBorder(el, border) {
+    // §4.2.1: the base border is one shorthand and each authored side
+    // overrides it. Re-setting the shorthand every time also clears any
+    // longhands a previous theme wrote, so nothing leaks between containers.
+    if (!el || !el.style || border == null) return;
+    if (border === "none") {
+        el.style.border = "none";
+        return;
+    }
+    if (typeof border === "string") {
+        el.style.border = border;
+        return;
+    }
+    if (typeof border !== "object") return;
+    const baseWidth = border.width != null ? border.width : 1;
+    const baseStyle = border.style || "solid";
+    const baseColor = border.color != null ? border.color : "#ffffff";
+    el.style.border = baseWidth + "px " + baseStyle + " " + baseColor;
+    const sides = border.sides;
+    if (!sides || typeof sides !== "object") return;
+    ["Top", "Right", "Bottom", "Left"].forEach(side => {
+        const spec = sides[side.toLowerCase()];
+        if (!spec || typeof spec !== "object") return;
+        const width = spec.width != null ? spec.width : baseWidth;
+        const style = spec.style || baseStyle;
+        const color = spec.color != null ? spec.color : baseColor;
+        el.style["border" + side + "Width"] = width + "px";
+        el.style["border" + side + "Style"] = style;
+        el.style["border" + side + "Color"] = color;
+    });
 }
 
 function _computePosition(pos, width, height, canvasW, canvasH) {
@@ -194,6 +236,21 @@ function _getContainerBlocks(c) {
     };
 }
 
+function _authoredBlock(c, name) {
+    // Absence is meaningful once a theme splits into containers: a citation
+    // panel that declares only `reference` must not inherit the verse.
+    // `_getContainerBlocks` fills every key with `{}`, so presence has to be
+    // read from the raw container rather than from the normalized map.
+    if (!c || typeof c !== "object") return null;
+    const blocks = (c.blocks && typeof c.blocks === "object") ? c.blocks : null;
+    let b = blocks ? blocks[name] : null;
+    if (b == null) b = c[name];
+    if (b == null && name === "reference") {
+        b = (blocks && blocks.title) || c.title;
+    }
+    return (b && typeof b === "object") ? b : null;
+}
+
 let _currentTheme = null;
 let _currentContainers = [];
 
@@ -202,7 +259,11 @@ function applyCanvasFit(canvas) {
     if (!stg) return;
     const cw = (canvas && canvas.width) || 1920;
     const ch = (canvas && canvas.height) || 1080;
-    const fit = (canvas && canvas.fit) || "contain";
+    // The in-app preview always fits the panel: it is a viewport, not the
+    // OBS output surface, and v1 themes keep canvas.fit:"none" so OBS never
+    // rescales them. The preview sets window.__RC_PREVIEW before load.
+    const preview = typeof window !== "undefined" && window.__RC_PREVIEW === true;
+    const fit = preview ? "contain" : ((canvas && canvas.fit) || "contain");
     const bg = (canvas && canvas.background) || "transparent";
     stg.style.width = cw + "px";
     stg.style.height = ch + "px";
@@ -267,10 +328,15 @@ function applyTheme(theme, slideFormat) {
     if (c.border) {
         let bVal = c.border;
         if (typeof bVal === "object" && bVal) {
-            bVal = (bVal.width || 1) + "px " + (bVal.style || "solid") + " " + (bVal.color || "#ffffff");
+            const bw = bVal.width != null ? bVal.width : 1;
+            bVal = bw + "px " + (bVal.style || "solid") + " " + (bVal.color || "#ffffff");
         }
-        if (bVal && bVal !== "none") root.style.setProperty("--rc-container-border", bVal);
+        // "none" is a real value: leaving the variable unset would fall back
+        // to the stylesheet's 1px glass border.
+        if (bVal) root.style.setProperty("--rc-container-border", bVal);
     }
+    // Per-side declarations cannot ride a single border custom property.
+    _applyBorder(container, c.border);
     if (c.border_radius != null) {
         const br = _resolveLength(c.border_radius, canvasW);
         root.style.setProperty("--rc-border-radius", br != null ? (br + "px") : String(c.border_radius));
@@ -322,11 +388,27 @@ function applyTheme(theme, slideFormat) {
     if (c.layer != null) container.style.zIndex = c.layer;
     if (c.opacity != null) container.style.opacity = c.opacity;
     if (c.overflow) container.style.overflow = c.overflow;
+    // Resolved v2 panels encode their height in min_height/max_height while
+    // `height` stays "auto" (spec §4.2). The stylesheet only reads
+    // --rc-width/--rc-height, so without these inline writes the panel
+    // collapses to its content height (360px instead of the authored 860px).
+    if (c.min_height != null) {
+        const mh = _resolveLength(c.min_height, canvasH);
+        container.style.minHeight = mh != null ? (mh + "px") : "";
+    } else {
+        container.style.minHeight = "";
+    }
+    if (c.max_height != null) {
+        const mxh = _resolveLength(c.max_height, canvasH);
+        container.style.maxHeight = mxh != null ? (mxh + "px") : "";
+    } else {
+        container.style.maxHeight = "";
+    }
 
     // Body
     const valign = b.valign || (b.vertical_align ? (b.vertical_align.includes("start") ? "top" : b.vertical_align.includes("end") ? "bottom" : "center") : null);
+    const jc = valign === "top" ? "flex-start" : valign === "bottom" ? "flex-end" : "center";
     if (valign) {
-        const jc = valign === "top" ? "flex-start" : valign === "bottom" ? "flex-end" : "center";
         root.style.setProperty("--rc-container-justify-content", jc);
         root.style.setProperty("--rc-vertical-align", jc);
     } else if (b.vertical_align) {
@@ -342,6 +424,28 @@ function applyTheme(theme, slideFormat) {
         root.style.setProperty("--rc-padding-bottom", `${pb}px`);
     } else if (b.padding_bottom) {
         root.style.setProperty("--rc-padding-bottom", b.padding_bottom);
+    }
+
+    // Resolved v2 themes carry no `container.display`/flex keys (those were
+    // v1-only): the content stack is the flex box (spec §4.4). Without this
+    // the container falls back to `display:block`, body.valign does nothing,
+    // and every migrated theme loses its vertical centering.
+    const isV2 = theme.schema_version === 2
+        || (Array.isArray(theme.containers) && theme.containers.some(
+            c2 => c2 && typeof c2 === "object"
+                && (c2.blocks || typeof c2.body === "object")));
+    const verseContentEl = document.getElementById("verse-content");
+    if (isV2) {
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+        container.style.justifyContent = jc;
+        container.style.alignItems = "stretch";
+        if (verseContentEl) {
+            verseContentEl.style.display = "flex";
+            verseContentEl.style.flexDirection = "column";
+            verseContentEl.style.alignItems = "stretch";
+            if (b.gap != null) verseContentEl.style.gap = b.gap + "px";
+        }
     }
 
     // Text
@@ -466,6 +570,14 @@ function applyTheme(theme, slideFormat) {
 
     autoFitText();
     _applyContainers(theme);
+    // The first fit can run before the auto-height panel has its final box.
+    // Refit once for v2 min_height panels so a long verse cannot grow the
+    // frame off-stage.
+    if (typeof requestAnimationFrame === "function" && _minHeightFitTarget()) {
+        requestAnimationFrame(function () {
+            if (_currentTheme === theme) autoFitText();
+        });
+    }
 }
 
 function extractVerseNumber(reference) {
@@ -493,9 +605,43 @@ function fitOutlineLayers(containerH, minFontSize) {
     }
 }
 
+function _minHeightFitTarget() {
+    // §4.2 panels size themselves with min_height + height:auto. Reading the
+    // rendered box here is circular: an overflowing verse grows the auto-height
+    // panel, so the text always "fits" while the panel itself spills off-stage
+    // (the clipped-verse bug). The authored limit is the fit target, minus the
+    // panel's own padding and border, which are not available to the text.
+    // v1 and migrated themes keep min_height 0 and never enter this branch.
+    const theme = _currentTheme;
+    if (!theme || theme.schema_version !== 2 || !container) return null;
+    const c = themeContainer(theme);
+    if (!c) return null;
+    const canvasH = (theme.canvas && theme.canvas.height) || 1080;
+    let limit = null;
+    if (c.max_height != null) limit = _resolveLength(c.max_height, canvasH);
+    if ((limit == null || limit <= 0) && c.min_height != null) {
+        limit = _resolveLength(c.min_height, canvasH);
+    }
+    if (!limit || limit <= 0) return null;
+    const cs = getComputedStyle(container);
+    const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+        + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+    return Math.max(1, limit - pad);
+}
+
 function autoFitText() {
     const rootStyle = getComputedStyle(document.documentElement);
-    const containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
+    let containerH = parseInt(rootStyle.getPropertyValue('--rc-height'));
+    if (!containerH || isNaN(containerH)) {
+        containerH = _minHeightFitTarget();
+    } else if (_currentTheme && _currentTheme.schema_version === 2) {
+        // A fixed-height v2 panel's text lives inside its padding; the fit
+        // target is the content box, not the border box.
+        const ccs = getComputedStyle(container);
+        containerH = Math.max(1, containerH
+            - (parseFloat(ccs.paddingTop) || 0)
+            - (parseFloat(ccs.paddingBottom) || 0));
+    }
 
     invalidateOutlines();
     if (!containerH || isNaN(containerH)) {
@@ -652,6 +798,350 @@ function _populateContainers(data) {
     if (ctTransInner) ctTransInner.innerHTML = data.translation || "";
 }
 
+function _panelFitTarget(el) {
+    const cs = getComputedStyle(el);
+    const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    return Math.max(1, el.clientHeight - pad);
+}
+
+function _fitPanelText(el, c) {
+    // §4.2: every panel owns its own autosize. Without this the text renders
+    // at the authored size and overflow hides it (a 76px verse measured 1067px
+    // in a 780px panel and clipped on both edges).
+    const t = _authoredBlock(c, "text");
+    if (!t || t.autosize === false) return;
+    const h1 = el.querySelector(".verse-text");
+    if (!h1 || !h1.textContent.trim()) return;
+    const canvasH = (_currentTheme && _currentTheme.canvas
+        && _currentTheme.canvas.height) || 1080;
+    const minPx = _resolveLength(t.min_size, canvasH) || 4;
+    let maxPx = _resolveLength(t.max_size, canvasH) || 300;
+    if (_deckTextSize != null && _deckTextSize > 0) maxPx = _deckTextSize;
+    // A clamped block (max_lines) cannot spend more room by growing: the
+    // clamp reports the same height at any size. Cap growth at the authored
+    // size so autosize never turns a 2-line clamp into two giant lines.
+    if (t.max_lines != null) {
+        const authoredPx = _resolveLength(t.size, canvasH);
+        if (authoredPx) maxPx = Math.min(maxPx, authoredPx);
+    }
+    const target = _panelFitTarget(el);
+    if (!target || target <= 0) return;
+    const ref = el.querySelector(".verse-ref");
+    const gap = parseFloat(getComputedStyle(el).rowGap) || 0;
+    const measure = function () {
+        const margin = parseInt(getComputedStyle(h1).marginBottom) || 0;
+        return h1.offsetHeight + margin + (ref ? ref.offsetHeight : 0)
+            + (ref ? gap : 0);
+    };
+    let lo = Math.min(minPx, maxPx), hi = Math.max(minPx, maxPx);
+    while (hi - lo > 0.5) {
+        const mid = (lo + hi) / 2;
+        h1.style.fontSize = mid + "px";
+        if (measure() <= target) lo = mid; else hi = mid;
+    }
+    h1.style.fontSize = Math.floor(lo) + "px";
+}
+
+function _invalidatePanelOutlines() {
+    if (!_currentContainers || !_currentContainers.length) return;
+    _currentContainers.forEach(function (c) {
+        const root = document.getElementById("rc-cont-" + c.id);
+        const h1 = (root && typeof root.querySelector === "function")
+            ? root.querySelector(".verse-text") : null;
+        if (h1 && h1.dataset && h1.dataset.rcOcSrc !== undefined) {
+            h1.innerHTML = h1.dataset.rcOcSrc;
+            if (h1.dataset.rcOcW0) {
+                h1.classList.add("rc-oc");
+                h1.setAttribute("data-rc-oc-w", h1.dataset.rcOcW0);
+                h1.setAttribute("data-rc-oc-c", h1.dataset.rcOcC0 || "#000");
+            }
+            delete h1.dataset.rcOcDone;
+        }
+    });
+}
+
+const _SPLIT_MAX_UNITS = 160;
+const _SPLIT_MAX_DELAY = 5000;
+
+function _splitConfig(owner) {
+    // Accept either a block (`.animation`) or a bare assignment.
+    const anim = owner && (owner.animation || owner);
+    const split = anim && anim.split;
+    if (!split || (split.by !== "line" && split.by !== "word")) return null;
+    return split;
+}
+
+function _splitAssignment(base, split, index) {
+    const extra = index === 0 ? split.first : split.rest;
+    const out = Object.assign({}, base, extra || {});
+    // `transition` is itself a phase map: merging it shallowly would let a
+    // unit that overrides only `out` lose the parent's `in`, contradicting
+    // "omitted phases inherit from the parent assignment".
+    if (base.transition || (extra && extra.transition)) {
+        out.transition = Object.assign({}, base.transition || {},
+                                       (extra && extra.transition) || {});
+    }
+    delete out.split;
+    return out;
+}
+
+function _splitLook(split, index) {
+    const look = split.look || {};
+    return index === 0 ? (look.first || null) : (look.rest || null);
+}
+
+function _applySplitLook(unit, split, index) {
+    const look = _splitLook(split, index);
+    if (!look) return;
+    const nodes = [unit];
+    if (unit.querySelectorAll) {
+        unit.querySelectorAll(".rc-split-word").forEach(function (w) {
+            nodes.push(w);
+        });
+    }
+    nodes.forEach(function (node) {
+        if (look.color) node.style.color = look.color;
+        if (look.weight != null) node.style.fontWeight = String(look.weight);
+        if (look.font_style) node.style.fontStyle = look.font_style;
+        if (look.text_decoration) {
+            node.style.textDecoration = look.text_decoration;
+        }
+        // Opacity multiplies down the tree: setting the line's look on its
+        // words as well would paint 0.7 twice (0.49). The unit owns it.
+        if (look.opacity != null && node === unit) {
+            node.style.opacity = String(look.opacity);
+        }
+        if (look.letter_spacing != null) {
+            node.style.letterSpacing = typeof look.letter_spacing === "number"
+                ? look.letter_spacing + "px" : look.letter_spacing;
+        }
+    });
+}
+
+function _unitStyle(node) {
+    const cs = getComputedStyle(node.nodeType === 1 ? node : node.parentNode);
+    return {
+        color: cs.color, fontFamily: cs.fontFamily, fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight, fontStyle: cs.fontStyle,
+        letterSpacing: cs.letterSpacing,
+        textDecoration: cs.textDecorationLine, textShadow: cs.textShadow,
+        textTransform: cs.textTransform,
+    };
+}
+
+function _applyUnitStyle(span, style) {
+    span.style.color = style.color;
+    span.style.fontFamily = style.fontFamily;
+    span.style.fontSize = style.fontSize;
+    span.style.fontWeight = style.fontWeight;
+    span.style.fontStyle = style.fontStyle;
+    span.style.letterSpacing = style.letterSpacing;
+    if (style.textDecoration && style.textDecoration !== "none") {
+        span.style.textDecoration = style.textDecoration;
+    }
+    if (style.textShadow && style.textShadow !== "none") {
+        span.style.textShadow = style.textShadow;
+    }
+    if (style.textTransform && style.textTransform !== "none") {
+        span.style.textTransform = style.textTransform;
+    }
+}
+
+function _wrapSplitWords(el) {
+    // Flatten the inline run styles onto each word: measured line groups are
+    // moved out of their original colour spans, so inheritance must travel
+    // with the unit or a two-colour verse would lose its second colour.
+    const nodes = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    const words = [];
+    nodes.forEach(function (node) {
+        if (node.parentElement
+            && node.parentElement.closest && node.parentElement.closest(".verse-num")) {
+            return;
+        }
+        const text = node.nodeValue || "";
+        if (!text.trim()) return;
+        const style = _unitStyle(node);
+        const parts = text.split(/(\s+)/);
+        const frag = document.createDocumentFragment();
+        parts.forEach(function (part) {
+            if (!part) return;
+            if (/^\s+$/.test(part)) {
+                frag.appendChild(document.createTextNode(part));
+                return;
+            }
+            const span = document.createElement("span");
+            span.className = "rc-split-word";
+            span.textContent = part;
+            span.style.display = "inline-block";
+            _applyUnitStyle(span, style);
+            frag.appendChild(span);
+            words.push(span);
+        });
+        node.parentNode.replaceChild(frag, node);
+    });
+    return words;
+}
+
+function _splitLines(el, words) {
+    // Group by the browser's own line boxes: autofit and wrapping have
+    // already run, so this is the only line count that matches the render.
+    const groups = [];
+    let group = [];
+    let top = null;
+    words.forEach(function (w) {
+        const t = w.getBoundingClientRect().top;
+        if (top === null || Math.abs(t - top) <= 1) {
+            group.push(w);
+        } else {
+            groups.push(group);
+            group = [w];
+        }
+        top = t;
+    });
+    if (group.length) groups.push(group);
+
+    const verseNum = el.querySelector(".verse-num");
+    if (verseNum && verseNum.parentNode) verseNum.parentNode.removeChild(verseNum);
+    const lines = groups.map(function (items) {
+        const line = document.createElement("span");
+        line.className = "rc-split-line";
+        line.style.display = "block";
+        line.style.textAlign = getComputedStyle(el).textAlign;
+        line.setAttribute("data-rc-unit", "1");
+        items.forEach(function (w, i) {
+            if (i) line.appendChild(document.createTextNode(" "));
+            line.appendChild(w);
+        });
+        return line;
+    });
+    el.innerHTML = "";
+    lines.forEach(function (line) { el.appendChild(line); });
+    if (verseNum && lines.length) {
+        const first = lines[0];
+        first.insertBefore(document.createTextNode(" "), first.firstChild);
+        first.insertBefore(verseNum, first.firstChild);
+    }
+    return lines;
+}
+
+function _splitBlocked(el, anim) {
+    if (!el || !anim) return true;
+    // Outlines rebuild the text as SVG; a line clamp pins the box; <br>,
+    // <sup> and <sub> cannot be represented as uniform word boxes.
+    if (el.dataset && (el.dataset.rcOcSrc !== undefined
+        || el.dataset.rcOcDone)) return true;
+    if (el.style && el.style.webkitLineClamp) return true;
+    if (el.querySelector && el.querySelector("br, sup, sub")) return true;
+    const anims = (_currentTheme && _currentTheme.animations) || {};
+    const split = anim.split;
+    const slots = [anim.entry, anim.transition && anim.transition.in];
+    if (split) {
+        [split.first, split.rest].forEach(function (part) {
+            if (!part) return;
+            slots.push(part.entry, part.transition && part.transition.in);
+        });
+    }
+    return slots.some(function (slot) {
+        const def = _resolveSlotDef(slot, anims, "in");
+        return !!(def && def.type === "typewriter");
+    });
+}
+
+function _unsplitAll() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return;
+    document.querySelectorAll("[data-rc-split]").forEach(function (el) {
+        // The webfont refit must not tear down units that are mid-animation:
+        // a new payload already clears these markers and re-lays out.
+        if (el.dataset && el.dataset.rcSplitAnimated) return;
+        if (el.dataset && el.dataset.rcSplitSrc !== undefined) {
+            el.innerHTML = el.dataset.rcSplitSrc;
+        }
+        if (el.dataset) {
+            delete el.dataset.rcSplit;
+            delete el.dataset.rcSplitSrc;
+            delete el.dataset.rcSplitUnits;
+        }
+    });
+}
+
+function _layoutSplitUnits(theme) {
+    if (!theme || theme.schema_version !== 2) return;
+    _animationTargets(theme).forEach(function (t) {
+        const split = _splitConfig(t.anim);
+        if (!split || !t.el) return;
+        if (t.kind !== "text" && t.kind !== "reference"
+            && t.kind !== "translation") return;
+        const el = t.el;
+        if (el.dataset && el.dataset.rcSplitAnimated) return;
+        if (el.dataset && el.dataset.rcSplit
+            && el.dataset.rcSplitSrc !== undefined) {
+            el.innerHTML = el.dataset.rcSplitSrc;
+        }
+        if (el.dataset) {
+            delete el.dataset.rcSplit;
+            delete el.dataset.rcSplitUnits;
+        }
+        if (_splitBlocked(el, t.anim)) return;
+        if (!(el.textContent || "").trim()) return;
+        el.dataset.rcSplitSrc = el.innerHTML;
+        const words = _wrapSplitWords(el);
+        if (!words.length) return;
+        if (words.length > _SPLIT_MAX_UNITS) {
+            el.innerHTML = el.dataset.rcSplitSrc;
+            delete el.dataset.rcSplitSrc;
+            return;
+        }
+        let units = words;
+        if (split.by === "line") {
+            units = _splitLines(el, words);
+        } else {
+            units.forEach(function (w) { w.setAttribute("data-rc-unit", "1"); });
+        }
+        units.forEach(function (unit, index) {
+            _applySplitLook(unit, split, index);
+        });
+        el.dataset.rcSplit = split.by;
+        el.dataset.rcSplitUnits = String(units.length);
+    });
+}
+
+function _runSplitAnimation(el, anim, phase, anims) {
+    const split = _splitConfig(anim);
+    if (!split) return false;
+    const units = Array.from(el.querySelectorAll('[data-rc-unit="1"]'));
+    if (!units.length) return false;
+    el.dataset.rcSplitAnimated = "1";
+    const stagger = split.stagger_ms != null ? split.stagger_ms : 70;
+    units.forEach(function (unit, index) {
+        const assignment = _splitAssignment(anim, split, index);
+        const slot = phase === "entry"
+            ? assignment.entry
+            : (assignment.transition && assignment.transition.in);
+        if (!slot) return;
+        const def = _resolveSlotDef(slot, anims, "in");
+        if (!def) return;
+        const delay = (def.delay_ms || 0)
+            + Math.min(index * stagger, _SPLIT_MAX_DELAY);
+        _playElementAnimation(unit, def, {
+            kind: "text", phase: phase, delay_ms: delay,
+        });
+    });
+    return true;
+}
+
+function _autoFitPanels() {
+    if (!_currentContainers || _currentContainers.length < 2) return;
+    _invalidatePanelOutlines();
+    _currentContainers.forEach(function (c) {
+        const el = document.getElementById("rc-cont-" + c.id);
+        if (el) _fitPanelText(el, c);
+    });
+    _applyMultiBlockOutlines();
+}
+
 function _renderMultiContainers(data) {
     const stg = document.getElementById("stage") || document.body;
     if (container) container.style.display = "none";
@@ -668,6 +1158,9 @@ function _renderMultiContainers(data) {
             el.className = "rc-dynamic-container rc-container";
             stg.appendChild(el);
         }
+        // Clear is a cloak, not a one-way trip: a container hidden by a
+        // previous clear must come back when content renders again.
+        el.classList.remove("hidden");
         let w = _resolveLength(c.width, canvasW);
         let h = _resolveLength(c.height, canvasH);
         if (w == null && c.min_width != null) w = _resolveLength(c.min_width, canvasW);
@@ -689,15 +1182,14 @@ function _renderMultiContainers(data) {
         if (c.opacity != null) el.style.opacity = c.opacity;
         if (c.overflow) el.style.overflow = c.overflow;
         if (c.background) el.style.background = c.background;
-        if (c.border && c.border !== "none") {
-            let bVal = c.border;
-            if (typeof bVal === "object" && bVal) {
-                bVal = (bVal.width || 1) + "px " + (bVal.style || "solid") + " " + (bVal.color || "#ffffff");
-            }
-            el.style.border = bVal;
-        }
+        else el.style.background = "";
+        _applyBorder(el, c.border);
         if (c.border_radius != null) {
             el.style.borderRadius = _resolveLength(c.border_radius, canvasW) + "px";
+        } else if (typeof c.border === "object" && c.border && c.border.radius != null) {
+            el.style.borderRadius = c.border.radius + "px";
+        } else {
+            el.style.borderRadius = "";
         }
         if (c.box_shadow && c.box_shadow !== "none") {
             let bs = c.box_shadow;
@@ -705,8 +1197,11 @@ function _renderMultiContainers(data) {
                 bs = (bs.inset ? "inset " : "") + (bs.x || 0) + "px " + (bs.y || 0) + "px " + (bs.blur || 0) + "px " + (bs.spread || 0) + "px " + (bs.color || "rgba(0,0,0,0.5)");
             }
             el.style.boxShadow = bs;
+        } else {
+            el.style.boxShadow = "none";
         }
         if (c.backdrop_filter && c.backdrop_filter !== "none") el.style.backdropFilter = c.backdrop_filter;
+        else el.style.backdropFilter = "";
 
         const blocks = _getContainerBlocks(c);
         const b = blocks.body;
@@ -722,10 +1217,10 @@ function _renderMultiContainers(data) {
         el.style.padding = `${pt}px ${pr}px ${pb}px ${pl}px`;
 
         el.innerHTML = "";
-        const t = blocks.text;
-        const r = blocks.reference;
-        const tr = blocks.translation;
-        const vn = blocks.verse_num;
+        const t = _authoredBlock(c, "text");
+        const r = _authoredBlock(c, "reference");
+        const tr = _authoredBlock(c, "translation");
+        const vn = _authoredBlock(c, "verse_num");
 
         const textHasContent = !!(data.text && t && t.visible !== false);
         const refHasContent = !!(refText && r && r.visible !== false);
@@ -749,6 +1244,21 @@ function _renderMultiContainers(data) {
             if (t.text_align) h1.style.textAlign = t.text_align;
             if (t.text_transform) h1.style.textTransform = t.text_transform;
             if (t.text_shadow && t.text_shadow !== "none") h1.style.textShadow = t.text_shadow;
+            if (t.word_spacing != null) h1.style.wordSpacing = typeof t.word_spacing === "number" ? (t.word_spacing + "px") : t.word_spacing;
+            if (t.font_style) h1.style.fontStyle = t.font_style;
+            if (t.text_decoration && t.text_decoration !== "none") h1.style.textDecoration = t.text_decoration;
+            if (t.direction) {
+                h1.style.direction = t.direction;
+                if (t.direction === "rtl") h1.style.unicodeBidi = "embed";
+            }
+            if (t.max_lines != null) {
+                // §4.3: clamp rendered lines. -webkit-box is the only
+                // cross-Chromium line clamp and is OBS's renderer anyway.
+                h1.style.display = "-webkit-box";
+                h1.style.webkitBoxOrient = "vertical";
+                h1.style.webkitLineClamp = String(t.max_lines);
+                h1.style.overflow = "hidden";
+            }
             return h1;
         }
 
@@ -771,6 +1281,12 @@ function _renderMultiContainers(data) {
                 sTr.className = "verse-ref-translation";
                 sTr.textContent = data.translation;
                 if (tr.color) sTr.style.color = tr.color;
+                if (tr.size != null) sTr.style.fontSize = typeof tr.size === "number" ? (tr.size + "px") : tr.size;
+                if (tr.weight != null) sTr.style.fontWeight = String(tr.weight);
+                if (tr.font_family) sTr.style.fontFamily = tr.font_family;
+                if (tr.letter_spacing != null) sTr.style.letterSpacing = typeof tr.letter_spacing === "number" ? (tr.letter_spacing + "px") : tr.letter_spacing;
+                if (tr.line_height != null) sTr.style.lineHeight = String(tr.line_height);
+                if (tr.text_transform) sTr.style.textTransform = tr.text_transform;
                 if (tr.margin_left != null) sTr.style.marginLeft = typeof tr.margin_left === "number" ? (tr.margin_left + "px") : tr.margin_left;
                 if (tr.position === "left_of_reference" && typeof p.insertBefore === "function") {
                     p.insertBefore(sTr, sRef);
@@ -808,11 +1324,45 @@ function _renderMultiContainers(data) {
             const sTr = document.createElement("span");
             sTr.textContent = data.translation;
             if (tr.color) sTr.style.color = tr.color;
+            if (tr.size != null) sTr.style.fontSize = typeof tr.size === "number" ? (tr.size + "px") : tr.size;
+            if (tr.weight != null) sTr.style.fontWeight = String(tr.weight);
+            if (tr.font_family) sTr.style.fontFamily = tr.font_family;
+            if (tr.letter_spacing != null) sTr.style.letterSpacing = typeof tr.letter_spacing === "number" ? (tr.letter_spacing + "px") : tr.letter_spacing;
+            if (tr.line_height != null) sTr.style.lineHeight = String(tr.line_height);
+            if (tr.text_transform) sTr.style.textTransform = tr.text_transform;
+            sTr.style.marginLeft = "8px";
             p.appendChild(sTr);
             el.appendChild(p);
         }
     });
+    _autoFitPanels();
 }
+
+function _applyMultiBlockOutlines() {
+    // Block-level text_outline in a split theme. applyOutlineLayers() only
+    // owns #verse-text, which is display:none once panels render, so each
+    // panel converts its own h1. Failure leaves readable plain text.
+    _currentContainers.forEach(c => {
+        const t = _authoredBlock(c, "text");
+        const outline = t ? _themeOutline(t) : "";
+        const root = document.getElementById("rc-cont-" + c.id);
+        const h1 = (root && typeof root.querySelector === "function")
+            ? root.querySelector(".verse-text") : null;
+        if (!h1) return;
+        const oc = outline ? _outlineParts(outline) : null;
+        if (oc && oc.width > 0) convertOutlineScope(h1, oc.width, oc.color);
+    });
+}
+
+// ─── Animation engine (schema v2 §4.9) ──────────────────────────────
+// Python has already validated and resolved every definition: presets carry
+// their keyframes, `typewriter` carries its reveal/cursor fields, and slots
+// are either `{ "use": name, ...overrides }` or an inline definition. This
+// engine only plays them. `"base"` is resolved here from the element's
+// resting computed style, after any in-flight animation is cancelled.
+//
+// The @keyframes table below is a v1 raw-payload fallback only: a resolved
+// v2 theme never reaches it, and v2 never injects CSS.
 
 const ANIM_KEYFRAMES = {
     fade_up:      { from: "opacity:0;transform:translateY(20px)",     to: "opacity:1;transform:translateY(0)" },
@@ -825,6 +1375,9 @@ const ANIM_KEYFRAMES = {
     slide_down:   { from: "transform:translateY(0)",                 to: "transform:translateY(100%)" },
 };
 
+const ANIM_PRESET_TYPES = ["fade_in", "fade_out", "fade_up", "fade_down",
+    "scale_up", "scale_down", "slide_up", "slide_down"];
+
 const ANIM_EASINGS = {
     "ease-out":     "cubic-bezier(0.16, 1, 0.3, 1)",
     "ease-in":      "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
@@ -833,6 +1386,21 @@ const ANIM_EASINGS = {
     "spring":       "cubic-bezier(0.34, 1.56, 0.64, 1)",
     "smooth":       "cubic-bezier(0.25, 0.1, 0.25, 1)",
 };
+
+const _activeAnims = new WeakMap();
+const _animatedEls = new Set();
+const _activeTypewriters = new Set();
+let _phaseTimer = null;
+let _phaseToken = 0;
+
+function _reducedMotion() {
+    try {
+        return typeof matchMedia === "function"
+            && matchMedia("(prefers-reduced-motion: reduce)").matches === true;
+    } catch (e) {
+        return false;
+    }
+}
 
 function _injectAnimStyle() {
     if (_animStyleEl) return;
@@ -847,7 +1415,7 @@ function _injectAnimStyle() {
 }
 
 function _applyAnimation(el, type, durationMs, easing) {
-    if (!type || type === "none" || !el) return;
+    if (!type || type === "none" || !el || _reducedMotion()) return;
     const kfName = `rc-${type}`;
     const dur = (durationMs || 600) + "ms";
     const ease = ANIM_EASINGS[easing] || ANIM_EASINGS["ease-out"] || "ease-out";
@@ -855,143 +1423,613 @@ function _applyAnimation(el, type, durationMs, easing) {
     el.addEventListener("animationend", () => { el.style.animation = ""; }, { once: true });
 }
 
-function _resolveSlotDef(slot, registry) {
+function _cancelAnimations(el) {
+    if (!el) return;
+    const anim = _activeAnims.get(el);
+    if (anim) {
+        try { anim.cancel(); } catch (e) {}
+        _activeAnims.delete(el);
+    }
+    _animatedEls.delete(el);
+}
+
+function _cancelAllAnimations() {
+    if (_phaseTimer) {
+        clearTimeout(_phaseTimer);
+        _phaseTimer = null;
+    }
+    _phaseToken++;
+    Array.from(_activeTypewriters).forEach(tw => {
+        try { tw.cancel(); } catch (e) {}
+    });
+    _activeTypewriters.clear();
+    Array.from(_animatedEls).forEach(el => _cancelAnimations(el));
+    _animatedEls.clear();
+}
+
+function _restingOpacity(el) {
+    try {
+        const v = parseFloat(getComputedStyle(el).opacity);
+        return isNaN(v) ? 1 : v;
+    } catch (e) {
+        return 1;
+    }
+}
+
+function _restingBlur(el) {
+    try {
+        const f = String(getComputedStyle(el).filter || "");
+        const m = f.match(/blur\(([\d.]+)px\)/);
+        return m ? parseFloat(m[1]) : 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function _lengthValue(v, fallback) {
+    if (v == null) return fallback || "0px";
+    if (typeof v === "number") return v + "px";
+    const s = String(v).trim();
+    if (!s) return fallback || "0px";
+    if (/^-?[\d.]+(px|%|em|rem)$/.test(s)) return s;
+    if (/^-?[\d.]+$/.test(s)) return s + "px";
+    return fallback || "0px";
+}
+
+function _resolveSlotDef(slot, registry, phase) {
+    const fallback = phase === "out" ? "fade_out" : "fade_in";
+    const preset = (name) => ({ type: name, duration_ms: 600, easing: "ease-out" });
     if (!slot || slot === "none") return null;
     if (typeof slot === "string") {
         if (registry && registry[slot]) return registry[slot];
-        return { type: slot, duration_ms: 600, easing: "ease-out" };
+        if (ANIM_PRESET_TYPES.indexOf(slot) !== -1) return preset(slot);
+        return preset(fallback);
     }
     if (typeof slot === "object") {
         if (slot.use) {
-            const base = (registry && registry[slot.use]) || { type: slot.use, duration_ms: 600, easing: "ease-out" };
-            return Object.assign({}, base, slot);
+            const base = (registry && registry[slot.use])
+                || (ANIM_PRESET_TYPES.indexOf(slot.use) !== -1
+                    ? preset(slot.use) : preset(fallback));
+            const merged = Object.assign({}, base, slot);
+            delete merged.use;
+            return merged;
         }
         if (slot.type) return slot;
     }
     return null;
 }
 
-function _playElementAnimation(el, def) {
-    if (!el || !def || def.type === "none") return;
-    if (typeof el.animate === "function") {
-        const dur = def.duration_ms != null ? def.duration_ms : 600;
-        const ease = ANIM_EASINGS[def.easing] || def.easing || "ease-out";
-        const delay = def.delay_ms || 0;
-        let kfs = null;
-        if (def.type === "custom" && Array.isArray(def.keyframes)) {
-            kfs = def.keyframes.map(k => {
-                const f = { offset: (k.at || 0) / 100 };
-                if (k.opacity != null && k.opacity !== "base") f.opacity = k.opacity;
-                let tr = [];
-                if (k.translate_x != null || k.translate_y != null) {
-                    const tx = typeof k.translate_x === "number" ? (k.translate_x + "px") : (k.translate_x || "0");
-                    const ty = typeof k.translate_y === "number" ? (k.translate_y + "px") : (k.translate_y || "0");
-                    tr.push(`translate(${tx}, ${ty})`);
-                }
-                if (k.rotate != null) tr.push(`rotate(${k.rotate}deg)`);
-                if (k.scale != null) tr.push(`scale(${k.scale})`);
-                if (tr.length) f.transform = tr.join(" ");
-                if (k.blur != null && k.blur !== "base") f.filter = `blur(${typeof k.blur === "number" ? (k.blur + "px") : k.blur})`;
-                return f;
-            });
-        } else if (ANIM_KEYFRAMES[def.type]) {
-            if (def.type === "fade_in") kfs = [{ opacity: 0 }, { opacity: 1 }];
-            else if (def.type === "fade_out") kfs = [{ opacity: 1 }, { opacity: 0 }];
-            else if (def.type === "fade_up") kfs = [{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1, transform: "translateY(0)" }];
-            else if (def.type === "fade_down") kfs = [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(20px)" }];
-            else if (def.type === "scale_up") kfs = [{ opacity: 0, transform: "scale(0.85)" }, { opacity: 1, transform: "scale(1)" }];
-            else if (def.type === "scale_down") kfs = [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.85)" }];
-            else if (def.type === "slide_up") kfs = [{ transform: "translateY(100%)" }, { transform: "translateY(0)" }];
-            else if (def.type === "slide_down") kfs = [{ transform: "translateY(0)" }, { transform: "translateY(100%)" }];
-        }
-        if (kfs) {
-            try {
-                const anim = el.animate(kfs, { duration: dur, delay: delay, easing: ease, fill: "forwards" });
-                if (anim && anim.finished) {
-                    anim.finished.then(() => {
-                        try { anim.cancel(); } catch (e) {}
-                    });
-                }
-                return anim;
-            } catch (e) {}
-        }
-    }
-    _injectAnimStyle();
-    _applyAnimation(el, def.type, def.duration_ms, def.easing);
+// Python emits one normalized keyframe list for every non-typewriter
+// definition (presets included), so the renderer never keeps its own copy.
+// Preset frames are the fallback for raw definitions that omitted them.
+function _presetFrames(type, el) {
+    const base = _restingOpacity(el);
+    if (type === "fade_in") return [{ opacity: 0 }, { opacity: base }];
+    if (type === "fade_out") return [{ opacity: base }, { opacity: 0 }];
+    if (type === "fade_up") return [{ opacity: 0, transform: "translateY(20px)" },
+                                    { opacity: base, transform: "translateY(0)" }];
+    if (type === "fade_down") return [{ opacity: base, transform: "translateY(0)" },
+                                      { opacity: 0, transform: "translateY(20px)" }];
+    if (type === "scale_up") return [{ opacity: 0, transform: "scale(0.85)" },
+                                     { opacity: base, transform: "scale(1)" }];
+    if (type === "scale_down") return [{ opacity: base, transform: "scale(1)" },
+                                       { opacity: 0, transform: "scale(0.85)" }];
+    if (type === "slide_up") return [{ transform: "translateY(100%)" },
+                                     { transform: "translateY(0)" }];
+    if (type === "slide_down") return [{ transform: "translateY(0)" },
+                                       { transform: "translateY(100%)" }];
+    return null;
 }
 
-function _runAnimation(data, phase) {
-    const theme = data.theme_data;
+function _keyframeFrames(def, el) {
+    if (!Array.isArray(def.keyframes)) return null;
+    return def.keyframes.map(k => {
+        const at = parseFloat(k.at);
+        const f = { offset: Math.max(0, Math.min(1, isNaN(at) ? 0 : at / 100)) };
+        if (k.opacity != null) {
+            f.opacity = k.opacity === "base" ? _restingOpacity(el) : k.opacity;
+        }
+        const tr = [];
+        if (k.translate_x != null || k.translate_y != null) {
+            tr.push("translate(" + _lengthValue(k.translate_x) + ", "
+                + _lengthValue(k.translate_y) + ")");
+        }
+        if (k.rotate != null) tr.push("rotate(" + k.rotate + "deg)");
+        if (k.scale != null) tr.push("scale(" + k.scale + ")");
+        if (tr.length) f.transform = tr.join(" ");
+        if (k.blur != null) {
+            const blur = k.blur === "base" ? _restingBlur(el) : parseFloat(_lengthValue(k.blur));
+            f.filter = "blur(" + (isNaN(blur) ? 0 : blur) + "px)";
+        }
+        return f;
+    });
+}
+
+function _framesForDefinition(def, el) {
+    return _keyframeFrames(def, el) || _presetFrames(def.type, el);
+}
+
+function _trackAnimation(el, anim, hold) {
+    _animatedEls.add(el);
+    _activeAnims.set(el, anim);
+    const done = () => {
+        if (!hold) {
+            try { anim.cancel(); } catch (e) {}
+            if (_activeAnims.get(el) === anim) {
+                _activeAnims.delete(el);
+                _animatedEls.delete(el);
+            }
+        }
+        // `out` keeps its filled end state until the caller hides the element
+        // or the next render cancels it; cancelling here would flash the old
+        // content back for one frame.
+    };
+    try {
+        if (anim.finished && typeof anim.finished.then === "function") {
+            anim.finished.then(done, done);
+        } else if (typeof anim.addEventListener === "function") {
+            anim.addEventListener("finish", done, { once: true });
+        }
+    } catch (e) {
+        done();
+    }
+}
+
+function _graphemes(text) {
+    try {
+        if (typeof Intl !== "undefined" && Intl.Segmenter) {
+            const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+            return Array.from(seg.segment(text), s => s.segment);
+        }
+    } catch (e) {}
+    return Array.from(text);
+}
+
+function _typewriterSegments(text, reveal) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return [];
+    if (reveal === "word") {
+        return raw.match(/\s*\S+\s*|\s+/g) || [];
+    }
+    const out = [];
+    _graphemes(raw).forEach(g => {
+        // Whitespace reveals with the preceding segment, so a line break
+        // appears at the moment the last word on the line does.
+        if (out.length && /^\s+$/.test(g)) out[out.length - 1] += g;
+        else out.push(g);
+    });
+    return out;
+}
+
+function _outlineConflict(el) {
+    try {
+        if (el && typeof el.querySelector === "function" && el.querySelector(".rc-oc")) {
+            return true;
+        }
+        if (el && el.dataset && el.dataset.rcOcDone) return true;
+    } catch (e) {}
+    return false;
+}
+
+// Splits every text node under `el` into per-segment spans that reserve their
+// layout while hidden. Each original node is replaced by one wrapper span so
+// `restore()` can put the exact same node back — no innerHTML round-trip and
+// no loss of inline run markup.
+function _splitTypewriter(el, reveal) {
+    if (!el || typeof document.createTreeWalker !== "function"
+        || typeof document.createTextNode !== "function") return null;
+    let walker;
+    try {
+        walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    } catch (e) {
+        return null;
+    }
+    if (!walker || typeof walker.nextNode !== "function") return null;
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+        if (node.nodeValue) nodes.push(node);
+        node = walker.nextNode();
+    }
+    if (!nodes.length) return null;
+
+    const records = [];
+    const spans = [];
+    nodes.forEach(textNode => {
+        const parent = textNode.parentNode;
+        if (!parent || typeof parent.replaceChild !== "function") return;
+        const segments = _typewriterSegments(textNode.nodeValue, reveal);
+        if (!segments.length) return;
+        const wrap = document.createElement("span");
+        wrap.setAttribute("data-rc-tw", "1");
+        wrap.style.display = "inline";
+        segments.forEach(seg => {
+            const span = document.createElement("span");
+            span.textContent = seg;
+            span.style.visibility = "hidden";
+            wrap.appendChild(span);
+            spans.push(span);
+        });
+        parent.replaceChild(wrap, textNode);
+        records.push({ parent: parent, wrap: wrap, node: textNode });
+    });
+
+    if (!spans.length) {
+        records.forEach(r => {
+            try {
+                if (r.wrap.parentNode) r.wrap.parentNode.replaceChild(r.node, r.wrap);
+            } catch (e) {}
+        });
+        return null;
+    }
+    return {
+        spans: spans,
+        restore: function () {
+            records.forEach(r => {
+                try {
+                    if (r.wrap.parentNode) r.wrap.parentNode.replaceChild(r.node, r.wrap);
+                } catch (e) {}
+            });
+        },
+    };
+}
+
+function _typewriterCursor(cfg) {
+    if (!cfg || cfg === "none") return null;
+    const span = document.createElement("span");
+    span.className = "rc-tw-cursor";
+    span.textContent = cfg.char || "\u258c";
+    // Zero-width so moving it along the reveal never reflows the line; the
+    // glyph overflows at the insertion point instead.
+    span.style.display = "inline-block";
+    span.style.width = "0";
+    span.style.overflow = "visible";
+    span.style.whiteSpace = "pre";
+    if (cfg.color && cfg.color !== "currentColor") span.style.color = cfg.color;
+    return span;
+}
+
+function _playTypewriter(el, def) {
+    if (!el || _reducedMotion()) return null;
+    const split = _splitTypewriter(el, def.reveal === "word" ? "word" : "char");
+    if (!split) {
+        if (typeof el.animate !== "function") return null;
+        return _playElementAnimation(el, Object.assign({}, def, { type: "fade_in" }),
+            { kind: "text", phase: "in" });
+    }
+
+    const spans = split.spans;
+    const cfg = def.cursor && def.cursor !== "none" ? def.cursor : null;
+    const cursor = _typewriterCursor(cfg);
+    const total = Math.max(0, def.duration_ms != null ? def.duration_ms : 900);
+    const delay = Math.max(0, def.delay_ms || 0);
+    let revealed = 0;
+    let rafId = null;
+    let timer = null;
+    let interval = null;
+    let cursorTimer = null;
+    let finishTimer = null;
+    let done = false;
+
+    const now = () => (typeof performance !== "undefined" && performance.now)
+        ? performance.now() : Date.now();
+
+    function placeCursor(index) {
+        if (!cursor) return;
+        const ref = spans[Math.max(0, Math.min(spans.length - 1, index))];
+        const parent = ref && ref.parentNode;
+        if (!parent) return;
+        parent.insertBefore(cursor, ref.nextSibling);
+    }
+
+    function cleanup() {
+        if (rafId != null && typeof cancelAnimationFrame === "function") {
+            cancelAnimationFrame(rafId);
+        }
+        if (timer != null) clearTimeout(timer);
+        if (interval != null) clearInterval(interval);
+        if (cursorTimer != null) clearTimeout(cursorTimer);
+        if (finishTimer != null) clearTimeout(finishTimer);
+        rafId = timer = interval = cursorTimer = finishTimer = null;
+        if (cursor && cursor.parentNode) cursor.parentNode.removeChild(cursor);
+        split.restore();
+        _activeTypewriters.delete(handle);
+    }
+
+    function show(count) {
+        while (revealed < count && revealed < spans.length) {
+            spans[revealed].style.visibility = "visible";
+            revealed++;
+        }
+        placeCursor(revealed - 1);
+    }
+
+    function finish() {
+        if (done) return;
+        done = true;
+        show(spans.length);
+        if (interval != null) {
+            clearInterval(interval);
+            interval = null;
+        }
+        // Keep the cursor long enough to read, then unwrap back to plain text.
+        const hide = Math.max(0, cfg && cfg.hide_after_ms != null ? cfg.hide_after_ms : 600);
+        cursorTimer = setTimeout(cleanup, hide);
+    }
+
+    function tick(at) {
+        if (done) return;
+        const nowMs = typeof at === "number" ? at : now();
+        const elapsed = Math.max(0, nowMs - started - delay);
+        if (total <= 0 || elapsed >= total) {
+            finish();
+            return;
+        }
+        show(Math.max(1, Math.ceil((elapsed / total) * spans.length)));
+        rafId = requestAnimationFrame(tick);
+    }
+
+    if (cursor) {
+        placeCursor(0);
+        const blink = Math.max(0, cfg && cfg.blink_ms != null ? cfg.blink_ms : 500);
+        if (blink > 0) {
+            let visible = true;
+            interval = setInterval(() => {
+                if (!cursor.parentNode) {
+                    clearInterval(interval);
+                    interval = null;
+                    return;
+                }
+                visible = !visible;
+                cursor.style.visibility = visible ? "visible" : "hidden";
+            }, blink);
+        }
+    }
+
+    const handle = {
+        finished: Promise.resolve(),
+        cancel: function () {
+            if (done) return;
+            done = true;
+            cleanup();
+        },
+    };
+    const started = now();
+    _activeTypewriters.add(handle);
+
+    // rAF drives the smooth reveal, but an occluded or throttled page may
+    // starve it entirely (headless proves this). The hard finish timer keeps
+    // the animation decoration-only: the text is complete by its deadline
+    // even if no frame ever runs.
+    if (total > 0) {
+        finishTimer = setTimeout(finish, delay + total + 50);
+    }
+
+    if (total <= 0) {
+        finish();
+    } else if (delay > 0) {
+        timer = setTimeout(() => {
+            timer = null;
+            rafId = requestAnimationFrame(tick);
+        }, delay);
+    } else {
+        rafId = requestAnimationFrame(tick);
+    }
+
+    return handle;
+}
+
+function _playElementAnimation(el, def, opts) {
+    opts = opts || {};
+    if (!el || !def || def.type === "none" || _reducedMotion()) return null;
+    const kind = opts.kind || "text";
+    const phase = opts.phase || "in";
+    let type = def.type;
+
+    if (type === "typewriter") {
+        // §4.9.5: legal only on text-bearing blocks, never as an exit, and
+        // never when the block's text has been rebuilt as outlined SVG.
+        if (phase === "out") {
+            type = "fade_out";
+        } else if (kind !== "text" && kind !== "reference" && kind !== "translation") {
+            type = "fade_in";
+        } else if (_outlineConflict(el)) {
+            type = "fade_in";
+        } else {
+            return _playTypewriter(el, def);
+        }
+    }
+
+    const duration = def.duration_ms != null ? def.duration_ms : 600;
+    const delay = Math.max(0, opts.delay_ms != null
+        ? opts.delay_ms : (def.delay_ms || 0));
+    _cancelAnimations(el);
+    if (duration <= 0 || typeof el.animate !== "function") return null;
+
+    const frames = _framesForDefinition(Object.assign({}, def, { type: type }), el);
+    if (!frames) return null;
+    let anim;
+    try {
+        anim = el.animate(frames, {
+            duration: duration,
+            delay: delay,
+            easing: ANIM_EASINGS[def.easing] || def.easing || "ease-out",
+            fill: "forwards",
+        });
+    } catch (e) {
+        return null;
+    }
+    if (def.origin) el.style.transformOrigin = def.origin;
+    _trackAnimation(el, anim, phase === "out");
+    return anim;
+}
+
+function _phaseDuration(def) {
+    return Math.max(0, def.delay_ms || 0)
+        + Math.max(0, def.duration_ms != null ? def.duration_ms : 600);
+}
+
+function _containerElement(c) {
+    if (!c) return container;
+    return document.getElementById("rc-cont-" + c.id) || container;
+}
+
+function _bodyElement(el) {
+    if (el === container) {
+        return document.getElementById("verse-content") || el;
+    }
+    return el;
+}
+
+function _blockElement(rootEl, name) {
+    if (!rootEl) return null;
+    if (rootEl === container || rootEl.id === "container") {
+        if (name === "text") return document.getElementById("verse-text");
+        if (name === "reference") {
+            return document.getElementById("verse-ref-text")
+                || document.getElementById("verse-ref");
+        }
+        if (name === "translation") {
+            return document.getElementById("verse-ref-translation");
+        }
+        return null;
+    }
+    if (typeof rootEl.querySelector !== "function") return null;
+    if (name === "text") return rootEl.querySelector(".verse-text");
+    if (name === "reference") {
+        return rootEl.querySelector(".verse-ref-text")
+            || rootEl.querySelector(".verse-ref");
+    }
+    if (name === "translation") {
+        return rootEl.querySelector(".verse-ref-translation")
+            || rootEl.querySelector(".verse-ref");
+    }
+    return null;
+}
+
+function _animationTargets(theme) {
+    const out = [];
+    if (!theme) return out;
+    const containers = Array.isArray(theme.containers)
+        ? theme.containers
+        : (_currentContainers.length ? _currentContainers : [themeContainer(theme)]);
+    containers.forEach(c => {
+        if (!c || typeof c !== "object" || c.visible === false) return;
+        const el = _containerElement(c);
+        if (!el) return;
+        if (c.animation) out.push({ el: el, kind: "container", anim: c.animation });
+        const blocks = _getContainerBlocks(c);
+        if (blocks.body && blocks.body.animation) {
+            out.push({ el: _bodyElement(el), kind: "body", anim: blocks.body.animation });
+        }
+        ["text", "reference", "translation"].forEach(name => {
+            const b = blocks[name];
+            if (!b || !b.animation) return;
+            const bEl = _blockElement(el, name);
+            if (bEl) out.push({ el: bEl, kind: name, anim: b.animation });
+        });
+    });
+    return out;
+}
+
+function _collectTransitionOut(theme, changed) {
+    const plan = [];
+    if (_reducedMotion()) return plan;
+    if (!theme || !changed || !changed.any) return plan;
+    const anims = theme.animations || {};
+    _animationTargets(theme).forEach(t => {
+        const trans = t.anim && t.anim.transition;
+        if (!trans || !trans.out) return;
+        const relevant = (t.kind === "container" || t.kind === "body")
+            ? changed.any : !!changed[t.kind];
+        if (!relevant) return;
+        const def = _resolveSlotDef(trans.out, anims, "out");
+        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+    });
+    return plan;
+}
+
+function _collectExit(theme) {
+    const plan = [];
+    if (!theme) return plan;
+    const anims = theme.animations || {};
+    if (theme.schema_version !== 2 && !Array.isArray(theme.containers)
+        && anims.display_exit && anims.display_exit.type) {
+        plan.push({ el: container, def: anims.display_exit, kind: "container" });
+        return plan;
+    }
+    _animationTargets(theme).forEach(t => {
+        if (!t.anim || !t.anim.out) return;
+        const def = _resolveSlotDef(t.anim.out, anims, "out");
+        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+    });
+    return plan;
+}
+
+function _runAnimation(phase, changed) {
+    if (_reducedMotion()) return;
+    const theme = _currentTheme;
     if (!theme) return;
-    const anims = theme.animations;
-    if (anims && phase === "display_enter" && anims.display_enter) {
-        _injectAnimStyle();
-        _applyAnimation(container, anims.display_enter.type, anims.display_enter.duration_ms, anims.display_enter.easing);
-        return;
-    } else if (anims && phase === "between_slides" && anims.between_slides) {
-        _injectAnimStyle();
-        _applyAnimation(container, anims.between_slides.in_type, anims.between_slides.duration_ms, anims.between_slides.easing);
+    const anims = theme.animations || {};
+
+    // Raw v1 payload that bypassed Python: keep the legacy phase names.
+    if (theme.schema_version !== 2 && !Array.isArray(theme.containers)) {
+        if (phase === "entry" && anims.display_enter) {
+            _injectAnimStyle();
+            _applyAnimation(container, anims.display_enter.type,
+                anims.display_enter.duration_ms, anims.display_enter.easing);
+        } else if (phase === "in" && anims.between_slides) {
+            _injectAnimStyle();
+            _applyAnimation(container, anims.between_slides.in_type,
+                anims.between_slides.duration_ms, anims.between_slides.easing);
+        }
         return;
     }
 
-    const containers = _currentContainers.length > 0 ? _currentContainers : [themeContainer(theme)];
-    containers.forEach(c => {
-        const el = document.getElementById("rc-cont-" + c.id) || container;
-        if (c.animation) {
-            let slot = null;
-            if (phase === "display_enter") slot = c.animation.entry;
-            else if (phase === "between_slides") slot = (c.animation.transition && c.animation.transition.in) || c.animation.transition;
-            const def = _resolveSlotDef(slot, anims);
-            if (def) _playElementAnimation(el, def);
+    _animationTargets(theme).forEach(t => {
+        let slot = null;
+        if (phase === "entry") {
+            slot = t.anim.entry;
+        } else if (phase === "in") {
+            const relevant = (t.kind === "container" || t.kind === "body")
+                ? changed.any : !!changed[t.kind];
+            if (!relevant) return;
+            slot = t.anim.transition && t.anim.transition.in;
         }
-        const blocks = _getContainerBlocks(c);
-        ["text", "reference", "translation", "title"].forEach(bName => {
-            const b = blocks[bName];
-            if (b && b.animation) {
-                let slot = null;
-                if (phase === "display_enter") slot = b.animation.entry;
-                else if (phase === "between_slides") slot = (b.animation.transition && b.animation.transition.in) || b.animation.transition;
-                const def = _resolveSlotDef(slot, anims);
-                const bEl = el.querySelector("." + (bName === "text" ? "verse-text" : "verse-ref"));
-                if (def && bEl) _playElementAnimation(bEl, def);
-            }
-        });
+        if (!slot) return;
+        if (phase !== "out" && _splitConfig(t.anim)
+            && _runSplitAnimation(t.el, t.anim, phase, anims)) return;
+        const def = _resolveSlotDef(slot, anims, "in");
+        if (def) _playElementAnimation(t.el, def, { kind: t.kind, phase: phase });
     });
 }
 
 function _runExitAnimation(callback) {
-    const prevTheme = _prevPayload && _prevPayload.theme_data;
-    const anims = prevTheme && prevTheme.animations;
-    if (anims && anims.display_exit && anims.display_exit.type) {
-        const a = anims.display_exit;
-        _injectAnimStyle();
-        const kfName = `rc-${a.type}`;
-        const dur = (a.duration_ms || 400) + "ms";
-        const ease = ANIM_EASINGS[a.easing] || ANIM_EASINGS["ease-out"];
-        container.style.animation = `${kfName} ${dur} ${ease} forwards`;
-        container.addEventListener("animationend", () => {
-            container.style.animation = "";
-            callback();
-        }, { once: true });
+    if (_reducedMotion()) {
+        callback();
         return;
     }
-    if (_currentContainers && _currentContainers.length > 0) {
-        const first = _currentContainers[0];
-        if (first.animation && first.animation.out) {
-            const def = _resolveSlotDef(first.animation.out, anims);
-            if (def) {
-                const el = document.getElementById("rc-cont-" + first.id) || container;
-                const anim = _playElementAnimation(el, def);
-                if (anim && anim.finished) {
-                    anim.finished.then(() => {
-                        callback();
-                    });
-                    return;
-                }
-            }
-        }
+    // The exit reads the CURRENTLY applied theme: cloak after a theme-only
+    // restyle must play the new theme's `out`, not the payload's old one.
+    const theme = _currentTheme || (_prevPayload && _prevPayload.theme_data);
+    const plan = _collectExit(theme);
+    if (!plan.length) {
+        callback();
+        return;
     }
-    callback();
+    let total = 0;
+    plan.forEach(p => {
+        _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+        total = Math.max(total, _phaseDuration(p.def));
+    });
+    if (total <= 0) {
+        callback();
+        return;
+    }
+    _phaseTimer = setTimeout(() => {
+        _phaseTimer = null;
+        callback();
+    }, total);
 }
 
 // ─── Inline run markup ───────────────────────────────────────────────
@@ -1178,11 +2216,15 @@ function _ocApplyTransform(text, transform) {
 // styles speak unscaled px. Mixing them mis-measures everything (and trips
 // the fidelity guard permanently). Normalize rects by the measured scale;
 // 1.0 when nothing is transformed (the OBS display).
-function _ocScale() {
+function _ocScale(el) {
     try {
-        if (typeof verseText === "undefined" || !verseText) return 0;
-        const r = verseText.getBoundingClientRect();
-        const w = verseText.offsetWidth || 0;
+        // Default to the static verse block, but multi-container themes
+        // convert their own panel text while #verse-text is display:none —
+        // measuring the hidden node would yield a zero scale and abort.
+        const node = el || (typeof verseText !== "undefined" ? verseText : null);
+        if (!node) return 0;
+        const r = node.getBoundingClientRect();
+        const w = node.offsetWidth || 0;
         if (r && r.width > 0 && w > 0) {
             const s = r.width / w;
             if (isFinite(s) && s > 0.05 && s < 20) return s;
@@ -1263,7 +2305,7 @@ function convertOutlineScope(el, width, color) {
     if (!ink.length) return false;
     // Unscale rects to CSS px (see _ocScale): everything downstream meets
     // canvas metrics and computed styles in the same coordinate space.
-    const scale = _ocScale();
+    const scale = _ocScale(el);
     if (!scale) return false;
     if (scale !== 1) {
         for (const c of chars) {
@@ -1897,8 +2939,118 @@ function renderInlineColors(text) {
     return out.replace(/\r?\n/g, "<br/>");
 }
 
+// Source fields compared per block for transition triggering. A re-broadcast
+// with the same words (theme restyle, queue refresh) must stay silent.
+function _payloadSources(payload) {
+    const s = { text: "", reference: "", translation: "", title: "" };
+    if (!payload || payload.action !== "display") return s;
+    s.text = payload.text == null ? "" : String(payload.text);
+    s.title = payload.title == null ? "" : String(payload.title);
+    if (payload.reference != null) {
+        s.reference = String(payload.reference);
+    } else if (payload.book && payload.chapter && payload.verse) {
+        s.reference = payload.book + " " + payload.chapter + ":" + payload.verse;
+    } else if (payload.ref != null) {
+        const m = String(payload.ref).match(/^\[([^\]]+)\]\s*(.+)$/);
+        if (m) {
+            s.reference = m[2];
+            if (payload.translation == null) s.translation = m[1];
+        } else {
+            s.reference = String(payload.ref);
+        }
+    }
+    if (payload.translation != null) s.translation = String(payload.translation);
+    return s;
+}
+
+function _changedSources(previous, current) {
+    const a = _payloadSources(previous);
+    const b = _payloadSources(current);
+    const changed = {
+        text: a.text !== b.text,
+        reference: a.reference !== b.reference,
+        translation: a.translation !== b.translation,
+        title: a.title !== b.title,
+    };
+    changed.any = changed.text || changed.reference
+        || changed.translation || changed.title;
+    return changed;
+}
+
+function _renderDisplay(data, silent, changed, phase) {
+    _cancelAllAnimations();
+    if (data.text) {
+        let verseTextContent = renderInlineColors(data.text);
+        const refText = data.reference || (data.book && data.chapter && data.verse
+            ? data.book + " " + data.chapter + ":" + data.verse
+            : null);
+        const verseNum = extractVerseNumber(refText);
+        if (verseNum) {
+            verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
+        }
+        verseText.innerHTML = verseTextContent;
+        delete verseText.dataset.rcOcSrc;
+        delete verseText.dataset.rcOcDone;
+        delete verseText.dataset.rcSplit;
+        delete verseText.dataset.rcSplitSrc;
+        delete verseText.dataset.rcSplitUnits;
+        delete verseText.dataset.rcSplitAnimated;
+    }
+
+    if (data.reference) {
+        verseRefText.innerHTML = data.reference;
+    } else if (data.book && data.chapter && data.verse) {
+        verseRefText.innerHTML = data.book + " " + data.chapter + ":" + data.verse;
+    } else if (data.ref) {
+        const m = data.ref.match(/^\[([^\]]+)\]\s*(.+)$/);
+        if (m) {
+            verseRefTranslation.innerHTML = m[1];
+            verseRefText.innerHTML = m[2];
+        } else {
+            verseRefText.innerHTML = data.ref;
+        }
+    } else {
+        verseRefText.innerHTML = "";
+    }
+
+    if (data.translation) {
+        verseRefTranslation.innerHTML = data.translation;
+    } else if (!data.ref) {
+        verseRefTranslation.innerHTML = "";
+    }
+
+    const refEmpty = !verseRefText.textContent.trim()
+        && !verseRefTranslation.textContent.trim();
+    verseRef.style.display = refEmpty ? "none" : "";
+    verseText.style.marginBottom = refEmpty ? "0px" : "";
+
+    resetTheme();
+    if (data.theme_data) {
+        applyTheme(data.theme_data, data.slide_format);
+        document.body.className = "";
+    } else if (data.theme) {
+        document.body.className = "theme-" + data.theme;
+    }
+
+    if (_currentContainers && _currentContainers.length > 1) {
+        _renderMultiContainers(data);
+    } else {
+        container.classList.remove("hidden");
+        autoFitText();
+        _populateContainers(data);
+    }
+
+    _layoutSplitUnits(_currentTheme);
+
+    if (!silent) {
+        if (phase) _runAnimation(phase, changed);
+        _prevPayload = data;
+    }
+}
+
 function handlePayload(data, silent) {
     if (data.action === "clear") {
+        _cancelAllAnimations();
         if (silent) {
             container.classList.add("hidden");
             container.style.animation = "";
@@ -1914,79 +3066,48 @@ function handlePayload(data, silent) {
             if (typeof document !== "undefined" && document.querySelectorAll) {
                 document.querySelectorAll(".rc-dynamic-container").forEach(el => el.classList.add("hidden"));
             }
+            _cancelAllAnimations();
         });
         _prevPayload = null;
         return;
     }
-    
-    if (data.action === "display") {
-        const isTransition = _prevPayload && _prevPayload.action === "display";
-        if (data.text) {
-            let verseTextContent = renderInlineColors(data.text);
-            const refText = data.reference || (data.book && data.chapter && data.verse 
-                ? data.book + " " + data.chapter + ":" + data.verse 
-                : null);
-            const verseNum = extractVerseNumber(refText);
-            if (verseNum) {
-                verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
-            }
-            verseText.innerHTML = verseTextContent;
-            delete verseText.dataset.rcOcSrc;
-            delete verseText.dataset.rcOcDone;
-        }
-        
-        if (data.reference) {
-            verseRefText.innerHTML = data.reference;
-        } else if (data.book && data.chapter && data.verse) {
-            verseRefText.innerHTML = data.book + " " + data.chapter + ":" + data.verse;
-        } else if (data.ref) {
-            const m = data.ref.match(/^\[([^\]]+)\]\s*(.+)$/);
-            if (m) {
-                verseRefTranslation.innerHTML = m[1];
-                verseRefText.innerHTML = m[2];
-            } else {
-                verseRefText.innerHTML = data.ref;
-            }
-        } else {
-            verseRefText.innerHTML = "";
-        }
 
-        if (data.translation) {
-            verseRefTranslation.innerHTML = data.translation;
-        } else if (!data.ref) {
-            verseRefTranslation.innerHTML = "";
-        }
+    if (data.action !== "display") return;
 
-        const refEmpty = !verseRefText.textContent.trim()
-            && !verseRefTranslation.textContent.trim();
-        verseRef.style.display = refEmpty ? "none" : "";
-        verseText.style.marginBottom = refEmpty ? "0px" : "";
-        
-        resetTheme();
-        if (data.theme_data) {
-            applyTheme(data.theme_data, data.slide_format);
-            document.body.className = "";
-        } else if (data.theme) {
-            document.body.className = "theme-" + data.theme;
-        }
-        
-        if (_currentContainers && _currentContainers.length > 1) {
-            _renderMultiContainers(data);
-        } else {
-            container.classList.remove("hidden");
-            autoFitText();
-            _populateContainers(data);
-        }
+    const previous = _prevPayload;
+    const changed = _changedSources(previous, data);
+    // entry: first content (or after a clear). in: content actually changed.
+    // Same content re-broadcast (theme restyle, queue refresh) is silent.
+    let phase = "entry";
+    if (previous && previous.action === "display") {
+        phase = changed.any ? "in" : null;
+    }
 
-        if (!silent) {
-            if (isTransition) {
-                _runAnimation(data, "between_slides");
-            } else {
-                _runAnimation(data, "display_enter");
+    if (!silent) {
+        _cancelAllAnimations();
+        if (phase === "in") {
+            // §4.9.3: play the old content out first, then swap and re-fit.
+            const plan = _collectTransitionOut(_currentTheme, changed);
+            if (plan.length) {
+                let total = 0;
+                plan.forEach(p => {
+                    _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+                    total = Math.max(total, _phaseDuration(p.def));
+                });
+                if (total > 0) {
+                    const token = _phaseToken;
+                    _phaseTimer = setTimeout(() => {
+                        _phaseTimer = null;
+                        if (token === _phaseToken) {
+                            _renderDisplay(data, silent, changed, phase);
+                        }
+                    }, total);
+                    return;
+                }
             }
-            _prevPayload = data;
         }
     }
+    _renderDisplay(data, silent, changed, phase);
 }
 
 function refreshPayload(data) {
@@ -2011,6 +3132,19 @@ connect();
 
 if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
-        try { invalidateOutlines(); applyOutlineLayers(); } catch (e) {}
+        try {
+            // Split markup changes measured height; lay the text back out
+            // before refitting, then re-split at the final metrics.
+            _unsplitAll();
+            invalidateOutlines();
+            // Bundled faces land after the first fit; re-fit v2 min_height
+            // panels so autosized text matches the final metrics.
+            if (_currentTheme && _currentTheme.schema_version === 2) {
+                autoFitText();
+                if (_currentContainers && _currentContainers.length > 1) _autoFitPanels();
+            }
+            applyOutlineLayers();
+            _layoutSplitUnits(_currentTheme);
+        } catch (e) {}
     });
 }

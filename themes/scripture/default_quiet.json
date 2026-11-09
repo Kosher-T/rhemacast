@@ -1,0 +1,137 @@
+{
+  "schema_version": 2,
+  "name": "default_quiet",
+  "label": "Standard — Quiet Fade",
+  "description": "Quiet variant of Standard: a long, soft rise for the verse and delayed fades for citation and translation.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "transparent",
+    "fit": "none"
+  },
+  "animations": {
+    "quiet_in": {
+      "type": "custom",
+      "label": "Quiet in",
+      "duration_ms": 1600,
+      "delay_ms": 0,
+      "easing": "smooth",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": 0, "translate_y": 14, "blur": 4 },
+        { "at": 70, "opacity": 0.94, "translate_y": 3, "blur": 0 },
+        { "at": 100, "opacity": "base", "translate_y": 0, "blur": 0 }
+      ]
+    },
+    "quiet_out": {
+      "type": "custom",
+      "label": "Quiet out",
+      "duration_ms": 700,
+      "delay_ms": 0,
+      "easing": "ease-in",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": "base", "translate_y": 0, "blur": 0 },
+        { "at": 100, "opacity": 0, "translate_y": 10, "blur": 3 }
+      ]
+    }
+  },
+  "containers": [
+    {
+      "id": "main",
+      "layer": 0,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 38.5, "y": 39.0 },
+      "background": "transparent",
+      "border": "none",
+      "border_radius": 0,
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "width": "1843px",
+      "height": "1002px",
+      "min_width": "1843px",
+      "max_width": "1843px",
+      "min_height": 0,
+      "max_height": null,
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "fade_in", "duration_ms": 1300, "easing": "smooth" },
+        "out": { "use": "fade_out", "duration_ms": 600 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 0,
+          "padding": 0
+        },
+        "text": {
+          "visible": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": "44px",
+          "min_size": "38px",
+          "max_size": "58px",
+          "weight": 700,
+          "line_height": "1.08",
+          "text_shadow": "-2px -2px 0 #555, 2px -2px 0 #555, -2px 2px 0 #555, 2px 2px 0 #555, -2px 0 0 #555, 2px 0 0 #555, 0 -2px 0 #555, 0 2px 0 #555, 0 2px 16px rgba(0, 0, 0, 0.6)",
+          "text_transform": "none",
+          "text_align": "center",
+          "letter_spacing": "-0.02em",
+          "margin_bottom": "20px",
+          "autosize": true,
+          "animation": {
+            "entry": "quiet_in",
+            "transition": { "out": "quiet_out", "in": "quiet_in" },
+            "out": "quiet_out"
+          }
+        },
+        "reference": {
+          "visible": true,
+          "color": "#cccccc",
+          "size": "34px",
+          "weight": 500,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.1em",
+          "position": "below_verse",
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 1000, "delay_ms": 320 },
+            "out": { "use": "fade_out", "duration_ms": 600 }
+          }
+        },
+        "translation": {
+          "visible": true,
+          "color": "#999999",
+          "margin_left": "8px",
+          "position": "right_of_reference",
+          "size": "34px",
+          "weight": 500,
+          "letter_spacing": "0.1em",
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 900, "delay_ms": 520 },
+            "out": { "use": "fade_out", "duration_ms": 500 }
+          }
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "#cccccc",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        }
+      }
+    }
+  ]
+}

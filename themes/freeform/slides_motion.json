@@ -1,0 +1,108 @@
+{
+  "schema_version": 2,
+  "name": "slides_motion",
+  "label": "Slides — Motion",
+  "description": "Freeform lyric slides with a gradient stage, lime side rails and a springy lyric pop on every slide.",
+  "author": "RhemaCast",
+  "kind": "freeform",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "linear-gradient(160deg, #050b16 0%, #101a32 60%, #1b1030 100%)",
+    "fit": "none"
+  },
+  "animations": {
+    "lyric_pop": {
+      "type": "custom",
+      "label": "Lyric pop",
+      "duration_ms": 700,
+      "delay_ms": 0,
+      "easing": "spring",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": 0, "translate_y": 26, "scale": 0.94, "blur": 6 },
+        { "at": 62, "opacity": 1, "translate_y": 0, "scale": 1.015, "blur": 0 },
+        { "at": 100, "opacity": "base", "translate_y": 0, "scale": 1, "blur": 0 }
+      ]
+    },
+    "lyric_out": {
+      "type": "custom",
+      "label": "Lyric out",
+      "duration_ms": 480,
+      "delay_ms": 0,
+      "easing": "ease-in",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": "base", "translate_y": 0, "scale": 1 },
+        { "at": 100, "opacity": 0, "translate_y": -18, "scale": 0.98 }
+      ]
+    }
+  },
+  "containers": [
+    {
+      "id": "main",
+      "layer": 0,
+      "visible": true,
+      "position": { "anchor": "top_left", "x": 38.5, "y": 0.0 },
+      "background": "linear-gradient(180deg, rgba(7,12,24,0.0) 0%, rgba(7,12,24,0.55) 18%, rgba(7,12,24,0.55) 82%, rgba(7,12,24,0.0) 100%)",
+      "border": {
+        "width": 0,
+        "style": "solid",
+        "color": "transparent",
+        "radius": 0,
+        "sides": {
+          "left": { "width": 2, "color": "rgba(170,255,0,0.55)" },
+          "right": { "width": 2, "color": "rgba(170,255,0,0.55)" }
+        }
+      },
+      "border_radius": 0,
+      "box_shadow": "none",
+      "backdrop_filter": "none",
+      "width": "1843px",
+      "height": "1080px",
+      "min_width": "1843px",
+      "max_width": "1843px",
+      "min_height": 0,
+      "max_height": null,
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "fade_in", "duration_ms": 600 },
+        "out": { "use": "fade_out", "duration_ms": 420 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 16,
+          "padding": 90
+        },
+        "text": {
+          "visible": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": "62px",
+          "min_size": "40px",
+          "max_size": "62px",
+          "weight": 800,
+          "text_outline": "6px #000000",
+          "text_shadow": "none",
+          "line_height": "1.08",
+          "text_transform": "uppercase",
+          "text_align": "center",
+          "letter_spacing": "0.02em",
+          "margin_bottom": "20px",
+          "autosize": true,
+          "animation": {
+            "entry": "lyric_pop",
+            "transition": { "out": "lyric_out", "in": "lyric_pop" },
+            "out": "lyric_out"
+          }
+        }
+      }
+    }
+  ],
+  "slide": {
+    "show_title": false
+  }
+}

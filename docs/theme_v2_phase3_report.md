@@ -39,10 +39,17 @@ Phase-2's `project_legacy()` bridge has been removed from every call-site; the r
 | `applyTheme(theme, slideFormat)` | Main entry — dispatches single-container or multi-container path, positions blocks, applies form/decoration |
 | `resetTheme()` | Resets all container inline styles and restores canonical DOM child order |
 | `_renderMultiContainers(data)` | Creates dynamic `.rc-dynamic-container` divs on `#stage` for ≥2-container themes |
-| `_resolveSlotDef(slot, registry)` | Resolves an animation slot name → definition object |
-| `_playElementAnimation(el, def)` | Runs WAAPI `element.animate()` with keyframe mapping |
-| `_runAnimation(data, phase)` | Per-container animation dispatch using v2 structure |
-| `_runExitAnimation(cb)` | Reads exit animation from containers and fires callback on completion |
+| `_resolveSlotDef(slot, registry, phase)` | Resolves an animation slot name (or inline def) → definition object, with a phase-appropriate fallback |
+| `_playElementAnimation(el, def, opts)` | Runs WAAPI `element.animate()` from the Python-provided keyframes; typewriter/outline guards live here |
+| `_playTypewriter(el, def)` | Grapheme/word reveal with cursor, layout-reserving spans, and a hard completion timer |
+| `_animationTargets(theme)` | Collects container/body/block animation assignments for the active theme |
+| `_collectTransitionOut(theme, changed)` | Picks the `transition.out` targets whose block content changed |
+| `_collectExit(theme)` | Picks per-block `out` targets for clear |
+| `_runAnimation(phase, changed)` | Plays `entry` / `transition.in` on the resolved targets |
+| `_runExitAnimation(cb)` | Plays per-block `out`, then fires the callback after the longest phase |
+| `_payloadSources` / `_changedSources` | Content-diff that decides silent re-broadcast vs. transition |
+| `_renderDisplay` | The commit point: cancel, render, theme, autofit, then play the phase |
+| `handlePayload` | Clear/silent/display orchestration, including transition-out gating |
 
 ---
 
@@ -103,6 +110,10 @@ Both `appendChild` and `insertBefore` are implemented and track `parentElement` 
 | `test_v2_multi_container_payload_rendering` | 2-container payload → `.rc-dynamic-container` with z-index/positions |
 | `test_v2_canvas_fit_scaling` | `canvas.fit: "contain"` → `scale(0.5)` on `#stage` |
 | `test_v2_animation_slot_resolution_and_keyframes` | `_resolveSlotDef` correctness |
+| `test_v2_unknown_animation_slot_falls_back_by_phase` | Unknown slot → phase fallback (`fade_in`/`fade_out`), never `undefined` |
+| `test_v2_typewriter_segments_keep_whitespace_with_preceding` | Grapheme/word segmentation (`Intl.Segmenter`), whitespace rides the preceding segment |
+| `test_v2_changed_sources_is_per_block` | Content-diff detection per block; a theme-only re-broadcast is silent |
+| `test_v2_reduced_motion_suppresses_animation_plans` | `prefers-reduced-motion` → no plan, no playback, no out-phase wait |
 
 ---
 
@@ -110,19 +121,20 @@ Both `appendChild` and `insertBefore` are implemented and track `parentElement` 
 
 | Test file | Count | Result |
 |-----------|-------|--------|
-| `tests/test_display_js.py` | 38 | ✅ All pass |
+| `tests/test_display_js.py` | 48 | ✅ All pass |
 | `tests/test_display_render_matrix.py` | 12 | ✅ All pass |
 | `tests/test_display_deck_formats.py` | 7 | ✅ All pass |
 | `tests/test_theme_switch.py` | 12 | ✅ All pass |
-| `tests/test_theme_v2_animations.py` | — | ✅ All pass |
-| `tests/test_theme_v2_designer_roundtrip.py` | — | ✅ All pass |
-| `tests/test_theme_v2_migration.py` | — | ✅ All pass |
-| `tests/test_theme_v2_positions.py` | — | ✅ All pass |
-| `tests/test_theme_v2_schema.py` | — | ✅ All pass |
-| `tests/test_theme_v2_security.py` | — | ✅ All pass |
-| `tests/test_theme_v2_shared.py` | — | ✅ All pass |
+| `tests/test_theme_v2_animation_runtime.py` | 30 | ✅ All pass |
+| `tests/test_theme_v2_animations.py` | 86 | ✅ All pass |
+| `tests/test_theme_v2_designer_roundtrip.py` | 14 | ✅ All pass |
+| `tests/test_theme_v2_migration.py` | 44 | ✅ All pass |
+| `tests/test_theme_v2_positions.py` | 47 | ✅ All pass |
+| `tests/test_theme_v2_schema.py` | 35 | ✅ All pass |
+| `tests/test_theme_v2_security.py` | 118 | ✅ All pass |
+| `tests/test_theme_v2_shared.py` | 56 | ✅ All pass |
 | `tests/test_phase7_display.py` | 6 | ✅ All pass |
-| **Total** | **453** | ✅ **All pass** |
+| **Total** | **515** | ✅ **All pass** |
 
 ---
 

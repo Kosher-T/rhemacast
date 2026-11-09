@@ -1,0 +1,125 @@
+{
+  "schema_version": 2,
+  "name": "fullscreen_split",
+  "label": "Fullscreen — Split Stage",
+  "description": "Two-container variant: the verse and the citation enter independently, with separate frames and staggered timing.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "linear-gradient(150deg, #050914 0%, #0a1730 48%, #150a2e 100%)",
+    "fit": "none"
+  },
+  "containers": [
+    {
+      "id": "verse",
+      "label": "Verse panel",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "left", "x": 70 },
+      "width": "1200px",
+      "height": "780px",
+      "background": "rgba(10, 16, 32, 0.62)",
+      "border": { "shared": "gold_frame" },
+      "border_radius": 26,
+      "box_shadow": { "shared": "soft" },
+      "backdrop_filter": "blur(12px) saturate(1.2)",
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "slide_up", "duration_ms": 760 },
+        "transition": { "in": { "use": "slide_up", "duration_ms": 520 } },
+        "out": { "use": "slide_down", "duration_ms": 380 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 18,
+          "padding": 48
+        },
+        "text": {
+          "visible": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": 76,
+          "min_size": 46,
+          "max_size": 94,
+          "weight": 700,
+          "line_height": 1.08,
+          "letter_spacing": "-0.02em",
+          "text_shadow": "0 14px 40px rgba(0,0,0,0.55)",
+          "text_align": "center",
+          "autosize": true
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        }
+      }
+    },
+    {
+      "id": "cite",
+      "label": "Citation panel",
+      "layer": 20,
+      "visible": true,
+      "position": { "anchor": "bottom_right", "x": 80, "y": 110 },
+      "width": "600px",
+      "height": "300px",
+      "background": "@ink_soft",
+      "border": { "shared": "hairline" },
+      "border_radius": 22,
+      "box_shadow": { "shared": "ring" },
+      "backdrop_filter": "blur(8px)",
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "fade_up", "duration_ms": 600, "delay_ms": 380 },
+        "transition": {
+          "in": { "use": "fade_up", "duration_ms": 400, "delay_ms": 120 }
+        },
+        "out": { "use": "fade_down", "duration_ms": 320 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 12,
+          "padding": 30
+        },
+        "reference": {
+          "visible": true,
+          "color": "@gold",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 38,
+          "weight": 600,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.14em",
+          "position": "below_verse",
+          "text_align": "center"
+        },
+        "translation": {
+          "visible": true,
+          "color": "@lime",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 28,
+          "weight": 500,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.12em",
+          "position": "below_reference",
+          "text_align": "center"
+        }
+      }
+    }
+  ]
+}

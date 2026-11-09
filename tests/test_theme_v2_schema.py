@@ -459,3 +459,77 @@ def test_every_shipped_theme_resolves_without_warnings(kind):
         assert report.errors == [], (name, report.errors)
         assert resolved["kind"] == kind
         assert resolved["containers"], name
+
+
+def _split_theme(split=None):
+    animation = {
+        "entry": "fade_up",
+        "split": split if split is not None else {
+            "by": "line",
+            "stagger_ms": 90,
+            "first": {"entry": "scale_up"},
+            "rest": {"entry": "fade_in"},
+            "look": {"first": {"color": "#ffd166", "weight": 700},
+                     "rest": {"opacity": 0.7}},
+        },
+    }
+    return {
+        "schema_version": 2,
+        "containers": [{"id": "main", "blocks": {
+            "text": {"animation": animation},
+        }}],
+    }
+
+
+def test_split_animation_is_validated_and_emits_referenced_definitions():
+    resolved, report = normalize_theme(_split_theme(), name="probe")
+
+    assert report.warnings == []
+    split = resolved["containers"][0]["blocks"]["text"]["animation"]["split"]
+    assert split["by"] == "line"
+    assert split["stagger_ms"] == 90
+    assert split["first"]["entry"] == {"use": "scale_up"}
+    assert split["rest"]["entry"] == {"use": "fade_in"}
+    assert split["look"]["first"] == {"color": "#ffd166", "weight": 700}
+    assert split["look"]["rest"] == {"opacity": 0.7}
+    assert "scale_up" in resolved["animations"]
+    assert "fade_in" in resolved["animations"]
+
+
+def test_split_repairs_unknown_unit_and_clamps_stagger():
+    resolved, report = normalize_theme(
+        _split_theme({"by": "sentence", "stagger_ms": 99999}), name="probe")
+
+    split = resolved["containers"][0]["blocks"]["text"]["animation"]["split"]
+    assert split["by"] == "line"
+    assert split["stagger_ms"] == 2000
+    assert report.warnings
+
+
+def test_split_is_dropped_on_containers_and_the_body_stack():
+    raw = {
+        "schema_version": 2,
+        "containers": [{
+            "id": "main",
+            "animation": {"split": {"by": "line"}},
+            "blocks": {"body": {"animation": {"split": {"by": "word"}}}},
+        }],
+    }
+    resolved, _ = normalize_theme(raw, name="probe")
+
+    container = resolved["containers"][0]
+    assert "split" not in container.get("animation", {})
+    assert "split" not in container["blocks"]["body"].get("animation", {})
+
+
+def test_nested_split_is_rejected_inside_first_and_rest():
+    resolved, _ = normalize_theme(_split_theme({
+        "by": "word",
+        "first": {"entry": "fade_up", "split": {"by": "line"}},
+        "rest": {"entry": "fade_in", "split": {"by": "line"}},
+    }), name="probe")
+
+    split = resolved["containers"][0]["blocks"]["text"]["animation"]["split"]
+    assert split["by"] == "word"
+    assert "split" not in split["first"]
+    assert "split" not in split["rest"]

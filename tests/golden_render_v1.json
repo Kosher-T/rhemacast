@@ -1,0 +1,758 @@
+{
+ "slides": {
+  "long": {
+   "container": {
+    "x": 38.5,
+    "y": 0,
+    "w": 1843,
+    "h": 1080
+   },
+   "textRange": {
+    "x": 51.5,
+    "y": 397.56,
+    "w": 1817,
+    "h": 258.88
+   },
+   "refRange": {
+    "x": 855.69,
+    "y": 669.44,
+    "w": 140.31,
+    "h": 27
+   },
+   "transRange": {
+    "x": 1013.08,
+    "y": 669.44,
+    "w": 51.22,
+    "h": 27
+   },
+   "text": {
+    "fontSize": "61px",
+    "lineHeight": "65.88px",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "1.22px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "24px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "2.4px",
+    "color": "rgb(148, 163, 184)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "24px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "2.4px",
+    "color": "rgb(100, 116, 139)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 38.5,
+    "y": 0,
+    "w": 1843,
+    "h": 1080
+   },
+   "textRange": {
+    "x": 747,
+    "y": 465.13,
+    "w": 426,
+    "h": 124.88
+   },
+   "refRange": {
+    "x": 848.7,
+    "y": 601.88,
+    "w": 154.28,
+    "h": 27
+   },
+   "transRange": {
+    "x": 1020.06,
+    "y": 601.88,
+    "w": 51.22,
+    "h": 27
+   },
+   "text": {
+    "fontSize": "61px",
+    "lineHeight": "65.88px",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "1.22px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "24px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "2.4px",
+    "color": "rgb(148, 163, 184)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "24px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "2.4px",
+    "color": "rgb(100, 116, 139)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ },
+ "default": {
+  "long": {
+   "container": {
+    "x": 38.5,
+    "y": 39,
+    "w": 1843,
+    "h": 1002
+   },
+   "textRange": {
+    "x": 59.11,
+    "y": 439.95,
+    "w": 1801.78,
+    "h": 139.55
+   },
+   "refRange": {
+    "x": 813.89,
+    "y": 592.05,
+    "w": 198.78,
+    "h": 38
+   },
+   "transRange": {
+    "x": 1033.53,
+    "y": 592.05,
+    "w": 72.56,
+    "h": 38
+   },
+   "text": {
+    "fontSize": "57px",
+    "lineHeight": "61.56px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.14px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.4px",
+    "color": "rgb(204, 204, 204)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.4px",
+    "color": "rgb(153, 153, 153)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 38.5,
+    "y": 39,
+    "w": 1843,
+    "h": 1002
+   },
+   "textRange": {
+    "x": 784.64,
+    "y": 470.72,
+    "w": 350.72,
+    "h": 78
+   },
+   "refRange": {
+    "x": 804,
+    "y": 561.27,
+    "w": 218.56,
+    "h": 38
+   },
+   "transRange": {
+    "x": 1043.42,
+    "y": 561.27,
+    "w": 72.56,
+    "h": 38
+   },
+   "text": {
+    "fontSize": "57px",
+    "lineHeight": "61.56px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.14px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.4px",
+    "color": "rgb(204, 204, 204)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.4px",
+    "color": "rgb(153, 153, 153)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ },
+ "fullscreen": {
+  "long": {
+   "container": {
+    "x": 60,
+    "y": 40,
+    "w": 1800,
+    "h": 1000
+   },
+   "textRange": {
+    "x": 142.7,
+    "y": 275.81,
+    "w": 1634.58,
+    "h": 437.78
+   },
+   "refRange": {
+    "x": 753.52,
+    "y": 724.19,
+    "w": 285.13,
+    "h": 66
+   },
+   "transRange": {
+    "x": 1064.84,
+    "y": 724.19,
+    "w": 101.63,
+    "h": 66
+   },
+   "text": {
+    "fontSize": "95px",
+    "lineHeight": "102.6px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.9px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "48px",
+    "lineHeight": "normal",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "4.8px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "48px",
+    "lineHeight": "normal",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "4.8px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 60,
+    "y": 40,
+    "w": 1800,
+    "h": 1000
+   },
+   "textRange": {
+    "x": 667.72,
+    "y": 429.7,
+    "w": 584.55,
+    "h": 130
+   },
+   "refRange": {
+    "x": 736.7,
+    "y": 570.3,
+    "w": 318.73,
+    "h": 66
+   },
+   "transRange": {
+    "x": 1081.64,
+    "y": 570.3,
+    "w": 101.63,
+    "h": 66
+   },
+   "text": {
+    "fontSize": "95px",
+    "lineHeight": "102.6px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.9px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "48px",
+    "lineHeight": "normal",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "4.8px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "48px",
+    "lineHeight": "normal",
+    "fontWeight": "800",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "4.8px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ },
+ "fullscreen_2": {
+  "long": {
+   "container": {
+    "x": 60,
+    "y": 0,
+    "w": 1800,
+    "h": 1080
+   },
+   "textRange": {
+    "x": 95,
+    "y": 403.92,
+    "w": 1729.98,
+    "h": 208.44
+   },
+   "refRange": {
+    "x": 797.19,
+    "y": 624.08,
+    "w": 222.17,
+    "h": 42
+   },
+   "transRange": {
+    "x": 1041.72,
+    "y": 624.08,
+    "w": 81.09,
+    "h": 42
+   },
+   "text": {
+    "fontSize": "59px",
+    "lineHeight": "63.72px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.18px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "38px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.8px",
+    "color": "rgb(204, 204, 204)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "38px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.8px",
+    "color": "rgb(153, 153, 153)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 60,
+    "y": 0,
+    "w": 1800,
+    "h": 1080
+   },
+   "textRange": {
+    "x": 778.48,
+    "y": 467.64,
+    "w": 363.02,
+    "h": 81
+   },
+   "refRange": {
+    "x": 786.13,
+    "y": 560.36,
+    "w": 244.28,
+    "h": 42
+   },
+   "transRange": {
+    "x": 1052.77,
+    "y": 560.36,
+    "w": 81.09,
+    "h": 42
+   },
+   "text": {
+    "fontSize": "59px",
+    "lineHeight": "63.72px",
+    "fontWeight": "700",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-1.18px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "38px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.8px",
+    "color": "rgb(204, 204, 204)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "38px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif",
+    "letterSpacing": "3.8px",
+    "color": "rgb(153, 153, 153)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ },
+ "reference": {
+  "long": {
+   "container": {
+    "x": 20,
+    "y": 470,
+    "w": 1880,
+    "h": 140
+   },
+   "textRange": {
+    "x": 29.25,
+    "y": 465.2,
+    "w": 1861.48,
+    "h": 100.8
+   },
+   "refRange": {
+    "x": 825.72,
+    "y": 575.8,
+    "w": 180.8,
+    "h": 33
+   },
+   "transRange": {
+    "x": 1028.45,
+    "y": 575.8,
+    "w": 65.83,
+    "h": 33
+   },
+   "text": {
+    "fontSize": "39px",
+    "lineHeight": "46.8px",
+    "fontWeight": "600",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-0.195px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "30px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "3.6px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "30px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "3.6px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 20,
+    "y": 470,
+    "w": 1880,
+    "h": 140
+   },
+   "textRange": {
+    "x": 775.39,
+    "y": 474.59,
+    "w": 369.22,
+    "h": 82
+   },
+   "refRange": {
+    "x": 816.69,
+    "y": 564.39,
+    "w": 198.86,
+    "h": 33
+   },
+   "transRange": {
+    "x": 1037.48,
+    "y": 564.39,
+    "w": 65.83,
+    "h": 33
+   },
+   "text": {
+    "fontSize": "59px",
+    "lineHeight": "70.8px",
+    "fontWeight": "600",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-0.295px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "30px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "3.6px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "30px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "3.6px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ },
+ "reference_2": {
+  "long": {
+   "container": {
+    "x": 0,
+    "y": 360,
+    "w": 1920,
+    "h": 360
+   },
+   "textRange": {
+    "x": 9.36,
+    "y": 397.3,
+    "w": 1901.28,
+    "h": 243.59
+   },
+   "refRange": {
+    "x": 808.47,
+    "y": 635.69,
+    "w": 204.91,
+    "h": 38
+   },
+   "transRange": {
+    "x": 1036.91,
+    "y": 635.69,
+    "w": 74.61,
+    "h": 38
+   },
+   "text": {
+    "fontSize": "64px",
+    "lineHeight": "76.8px",
+    "fontWeight": "600",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-0.32px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "4.08px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "4.08px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  },
+  "short": {
+   "container": {
+    "x": 0,
+    "y": 360,
+    "w": 1920,
+    "h": 360
+   },
+   "textRange": {
+    "x": 759.73,
+    "y": 474.09,
+    "w": 400.52,
+    "h": 90
+   },
+   "refRange": {
+    "x": 798.23,
+    "y": 558.89,
+    "w": 225.38,
+    "h": 38
+   },
+   "transRange": {
+    "x": 1047.14,
+    "y": 558.89,
+    "w": 74.61,
+    "h": 38
+   },
+   "text": {
+    "fontSize": "64px",
+    "lineHeight": "76.8px",
+    "fontWeight": "600",
+    "fontFamily": "Nunito, sans-serif, sans-serif",
+    "letterSpacing": "-0.32px",
+    "color": "rgb(255, 255, 255)",
+    "textAlign": "center",
+    "textTransform": "none",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "reference": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "4.08px",
+    "color": "rgb(212, 175, 55)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   },
+   "translation": {
+    "fontSize": "34px",
+    "lineHeight": "normal",
+    "fontWeight": "500",
+    "fontFamily": "\"DM Sans\", sans-serif, sans-serif",
+    "letterSpacing": "4.08px",
+    "color": "rgb(170, 255, 0)",
+    "textAlign": "center",
+    "textTransform": "uppercase",
+    "fontStyle": "normal",
+    "textDecoration": "none"
+   }
+  }
+ }
+}

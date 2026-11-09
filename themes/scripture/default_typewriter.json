@@ -1,0 +1,146 @@
+{
+  "schema_version": 2,
+  "name": "default_typewriter",
+  "label": "Standard — Typewriter",
+  "description": "Typewriter variant: character-by-character verse, word-by-word citation, gold cursor and a double-line frame.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "linear-gradient(180deg, #04120f 0%, #0b1f1b 100%)",
+    "fit": "none"
+  },
+  "animations": {
+    "type_gold": {
+      "type": "typewriter",
+      "label": "Type gold",
+      "duration_ms": 1500,
+      "delay_ms": 0,
+      "easing": "linear",
+      "reveal": "char",
+      "cursor": {
+        "char": "▌",
+        "color": "@gold",
+        "blink_ms": 480,
+        "hide_after_ms": 700
+      }
+    },
+    "type_cite": {
+      "type": "typewriter",
+      "label": "Type cite",
+      "duration_ms": 850,
+      "delay_ms": 0,
+      "easing": "linear",
+      "reveal": "word",
+      "cursor": "none"
+    }
+  },
+  "containers": [
+    {
+      "id": "main",
+      "label": "Typewriter panel",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "center" },
+      "width": "1660px",
+      "height": "auto",
+      "min_height": "840px",
+      "max_width": "1660px",
+      "background": "rgba(6, 26, 22, 0.7)",
+      "border": {
+        "width": 2,
+        "style": "double",
+        "color": "#D4AF37",
+        "radius": 22
+      },
+      "border_radius": 22,
+      "box_shadow": {
+        "x": 0,
+        "y": 30,
+        "blur": 70,
+        "spread": -18,
+        "color": "rgba(0,0,0,0.7)",
+        "inset": false
+      },
+      "backdrop_filter": "blur(10px)",
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "fade_in", "duration_ms": 500 },
+        "out": { "use": "fade_out", "duration_ms": 300 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 26,
+          "padding": 60
+        },
+        "text": {
+          "visible": true,
+          "color": "#f8fafc",
+          "font_family": "'Nunito', sans-serif",
+          "size": 78,
+          "min_size": 52,
+          "max_size": 100,
+          "weight": 700,
+          "line_height": 1.12,
+          "letter_spacing": "0em",
+          "text_shadow": "none",
+          "text_align": "center",
+          "autosize": true,
+          "animation": {
+            "entry": "type_gold",
+            "transition": { "out": "fade_out", "in": "type_gold" },
+            "out": "fade_down"
+          }
+        },
+        "reference": {
+          "visible": true,
+          "color": "@gold",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 38,
+          "weight": 600,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.14em",
+          "position": "below_verse",
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "type_cite", "delay_ms": 420 },
+            "out": { "use": "fade_out", "duration_ms": 300 }
+          }
+        },
+        "translation": {
+          "visible": true,
+          "color": "@lime",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 28,
+          "weight": 500,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.12em",
+          "position": "right_of_reference",
+          "margin_left": 12,
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 450, "delay_ms": 760 },
+            "out": { "use": "fade_out", "duration_ms": 280 }
+          }
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        }
+      }
+    }
+  ]
+}

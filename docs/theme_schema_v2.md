@@ -1060,6 +1060,51 @@ while the lyrics fade.
 
 ---
 
+
+#### 4.9.8 Per-unit split — lines and words
+
+`animation.split` computes units at render time, after the text is laid out.
+It applies to `text`, `reference`, and `translation` blocks; a container or
+`body` split is dropped with a note because those move as one group.
+
+```json
+"animation": {
+  "entry": "verse_rise",
+  "split": {
+    "by": "line",
+    "stagger_ms": 70,
+    "first": { "entry": "scale_up" },
+    "rest":  { "entry": "fade_up" },
+    "look": {
+      "first": { "color": "@gold", "weight": 700 },
+      "rest":  { "opacity": 0.72 }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `by` | enum | `line` | `line` groups the browser's rendered line boxes; `word` wraps each word. |
+| `stagger_ms` | integer | 70 | 0–2000. Unit *i* starts at `definition.delay_ms + i * stagger_ms`, capped at 5000 ms total. |
+| `first` | assignment | absent | Phase slots for unit 0; any phase it omits inherits from the parent assignment. |
+| `rest` | assignment | absent | Phase slots for units 1..n; omits inherit from the parent too. |
+| `look` | object | absent | Static per-unit style: `color`, `weight` (100–900), `font_style`, `text_decoration`, `opacity`, `letter_spacing`. |
+
+- Units are computed **per render**, so the first line of every new payload
+  is unit 0 regardless of its length or the verse's line count.
+- `line` measures after autofit and wrapping, so changing the font, panel
+  width, or payload length changes the unit count; `word` uses whitespace
+  tokenisation and is independent of wrapping.
+- `entry` and `transition.in` animate the units. `out` and `transition.out`
+  still play on the whole block, so an exit never waits per unit.
+- Split is skipped, falling back to the whole-block assignment, when the
+  block has a `text_outline`, a `max_lines` clamp, `<br>`/`<sup>`/`<sub>`, a
+  `typewriter` phase, or more than 160 units.
+- The look is applied per unit; words carry their inline run styles (colour,
+  weight, size) so moving them into line boxes preserves inline markup.
+
+
 ## 5. Shared files
 
 ### 5.1 Location and discovery

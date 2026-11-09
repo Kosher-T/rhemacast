@@ -1,0 +1,140 @@
+{
+  "schema_version": 2,
+  "name": "fullscreen_rise",
+  "label": "Fullscreen — Aurora Rise",
+  "description": "Fullscreen variant with a soft staggered rise, gold frame, glass panel and gradient canvas.",
+  "author": "RhemaCast",
+  "kind": "scripture",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "linear-gradient(160deg, #070a18 0%, #141033 52%, #2a1038 100%)",
+    "fit": "none"
+  },
+  "animations": {
+    "rise_soft": {
+      "type": "custom",
+      "label": "Rise soft",
+      "duration_ms": 900,
+      "delay_ms": 0,
+      "easing": "ease-out",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": 0, "translate_y": 44, "scale": 0.985, "blur": 8 },
+        { "at": 62, "opacity": 0.92, "translate_y": 8, "scale": 1, "blur": 0 },
+        { "at": 100, "opacity": "base", "translate_y": 0, "scale": 1, "blur": 0 }
+      ]
+    },
+    "sink_soft": {
+      "type": "custom",
+      "label": "Sink soft",
+      "duration_ms": 450,
+      "delay_ms": 0,
+      "easing": "ease-in",
+      "origin": "center",
+      "keyframes": [
+        { "at": 0, "opacity": "base", "translate_y": 0, "blur": 0 },
+        { "at": 100, "opacity": 0, "translate_y": 14, "blur": 5 }
+      ]
+    }
+  },
+  "containers": [
+    {
+      "id": "main",
+      "label": "Verse panel",
+      "layer": 10,
+      "visible": true,
+      "position": { "anchor": "center" },
+      "width": "1720px",
+      "height": "auto",
+      "min_height": "860px",
+      "max_width": "1720px",
+      "background": "rgba(10, 16, 34, 0.62)",
+      "border": { "shared": "gold_frame" },
+      "border_radius": 30,
+      "box_shadow": { "shared": "soft" },
+      "backdrop_filter": "blur(16px) saturate(1.25)",
+      "opacity": 1,
+      "overflow": "hidden",
+      "animation": {
+        "entry": { "use": "fade_in", "duration_ms": 700 },
+        "out": { "use": "fade_out", "duration_ms": 350 }
+      },
+      "blocks": {
+        "body": {
+          "visible": true,
+          "valign": "center",
+          "gap": 24,
+          "padding": 64
+        },
+        "text": {
+          "visible": true,
+          "color": "#ffffff",
+          "font_family": "'Nunito', sans-serif",
+          "size": 86,
+          "min_size": 56,
+          "max_size": 108,
+          "weight": 700,
+          "line_height": 1.08,
+          "letter_spacing": "-0.02em",
+          "text_shadow": "0 18px 50px rgba(0,0,0,0.55)",
+          "text_align": "center",
+          "autosize": true,
+          "animation": {
+            "entry": "rise_soft",
+            "transition": { "out": "sink_soft", "in": "rise_soft" },
+            "out": "sink_soft"
+          }
+        },
+        "reference": {
+          "visible": true,
+          "color": "@gold",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 42,
+          "weight": 600,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.14em",
+          "position": "below_verse",
+          "text_align": "center",
+          "opacity": 0.95,
+          "animation": {
+            "entry": { "use": "fade_up", "duration_ms": 600, "delay_ms": 220 },
+            "transition": {
+              "in": { "use": "fade_up", "duration_ms": 450, "delay_ms": 120 }
+            },
+            "out": { "use": "fade_out", "duration_ms": 350 }
+          }
+        },
+        "translation": {
+          "visible": true,
+          "color": "@lime",
+          "font_family": "'DM Sans', sans-serif",
+          "size": 32,
+          "weight": 600,
+          "text_transform": "uppercase",
+          "letter_spacing": "0.14em",
+          "position": "right_of_reference",
+          "margin_left": 12,
+          "text_align": "center",
+          "animation": {
+            "entry": { "use": "fade_in", "duration_ms": 500, "delay_ms": 360 },
+            "out": { "use": "fade_out", "duration_ms": 300 }
+          }
+        },
+        "verse_num": {
+          "visible": true,
+          "mode": "inline",
+          "size": "0.6em",
+          "weight": 700,
+          "opacity": 0.7,
+          "vertical_align": "top",
+          "margin_right": "0.15em",
+          "line_height": 1,
+          "color": "@gold",
+          "font_family": "'Nunito', sans-serif",
+          "text_align": "center"
+        }
+      }
+    }
+  ]
+}

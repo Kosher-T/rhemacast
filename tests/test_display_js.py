@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -35,8 +36,18 @@ def _script_text(rel_path: str) -> str:
 def run(rel_path: str, body: str):
     """Evaluate a renderer under the DOM stub and return its console output."""
     harness = STUB.read_text() + "\n" + _script_text(rel_path) + "\n" + body
-    out = subprocess.run(["node", "-e", harness], capture_output=True, text=True,
-                         timeout=60)
+    # The renderers are ~126 KB, and Linux caps one argv string at 128 KiB, so
+    # `node -e <harness>` overflows once the stub is prepended. Write the
+    # harness to a file and run that instead.
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                     encoding="utf-8") as fh:
+        fh.write(harness)
+        harness_path = fh.name
+    try:
+        out = subprocess.run(["node", harness_path], capture_output=True,
+                             text=True, timeout=60)
+    finally:
+        Path(harness_path).unlink(missing_ok=True)
     if out.returncode != 0:
         raise AssertionError(f"{rel_path} failed:\n{out.stderr[-2000:]}")
     # The scripts log their own lines (e.g. "Attempting WebSocket connection"),
@@ -864,3 +875,150 @@ console.log(JSON.stringify([res1, res2, res3, res4]));
     assert res[3] is None
 
 
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_unknown_animation_slot_falls_back_by_phase(renderer):
+    """An unknown name resolves to the phase fallback, never to undefined."""
+    body = """
+console.log(JSON.stringify([
+  _resolveSlotDef("nope", {}, "in"),
+  _resolveSlotDef("nope", {}, "out"),
+  _resolveSlotDef({ use: "nope", duration_ms: 900 }, {}, "out"),
+  _resolveSlotDef(null, {}, "in")
+]));
+"""
+    res = run(renderer, body)
+    assert res[0]["type"] == "fade_in"
+    assert res[1]["type"] == "fade_out"
+    assert res[2]["type"] == "fade_out"
+    assert res[2]["duration_ms"] == 900
+    assert res[3] is None
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_typewriter_segments_keep_whitespace_with_preceding(renderer):
+    """Char reveal splits by grapheme; whitespace rides the preceding
+    segment so a line break appears with the word before it."""
+    body = """
+console.log(JSON.stringify({
+  chars: _typewriterSegments("Hi ya", "char"),
+  empty: _typewriterSegments("", "char"),
+  emoji: _typewriterSegments("A\\u{1F44D}\\u{1F3FD}B", "char"),
+  words: _typewriterSegments("Alpha beta  gamma", "word")
+}));
+"""
+    res = run(renderer, body)
+    assert res["chars"] == ["H", "i ", "y", "a"]
+    assert res["empty"] == []
+    # One grapheme cluster, not a surrogate pair plus a skin-tone codepoint.
+    assert res["emoji"] == ["A", "\U0001F44D\U0001F3FD", "B"]
+    assert res["words"] == ["Alpha ", "beta  ", "gamma"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_changed_sources_is_per_block(renderer):
+    """Transition triggering compares what is displayed, per block; a
+    same-content re-broadcast reports no change."""
+    body = """
+const a = { action: "display", text: "One", reference: "John 1:1",
+            translation: "KJV" };
+const same = { action: "display", text: "One", reference: "John 1:1",
+               translation: "KJV" };
+const themed = { action: "display", text: "One", reference: "John 1:1",
+                 translation: "KJV", theme_data: { name: "other" } };
+const text = { action: "display", text: "Two", reference: "John 1:1",
+               translation: "KJV" };
+const ref = { action: "display", text: "One", reference: "John 1:2",
+              translation: "KJV" };
+const trans = { action: "display", text: "One", reference: "John 1:1",
+                translation: "" };
+const refField = { action: "display", text: "One", ref: "[KJV] John 1:1" };
+console.log(JSON.stringify({
+  same: _changedSources(a, same),
+  themed: _changedSources(a, themed),
+  text: _changedSources(a, text),
+  ref: _changedSources(a, ref),
+  trans: _changedSources(a, trans),
+  refField: _payloadSources(refField)
+}));
+"""
+    res = run(renderer, body)
+    assert res["same"]["any"] is False
+    assert res["themed"]["any"] is False
+    assert res["text"]["text"] is True and res["text"]["any"] is True
+    assert res["ref"]["reference"] is True and res["ref"]["text"] is False
+    assert res["trans"]["translation"] is True
+    assert res["refField"]["reference"] == "John 1:1"
+    assert res["refField"]["translation"] == "KJV"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_reduced_motion_suppresses_animation_plans(renderer):
+    """prefers-reduced-motion: no plan, no playback, no out-phase wait."""
+    body = """
+globalThis.matchMedia = () => ({ matches: true, addEventListener() {} });
+const theme = {
+  schema_version: 2,
+  animations: { rise: { type: "fade_up", duration_ms: 400 } },
+  containers: [{
+    id: "main", visible: true,
+    blocks: { text: { animation: {
+      entry: "rise", transition: { out: "fade_out", in: "rise" },
+      out: "fade_out" } } }
+  }]
+};
+const changed = { text: true, reference: false, translation: false,
+                  title: false, any: true };
+const el = document.createElement("div");
+console.log(JSON.stringify({
+  reduced: _reducedMotion(),
+  transitionOut: _collectTransitionOut(theme, changed),
+  exit: _collectExit(theme),
+  played: _playElementAnimation(el, theme.animations.rise, { kind: "text" }),
+  typed: _playTypewriter(el, { type: "typewriter", duration_ms: 500 })
+}));
+"""
+    res = run(renderer, body)
+    assert res["reduced"] is True
+    assert res["transitionOut"] == []
+    assert res["exit"] == []
+    assert res["played"] is None
+    assert res["typed"] is None
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_split_assignment_merges_transition_phases(renderer):
+    """A unit overrides only the phases it authors.
+
+    `transition` is a phase map, not an atomic slot: a `first` that authors
+    only `transition.out` must keep the parent's `transition.in`, otherwise
+    the first unit silently loses its incoming animation.
+    """
+    body = """
+const base = {
+  entry: { use: "rise", duration_ms: 400 },
+  transition: { in: { use: "fade_in" }, out: { use: "fade_out" } },
+  out: { use: "fade_out" },
+  split: { by: "line" },
+};
+const split = {
+  first: { transition: { out: { use: "slide_down" } } },
+  rest: { transition: { in: { use: "scale_up" } } },
+};
+console.log(JSON.stringify({
+  first: _splitAssignment(base, split, 0),
+  rest: _splitAssignment(base, split, 1),
+}));
+"""
+    res = run(renderer, body)
+    assert "split" not in res["first"]
+    # Parent entry survives; only the authored out phase changes.
+    assert res["first"]["entry"] == {"use": "rise", "duration_ms": 400}
+    assert res["first"]["transition"]["in"] == {"use": "fade_in"}
+    assert res["first"]["transition"]["out"] == {"use": "slide_down"}
+    # Parent entry/out survive; only the authored in phase changes.
+    assert res["rest"]["entry"] == {"use": "rise", "duration_ms": 400}
+    assert res["rest"]["transition"]["in"] == {"use": "scale_up"}
+    assert res["rest"]["transition"]["out"] == {"use": "fade_out"}
+    assert res["rest"]["out"] == {"use": "fade_out"}

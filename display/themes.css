@@ -64,8 +64,16 @@ body, html {
 }
 
 #container.hidden, .rc-container.hidden {
-    opacity: 0;
-    transform: translateY(40px) scale(0.98);
+    /* Hard hide. Resolved v2 themes carry `container.opacity` and the
+       renderer writes it inline, so a plain `opacity: 0` loses the cascade
+       and cloak shows a shifted, still-visible verse. `!important` plus
+       visibility makes the cleared state absolute; the out animation (if
+       the theme defines one) has already played by the time this class
+       lands. `transform: none` keeps the hidden state from looking like a
+       small reposition if anything ever samples it. */
+    opacity: 0 !important;
+    visibility: hidden;
+    transform: none;
     pointer-events: none;
 }
 

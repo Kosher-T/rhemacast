@@ -1,6 +1,6 @@
 # Theme v2 Phase 4 — Shipped Themes and Documentation Report
 
-_Status: **COMPLETE** — All gate tests passing (466/466)_
+_Status: **COMPLETE** — All gate tests passing (534/534)_
 
 ---
 
@@ -49,7 +49,9 @@ Because folder segments starting with `_` are skipped by `core/theme_loader._is_
 Added a comprehensive test suite verifying:
 - **Deep-equality**: For every shipped theme, `normalize_theme(migrate_v1_to_v2(v1_fixture))` deep-equals `resolve_theme(name)` loaded from the on-disk v2 file. All 6 themes pass with zero warnings or errors.
 - **Animation timing & phase selection**: Verified that legacy v1 `animations` (`display_enter`, `between_slides`, `display_exit`) map onto container 0 animation slots (`entry`, `transition.in`, `transition.out`, `out`) with identical durations, easings, and preset keyframes.
-- **Golden metric validation**: Verified against `tests/golden_fixtures_phase2.json` that container positions (left/top) and dimensions (width/height) match the measured bounding boxes to the pixel.
+- **Golden metric validation**: `tests/golden_render_v1.json` is an oracle captured from the **pre-v2 renderer** (commit `5f9acd8`) driven with the pristine v1 theme fixtures at 1920×1080, for both a short and a long verse. The suite re-renders every shipped resolved v2 theme in headless Chrome and compares the measured **glyph geometry** (container box plus text/reference/translation range boxes) and computed typography against that oracle. All 12 theme/case combinations match within 0.6 px. Box rows are compared as glyph ranges rather than block boxes because v2 mandates full-width stack rows (`align-items: stretch`); block-box widths may legitimately differ while the visible text may not move.
+
+The oracle is **font-deterministic**: the harness strips the Google Fonts `<link>`s and preloads the bundled Nunito faces (`display/fonts/`) before the payload is rendered, so auto-fit measures the same face every run. Network-fed Nunito has different metrics and made the comparison flaky; the golden was captured under the same bundled-font, offline conditions. Worst observed old-vs-new rect delta after this change is **0.020 px**.
 
 ---
 
@@ -88,18 +90,19 @@ All relevant test suites pass cleanly:
 
 | Test Suite | Tests | Result |
 |---|---|---|
-| `tests/test_theme_v2_phase4_equivalence.py` | 13 | ✅ All pass |
+| `tests/test_theme_v2_phase4_equivalence.py` | 19 | ✅ All pass |
 | `tests/test_theme_v2_migration.py` | 44 | ✅ All pass |
 | `tests/test_theme_v2_shared.py` | 56 | ✅ All pass |
 | `tests/test_theme_v2_designer_roundtrip.py` | 14 | ✅ All pass |
-| `tests/test_theme_v2_schema.py` | 145 | ✅ All pass |
-| `tests/test_theme_v2_positions.py` | 36 | ✅ All pass |
-| `tests/test_theme_v2_security.py` | 48 | ✅ All pass |
-| `tests/test_theme_v2_animations.py` | 53 | ✅ All pass |
-| `tests/test_display_js.py` | 38 | ✅ All pass |
+| `tests/test_theme_v2_schema.py` | 35 | ✅ All pass |
+| `tests/test_theme_v2_positions.py` | 47 | ✅ All pass |
+| `tests/test_theme_v2_security.py` | 118 | ✅ All pass |
+| `tests/test_theme_v2_animations.py` | 86 | ✅ All pass |
+| `tests/test_theme_v2_animation_runtime.py` | 30 | ✅ All pass |
+| `tests/test_display_js.py` | 48 | ✅ All pass |
 | `tests/test_display_render_matrix.py` | 12 | ✅ All pass |
 | `tests/test_display_deck_formats.py` | 7 | ✅ All pass |
 | `tests/test_theme_switch.py` | 12 | ✅ All pass |
 | `tests/test_phase7_display.py` | 6 | ✅ All pass |
-| **Total** | **484** | ✅ **All pass** |
+| **Total** | **534** | ✅ **All pass** |
 

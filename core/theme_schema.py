@@ -1043,8 +1043,94 @@ def _normalize_slot(raw: Any, *, path: str, phase: str,
     return inline
 
 
+def _normalize_unit_look(raw: Any, *, path: str,
+                          report: ThemeReport) -> dict:
+    """Per-unit look overrides for a line/word split (§4.9.7)."""
+    if not isinstance(raw, dict):
+        report.warn(path, "look part must be an object", type(raw).__name__)
+        return {}
+    out: dict = {}
+    if "color" in raw:
+        out["color"] = _coerce_color(raw["color"], "#ffffff",
+                                     path=f"{path}.color", report=report)
+    if "weight" in raw:
+        out["weight"] = coerce_number(raw["weight"], 400, 100, 900,
+                                      path=f"{path}.weight", report=report,
+                                      integer=True, label="weight")
+    if "font_style" in raw:
+        out["font_style"] = coerce_enum(raw["font_style"],
+                                        ("normal", "italic"), "normal",
+                                        path=f"{path}.font_style",
+                                        report=report)
+    if "text_decoration" in raw:
+        out["text_decoration"] = coerce_enum(
+            raw["text_decoration"], ("none", "underline", "line-through"),
+            "none", path=f"{path}.text_decoration", report=report)
+    if "opacity" in raw:
+        out["opacity"] = coerce_number(raw["opacity"], 1, 0, 1,
+                                       path=f"{path}.opacity", report=report,
+                                       label="opacity")
+    if "letter_spacing" in raw:
+        out["letter_spacing"] = coerce_length(
+            raw["letter_spacing"], 0, path=f"{path}.letter_spacing",
+            report=report, minimum=-20, maximum=40, em=True,
+            label="letter_spacing")
+    extra = set(raw) - {"color", "weight", "font_style", "text_decoration",
+                        "opacity", "letter_spacing"}
+    if extra:
+        report.note(path, "ignoring unknown look keys", sorted(extra))
+    return out
+
+
+def _normalize_split(raw: Any, *, path: str, report: ThemeReport) -> Optional[dict]:
+    """`animation.split`: render-time line/word units with staggered phases."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        report.warn(path, "split must be an object", type(raw).__name__)
+        return None
+    out: dict = {}
+    out["by"] = coerce_enum(raw.get("by", "line"), ("line", "word"), "line",
+                            path=f"{path}.by", report=report)
+    out["stagger_ms"] = coerce_number(
+        raw.get("stagger_ms", 70), 70, 0, 2000,
+        path=f"{path}.stagger_ms", report=report, integer=True,
+        label="stagger_ms")
+    for part in ("first", "rest"):
+        if part in raw and raw[part] is not None:
+            sub = normalize_animation_assignment(
+                raw[part], path=f"{path}.{part}", report=report,
+                allow_split=False)
+            if sub:
+                out[part] = sub
+    look = raw.get("look")
+    if look is not None:
+        if not isinstance(look, dict):
+            report.warn(f"{path}.look", "look must be an object",
+                        type(look).__name__)
+        else:
+            looks: dict = {}
+            for part in ("first", "rest"):
+                if part in look:
+                    value = _normalize_unit_look(
+                        look[part], path=f"{path}.look.{part}", report=report)
+                    if value:
+                        looks[part] = value
+            extra = set(look) - {"first", "rest"}
+            if extra:
+                report.note(f"{path}.look", "ignoring unknown look keys",
+                            sorted(extra))
+            if looks:
+                out["look"] = looks
+    extra = set(raw) - {"by", "stagger_ms", "first", "rest", "look"}
+    if extra:
+        report.note(path, "ignoring unknown split keys", sorted(extra))
+    return out
+
+
 def normalize_animation_assignment(raw: Any, *, path: str,
-                                   report: ThemeReport) -> dict:
+                                   report: ThemeReport,
+                                   allow_split: bool = True) -> dict:
     if raw is None:
         return {}
     if raw == "none":
@@ -1054,6 +1140,14 @@ def normalize_animation_assignment(raw: Any, *, path: str,
                     type(raw).__name__)
         return {}
     out: dict = {}
+    if "split" in raw:
+        if allow_split:
+            split = _normalize_split(raw["split"], path=f"{path}.split",
+                                     report=report)
+            if split:
+                out["split"] = split
+        else:
+            report.note(f"{path}.split", "split is not allowed here")
     if "entry" in raw:
         slot = _normalize_slot(raw["entry"], path=f"{path}.entry", phase="entry",
                                report=report)
@@ -1534,15 +1628,15 @@ def _resolve_animation_refs(theme: dict, local: dict,
         referenced[name] = copy.deepcopy(definition)
         return {"use": name, **{k: v for k, v in slot.items() if k != "use"}}
 
-    def walk(owner: dict, path: str) -> None:
-        anim = owner.get("animation")
+    def walk(anim: Any, path: str) -> None:
         if not isinstance(anim, dict):
             return
         if "entry" in anim:
-            anim["entry"] = resolve_slot(anim["entry"], f"{path}.animation.entry",
-                                         "entry")
+            anim["entry"] = resolve_slot(anim["entry"],
+                                         f"{path}.animation.entry", "entry")
         if "out" in anim:
-            anim["out"] = resolve_slot(anim["out"], f"{path}.animation.out", "out")
+            anim["out"] = resolve_slot(anim["out"], f"{path}.animation.out",
+                                       "out")
         trans = anim.get("transition")
         if isinstance(trans, dict):
             if "out" in trans:
@@ -1551,11 +1645,18 @@ def _resolve_animation_refs(theme: dict, local: dict,
             if "in" in trans:
                 trans["in"] = resolve_slot(
                     trans["in"], f"{path}.animation.transition.in", "in")
+        split = anim.get("split")
+        if isinstance(split, dict):
+            for part in ("first", "rest"):
+                sub = split.get(part)
+                if isinstance(sub, dict):
+                    walk(sub, f"{path}.animation.split.{part}")
 
     for index, container in enumerate(theme.get("containers", [])):
-        walk(container, f"containers[{index}]")
+        walk(container.get("animation"), f"containers[{index}]")
         for block_id, block in container.get("blocks", {}).items():
-            walk(block, f"containers[{index}].blocks.{block_id}")
+            walk(block.get("animation"),
+                 f"containers[{index}].blocks.{block_id}")
     theme["animations"] = referenced
 
 
@@ -1616,6 +1717,18 @@ def _validate_top(raw: dict, *, kind: str, name: str,
         report.error("containers", "no valid container survives")
         return {}
     out["containers"] = containers
+
+    for index, container in enumerate(containers):
+        anim = container.get("animation")
+        if isinstance(anim, dict) and anim.pop("split", None) is not None:
+            report.note(f"containers[{index}].animation.split",
+                        "split applies to text blocks only")
+        body = container.get("blocks", {}).get("body")
+        banim = body.get("animation") if isinstance(body, dict) else None
+        if isinstance(banim, dict) and banim.pop("split", None) is not None:
+            report.note(
+                f"containers[{index}].blocks.body.animation.split",
+                "split applies to text blocks only")
 
     if kind == FREEFORM:
         # Freeform is single-container for now: later containers must be hidden.

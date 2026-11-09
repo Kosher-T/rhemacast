@@ -1,91 +1,99 @@
 {
-  "name": "reference_2",
-  "label": "Projection Reference",
-  "description": "Fixed 1920x360 reference display, no flex, centered, premium serif typography",
-  "author": "RhemaCast",
-  "containers": [
-    {
-      "id": "main",
-      "layer": 0,
-      "visible": true,
-      "position": {
-        "anchor": "top_left",
-        "x": 0.0,
-        "y": 360.0
-      },
-      "background": "transparent",
-      "border": "none",
-      "border_radius": "0",
-      "box_shadow": "none",
-      "backdrop_filter": "none",
-      "width": "1920px",
-      "height": "360px",
-      "min_width": "1920px",
-      "max_width": "1920px",
-      "min_height": 0,
-      "max_height": null,
-      "blocks": {
-        "text": {
-          "color": "@white",
-          "font_family": "'Nunito', sans-serif",
-          "min_size": "42px",
-          "size": "60px",
-          "max_size": "65px",
-          "weight": 600,
-          "line_height": "1.2",
-          "text_shadow": "-3px -3px 0 #555, 3px -2px 0 #555, -3px 3px 0 #555, 3px 3px 0 #555, -3px 0 0 #555, 3px 0 0 #555, 0 -3px 0 #555, 0 3px 0 #555, 0 3px 20px rgba(0, 0, 0, 0.1)",
-          "text_transform": "none",
-          "text_align": "center",
-          "letter_spacing": "-0.005em",
-          "margin_bottom": "0px",
-          "autosize": true
-        },
-        "reference": {
-          "color": "@gold",
-          "font_family": "'DM Sans', sans-serif",
-          "size": "34px",
-          "weight": 500,
-          "text_transform": "uppercase",
-          "letter_spacing": "0.12em",
-          "position": "below_verse",
-          "text_align": "center"
-        },
-        "translation": {
-          "color": "@lime",
-          "margin_left": "10px",
-          "position": "right_of_reference",
-          "font_family": "'DM Sans', sans-serif",
-          "size": "34px",
-          "weight": 500,
-          "letter_spacing": "0.12em",
-          "text_transform": "uppercase",
-          "text_align": "center"
-        },
-        "verse_num": {
-          "mode": "inline",
-          "size": "0.6em",
-          "weight": 700,
-          "opacity": 0.7,
-          "vertical_align": "top",
-          "margin_right": "0.15em",
-          "line_height": 1,
-          "color": "@gold",
-          "font_family": "'Nunito', sans-serif",
-          "text_align": "center"
-        },
-        "body": {
-          "valign": "center",
-          "padding": 0.0
+    "name": "reference_2",
+    "label": "Projection Reference",
+    "description": "Fixed 1920x360 reference display, no flex, centered, premium serif typography",
+    "author": "RhemaCast",
+    "containers": [
+        {
+            "id": "main",
+            "layer": 0,
+            "visible": true,
+            "position": {
+                "anchor": "top_left",
+                "x": 0,
+                "y": 360
+            },
+            "background": "transparent",
+            "border": "none",
+            "border_radius": 0,
+            "box_shadow": "none",
+            "backdrop_filter": "none",
+            "width": 1920,
+            "height": 360,
+            "min_width": 1920,
+            "max_width": 1920,
+            "min_height": 0,
+            "max_height": null,
+            "blocks": {
+                "text": {
+                    "color": "@white",
+                    "font_family": "'Nunito', sans-serif",
+                    "min_size": 42,
+                    "size": 60,
+                    "max_size": 65,
+                    "weight": 600,
+                    "line_height": 1.2,
+                    "text_shadow": "-3px -3px 0 #555, 3px -2px 0 #555, -3px 3px 0 #555, 3px 3px 0 #555, -3px 0 0 #555, 3px 0 0 #555, 0 -3px 0 #555, 0 3px 0 #555, 0 3px 20px rgba(0, 0, 0, 0.1)",
+                    "text_transform": "none",
+                    "text_align": "center",
+                    "letter_spacing": "-0.005em",
+                    "margin_bottom": "0px",
+                    "autosize": true,
+                    "visible": true
+                },
+                "reference": {
+                    "color": "@gold",
+                    "font_family": "'DM Sans', sans-serif",
+                    "size": 34,
+                    "weight": 500,
+                    "text_transform": "uppercase",
+                    "letter_spacing": "0.12em",
+                    "position": "below_verse",
+                    "text_align": "center",
+                    "visible": true
+                },
+                "translation": {
+                    "color": "@lime",
+                    "margin_left": 10,
+                    "position": "right_of_reference",
+                    "font_family": "'DM Sans', sans-serif",
+                    "size": "34px",
+                    "weight": 500,
+                    "letter_spacing": "0.12em",
+                    "text_transform": "uppercase",
+                    "text_align": "center",
+                    "visible": true
+                },
+                "verse_num": {
+                    "mode": "inline",
+                    "size": "0.6em",
+                    "weight": 700,
+                    "opacity": 0.7,
+                    "vertical_align": "top",
+                    "margin_right": "0.15em",
+                    "line_height": 1,
+                    "color": "@gold",
+                    "font_family": "'Nunito', sans-serif",
+                    "text_align": "center",
+                    "visible": true
+                },
+                "body": {
+                    "valign": "center",
+                    "padding": 0,
+                    "padding_top": 0,
+                    "padding_right": 0,
+                    "padding_bottom": 0,
+                    "padding_left": 0
+                }
+            }
         }
-      }
+    ],
+    "schema_version": 2,
+    "kind": "scripture",
+    "canvas": {
+        "width": 1920,
+        "height": 1080,
+        "background": "transparent",
+        "fit": "none"
     }
-  ],
-  "schema_version": 2,
-  "kind": "scripture",
-  "canvas": {
-    "width": 1920,
-    "height": 1080,
-    "background": "transparent",
-    "fit": "none"
-  }
 }
