@@ -25,6 +25,8 @@ import pytest
 
 import core.database as db
 
+pytestmark = pytest.mark.webengine
+
 _OPEN = []
 
 

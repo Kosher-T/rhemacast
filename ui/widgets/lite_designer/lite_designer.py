@@ -35,7 +35,7 @@ from PyQt6.QtGui import (QTextCursor, QTextDocument, QTextDocumentFragment,
 import time as _time
 
 from ui import dialogs
-from ui.widgets.theme_properties_panel import ThemePropertiesPanel
+from ui.widgets.theme_designer import ThemePropertyEditor
 from ui.widgets.theme_preview import ThemePreview
 from ui.widgets.display_view import DisplayView
 from ui.widgets.aspect_ratio import AspectRatioWidget
@@ -473,7 +473,7 @@ class LiteDesigner(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(0)
-        self._props = ThemePropertiesPanel()
+        self._props = ThemePropertyEditor()
         self._props.theme_changed.connect(self._on_theme_changed)
         ll.addWidget(self._props)
         body.addWidget(left)

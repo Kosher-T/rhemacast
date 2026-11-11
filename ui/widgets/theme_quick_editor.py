@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ui.widgets.theme_properties_panel import ThemePropertiesPanel
+from ui.widgets.theme_designer import ThemePropertyEditor
 from ui.widgets.theme_preview import ThemePreview
 from ui.styles import BLUE_500
 from ui.styles import (
@@ -241,7 +241,7 @@ class ThemeQuickEditor(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
 
-        self._props = ThemePropertiesPanel()
+        self._props = ThemePropertyEditor()
         self._props.theme_changed.connect(self._on_theme_changed)
         left_layout.addWidget(self._props)
 

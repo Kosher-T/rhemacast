@@ -683,6 +683,16 @@ function autoFitText() {
     applyOutlineLayers();
 }
 
+function applyThemeInPlace(theme) {
+    // Style/geometry-only Designer edits.  The single-container path is
+    // already handled by applyTheme(); multi-panel themes also need their
+    // geometry rebuilt from the payload already on screen.
+    applyTheme(theme);
+    if (_prevPayload && _currentContainers && _currentContainers.length > 1) {
+        _renderMultiContainers(_prevPayload);
+    }
+}
+
 let _activeContainers = null;
 
 function _applyContainers(theme) {
@@ -1417,8 +1427,8 @@ function _injectAnimStyle() {
 function _applyAnimation(el, type, durationMs, easing) {
     if (!type || type === "none" || !el || _reducedMotion()) return;
     const kfName = `rc-${type}`;
-    const dur = (durationMs || 600) + "ms";
-    const ease = ANIM_EASINGS[easing] || ANIM_EASINGS["ease-out"] || "ease-out";
+    const dur = (durationMs != null ? durationMs : RC_ANIM_DEFAULTS.duration_ms) + "ms";
+    const ease = ANIM_EASINGS[easing] || ANIM_EASINGS[RC_ANIM_DEFAULTS.easing] || RC_ANIM_DEFAULTS.easing;
     el.style.animation = `${kfName} ${dur} ${ease} forwards`;
     el.addEventListener("animationend", () => { el.style.animation = ""; }, { once: true });
 }
@@ -1478,7 +1488,7 @@ function _lengthValue(v, fallback) {
 
 function _resolveSlotDef(slot, registry, phase) {
     const fallback = phase === "out" ? "fade_out" : "fade_in";
-    const preset = (name) => ({ type: name, duration_ms: 600, easing: "ease-out" });
+    const preset = (name) => ({ type: name, duration_ms: RC_ANIM_DEFAULTS.duration_ms, easing: RC_ANIM_DEFAULTS.easing });
     if (!slot || slot === "none") return null;
     if (typeof slot === "string") {
         if (registry && registry[slot]) return registry[slot];
@@ -1701,7 +1711,7 @@ function _playTypewriter(el, def) {
     const spans = split.spans;
     const cfg = def.cursor && def.cursor !== "none" ? def.cursor : null;
     const cursor = _typewriterCursor(cfg);
-    const total = Math.max(0, def.duration_ms != null ? def.duration_ms : 900);
+    const total = Math.max(0, def.duration_ms != null ? def.duration_ms : RC_ANIM_DEFAULTS.typewriter_duration_ms);
     const delay = Math.max(0, def.delay_ms || 0);
     let revealed = 0;
     let rafId = null;
@@ -1840,7 +1850,7 @@ function _playElementAnimation(el, def, opts) {
         }
     }
 
-    const duration = def.duration_ms != null ? def.duration_ms : 600;
+    const duration = def.duration_ms != null ? def.duration_ms : RC_ANIM_DEFAULTS.duration_ms;
     const delay = Math.max(0, opts.delay_ms != null
         ? opts.delay_ms : (def.delay_ms || 0));
     _cancelAnimations(el);
@@ -1853,7 +1863,7 @@ function _playElementAnimation(el, def, opts) {
         anim = el.animate(frames, {
             duration: duration,
             delay: delay,
-            easing: ANIM_EASINGS[def.easing] || def.easing || "ease-out",
+            easing: ANIM_EASINGS[def.easing] || def.easing || RC_ANIM_DEFAULTS.easing,
             fill: "forwards",
         });
     } catch (e) {
@@ -1866,7 +1876,7 @@ function _playElementAnimation(el, def, opts) {
 
 function _phaseDuration(def) {
     return Math.max(0, def.delay_ms || 0)
-        + Math.max(0, def.duration_ms != null ? def.duration_ms : 600);
+        + Math.max(0, def.duration_ms != null ? def.duration_ms : RC_ANIM_DEFAULTS.duration_ms);
 }
 
 function _containerElement(c) {
@@ -3127,6 +3137,132 @@ function refreshClear() {
         });
     });
 }
+
+// ─── Designer preview replay ────────────────────────────────────────────
+// The live display still uses handlePayload().  These helpers are only used
+// by the Theme Designer preview and its tests.  They deliberately reuse the
+// normal render/animation functions instead of maintaining a second engine.
+let _rcPreviewState = {
+    phase: null, status: "idle", token: 0, animations: 0,
+    targets: 0, started_at: 0, finished_at: 0
+};
+
+function previewState() {
+    return Object.assign({}, _rcPreviewState);
+}
+
+function _previewPlan(plan) {
+    let total = 0;
+    plan.forEach(p => {
+        _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+        total = Math.max(total, _phaseDuration(p.def));
+    });
+    return total;
+}
+
+function _previewStart(phase, plan) {
+    const token = _phaseToken;
+    Object.assign(_rcPreviewState, {
+        phase: phase, status: "running", token: token,
+        animations: plan.length, targets: plan.length,
+        started_at: Date.now(), finished_at: 0
+    });
+    return token;
+}
+
+function _previewFinish(token, status) {
+    if (token !== _rcPreviewState.token) return;
+    _rcPreviewState.status = status || "finished";
+    _rcPreviewState.finished_at = Date.now();
+}
+
+function _previewDoneAfter(token, total) {
+    if (total <= 0) {
+        _previewFinish(token);
+        return;
+    }
+    setTimeout(function() { _previewFinish(token); }, total);
+}
+
+function _collectTransitionIn(theme, changed) {
+    const plan = [];
+    if (_reducedMotion() || !theme || !changed || !changed.any) return plan;
+    const anims = theme.animations || {};
+    _animationTargets(theme).forEach(t => {
+        const trans = t.anim && t.anim.transition;
+        if (!trans || !trans.in) return;
+        const relevant = (t.kind === "container" || t.kind === "body")
+            ? changed.any : !!changed[t.kind];
+        if (!relevant) return;
+        const def = _resolveSlotDef(trans.in, anims, "in");
+        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+    });
+    return plan;
+}
+
+function previewReplay(phase, current, alternate) {
+    if (!current || !current.theme_data) return previewState();
+    const theme = current.theme_data;
+    const all = { any: true, text: true, reference: true, translation: true, title: true };
+
+    if (phase === "entry") {
+        _renderDisplay(current, true, all, null);
+        const plan = _animationTargets(theme).filter(t => t.anim && t.anim.entry);
+        const token = _previewStart("entry", plan);
+        _runAnimation("entry", all);
+        let total = 0;
+        plan.forEach(p => {
+            const def = _resolveSlotDef(p.anim.entry, theme.animations || {}, "in");
+            if (def) total = Math.max(total, _phaseDuration(def));
+        });
+        _previewDoneAfter(token, total);
+        return previewState();
+    }
+
+    if (phase === "transition_in") {
+        _renderDisplay(alternate, true, all, null);
+        _renderDisplay(current, true, all, null);
+        const plan = _collectTransitionIn(theme, all);
+        const token = _previewStart("transition_in", plan);
+        _runAnimation("in", all);
+        let total = 0;
+        plan.forEach(p => { total = Math.max(total, _phaseDuration(p.def)); });
+        _previewDoneAfter(token, total);
+        return previewState();
+    }
+
+    if (phase === "transition_out") {
+        _renderDisplay(current, true, all, null);
+        const plan = _collectTransitionOut(theme, all);
+        const token = _previewStart("transition_out", plan);
+        const total = _previewPlan(plan);
+        setTimeout(function() {
+            if (token !== _phaseToken) return;
+            _previewFinish(token);
+            _renderDisplay(alternate, true, all, null);
+            _renderDisplay(current, true, all, null);
+        }, Math.max(0, total));
+        return previewState();
+    }
+
+    if (phase === "out") {
+        _renderDisplay(current, true, all, null);
+        const plan = _collectExit(theme);
+        const token = _previewStart("out", plan);
+        const total = _previewPlan(plan);
+        setTimeout(function() {
+            if (token !== _phaseToken) return;
+            _previewFinish(token);
+            _renderDisplay(current, true, all, null);
+        }, Math.max(0, total));
+        return previewState();
+    }
+    return previewState();
+}
+
+window.__rcPreviewState = _rcPreviewState;
+window.previewState = previewState;
+window.previewReplay = previewReplay;
 
 connect();
 

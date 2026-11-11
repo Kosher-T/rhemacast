@@ -35,7 +35,9 @@ def _script_text(rel_path: str) -> str:
 
 def run(rel_path: str, body: str):
     """Evaluate a renderer under the DOM stub and return its console output."""
-    harness = STUB.read_text() + "\n" + _script_text(rel_path) + "\n" + body
+    defaults = (ROOT / "display" / "animation_defaults.js").read_text()
+    harness = (STUB.read_text() + "\n" + defaults + "\n"
+               + _script_text(rel_path) + "\n" + body)
     # The renderers are ~126 KB, and Linux caps one argv string at 128 KiB, so
     # `node -e <harness>` overflows once the stub is prepended. Write the
     # harness to a file and run that instead.

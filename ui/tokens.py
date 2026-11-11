@@ -167,6 +167,26 @@ CARD_OBJECT_NAME = "scheduleCard"
 # ─── Option rows (the Outputs theme list) ────────────────────────────────────
 OPTION_OBJECT_NAME = "themeOptionRow"
 
+# ─── Theme Designer kit (ui/theme_kit) ───────────────────────────────────────
+# Dense controls for the Designer's 240-300 px property panels. These are
+# component metrics, not the interface type scale; text still comes from the
+# app font and TYPE_* sizes above.
+CONTROL_HEIGHT = 26
+CONTROL_HEIGHT_SM = 22
+CONTROL_PAD_X = SPACE_8
+LABEL_COLUMN_WIDTH = 88
+CHANGED_DOT_SIZE = 5
+FOCUS_RING_WIDTH = 1
+# Alpha checkerboard under colour swatches. Kept as tokens so the colour
+# picker, swatch and gradient stops cannot drift apart.
+CHECKER_LIGHT = "#2e2e36"
+CHECKER_DARK = "#17171b"
+# The floating surfaces the kit owns (dropdown/tooltip/colour popover). A
+# translucent gutter lets the rounded surface read as floating without a
+# platform drop shadow.
+POPUP_GUTTER = 6
+POPUP_MAX_HEIGHT = 320
+
 # ─── Scrollbars ──────────────────────────────────────────────────────────────
 # One flat bar everywhere: no arrows, no groove, a thumb that reads as
 # chrome until you touch it. Thicker than the 5-6px legacy bars because a

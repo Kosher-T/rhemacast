@@ -16,7 +16,11 @@ import ui.widgets.display_view  # noqa: F401
 
 from PyQt6.QtCore import Qt as _Qt
 
+import pytest
+
 from tests.harness.lite_editing import Lab
+
+pytestmark = pytest.mark.webengine
 
 _LABS = []
 

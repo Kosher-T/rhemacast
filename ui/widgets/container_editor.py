@@ -794,8 +794,14 @@ class ContainerPropertiesPanel(QWidget):
         self._row_min_w.setEnabled(is_resizable)
 
         # ── Text rows ──
+        # The v2 document stores objects (position, blocks, shadows) that this
+        # v1 geometry panel cannot render. Stage 3 replaces this editor, so
+        # non-scalar values are shown blank instead of crashing setText().
         for key, row in self._rows.items():
-            row.set_value(container.get(key, ""))
+            value = container.get(key, "")
+            if not isinstance(value, (str, int, float)):
+                value = ""
+            row.set_value(str(value))
 
         self._loading = False
 

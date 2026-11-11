@@ -1,0 +1,2241 @@
+{
+  "summary": {
+    "themes": 8,
+    "full_save_key_loss": 0,
+    "quick_key_loss": 0,
+    "quick_save_key_loss": 0,
+    "save_errors": [],
+    "quick_save_errors": [],
+    "themes_with_render_diffs": [],
+    "uneditable_animation_slots": 57,
+    "editable_animation_slots": 18
+  },
+  "results": [
+    {
+      "name": "fullscreen_rise",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:fade_in",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:fade_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "rise_soft",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "sink_soft",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "rise_soft",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "sink_soft",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.transition.in",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.rise_soft.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.rise_soft.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.rise_soft.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[2].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[2].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[2].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[2].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.keyframes[2].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.rise_soft.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.rise_soft.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.rise_soft.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.sink_soft.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.sink_soft.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.transition.in.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.transition.in.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.transition.in.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "fullscreen_pop",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:scale_up",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:fade_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.transition.out",
+          "slot": "use:scale_down",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.body",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "pop_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "pop_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "pop_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "pop_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:pop_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.pop_in.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_in.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_in.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_in.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[0].rotate",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[1].rotate",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[2].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[2].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[2].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[2].rotate",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.keyframes[2].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_in.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_in.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_in.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[0].rotate",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[1].rotate",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.pop_out.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.pop_out.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.body.animation.entry.delay_ms",
+            "group": "needs control \u2014 body animation slots"
+          },
+          {
+            "path": "containers[0].blocks.body.animation.entry.duration_ms",
+            "group": "needs control \u2014 body animation slots"
+          },
+          {
+            "path": "containers[0].blocks.body.animation.entry.use",
+            "group": "needs control \u2014 body animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "fullscreen_split",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "verse",
+          "blocks": [
+            "body",
+            "text",
+            "verse_num"
+          ]
+        },
+        {
+          "index": 1,
+          "id": "cite",
+          "blocks": [
+            "body",
+            "reference",
+            "translation"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (verse)",
+          "phase": "container.entry",
+          "slot": "use:slide_up",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (verse)",
+          "phase": "container.out",
+          "slot": "use:slide_down",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (verse)",
+          "phase": "container.transition.in",
+          "slot": "use:slide_up",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[1] (cite)",
+          "phase": "container.entry",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 AnimationPanel hardcodes containers[0]"
+        },
+        {
+          "where": "containers[1] (cite)",
+          "phase": "container.out",
+          "slot": "use:fade_down",
+          "designer": "uneditable \u2014 AnimationPanel hardcodes containers[0]"
+        },
+        {
+          "where": "containers[1] (cite)",
+          "phase": "container.transition.in",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 AnimationPanel hardcodes containers[0]"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "containers[1].animation.entry.delay_ms",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.entry.duration_ms",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.entry.use",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.out.duration_ms",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.out.use",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.transition.in.delay_ms",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.transition.in.duration_ms",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].animation.transition.in.use",
+            "group": "needs control \u2014 container animation beyond containers[0]"
+          },
+          {
+            "path": "containers[1].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "default_typewriter",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:fade_in",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:fade_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "type_gold",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "fade_down",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "type_gold",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:type_cite",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.type_cite.cursor",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_cite.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_cite.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_cite.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_cite.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_cite.reveal",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_cite.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_gold.cursor.blink_ms",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_gold.cursor.char",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_gold.cursor.color",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_gold.cursor.hide_after_ms",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_gold.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_gold.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_gold.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_gold.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.type_gold.reveal",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.type_gold.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "default_quiet",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:fade_in",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:fade_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "quiet_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "quiet_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "quiet_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "quiet_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.quiet_in.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_in.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_in.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[2].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[2].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[2].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.keyframes[2].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_in.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_in.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_in.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.quiet_out.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.quiet_out.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "reference_frames",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "frame_in",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "frame_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "fade_up",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.frame_in.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_in.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_in.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_in.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_in.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_in.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.frame_out.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry.delay_ms",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry.duration_ms",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry.use",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "reference_letterbox",
+      "kind": "scripture",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "reference",
+            "text",
+            "translation",
+            "verse_num"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:slide_up",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:slide_down",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "letterbox_settle",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "letterbox_settle",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.entry",
+          "slot": "use:fade_up",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.reference",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.entry",
+          "slot": "use:fade_in",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.translation",
+          "phase": "block.out",
+          "slot": "use:fade_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.letterbox_settle.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.letterbox_settle.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.letterbox_settle.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[2].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[2].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[2].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.keyframes[2].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.letterbox_settle.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.letterbox_settle.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.letterbox_settle.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.delay_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.entry.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.duration_ms",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.reference.animation.out.use",
+            "group": "needs control \u2014 reference animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.delay_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.entry.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.duration_ms",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].blocks.translation.animation.out.use",
+            "group": "needs control \u2014 translation animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    },
+    {
+      "name": "slides_motion",
+      "kind": "freeform",
+      "containers": [
+        {
+          "index": 0,
+          "id": "main",
+          "blocks": [
+            "body",
+            "text"
+          ]
+        }
+      ],
+      "animation_slots": [
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.entry",
+          "slot": "use:fade_in",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0] (main)",
+          "phase": "container.out",
+          "slot": "use:fade_out",
+          "designer": "editable"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.entry",
+          "slot": "lyric_pop",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.out",
+          "slot": "lyric_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.in",
+          "slot": "lyric_pop",
+          "designer": "uneditable \u2014 no block animation UI"
+        },
+        {
+          "where": "containers[0].blocks.text",
+          "phase": "block.transition.out",
+          "slot": "lyric_out",
+          "designer": "uneditable \u2014 no block animation UI"
+        }
+      ],
+      "full_designer": {
+        "load_key_loss": [],
+        "uncovered_leaves": [
+          {
+            "path": "animations.lyric_out.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_out.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_out.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_out.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_out.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_out.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.delay_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.duration_ms",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.easing",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[0].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[0].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[0].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[0].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[0].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[1].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[1].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[1].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[1].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[1].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[2].at",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[2].blur",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[2].opacity",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[2].scale",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.keyframes[2].translate_y",
+            "group": "no control (unexpected animation field)"
+          },
+          {
+            "path": "animations.lyric_pop.label",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.origin",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "animations.lyric_pop.type",
+            "group": "needs control/raw \u2014 animation library definition"
+          },
+          {
+            "path": "author",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.entry",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.in",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].blocks.text.animation.transition.out",
+            "group": "needs control \u2014 text animation slots"
+          },
+          {
+            "path": "containers[0].id",
+            "group": "identity (preserve-only)"
+          },
+          {
+            "path": "description",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "kind",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "label",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "name",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "schema_version",
+            "group": "metadata (preserve/raw)"
+          },
+          {
+            "path": "slide.show_title",
+            "group": "needs control \u2014 freeform switch"
+          }
+        ],
+        "save_error": null,
+        "save_key_loss": [],
+        "save_added_keys": [],
+        "save_value_changes": [],
+        "save_render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0
+      },
+      "quick_editor": {
+        "save_error": null,
+        "saved_key_loss": [],
+        "key_loss": [],
+        "added_keys": [],
+        "value_changes": [],
+        "render_diffs": [],
+        "resolve_errors": [],
+        "resolve_warnings": 0,
+        "unselectable": [
+          "container add/duplicate/delete/reorder (workspace not mounted)",
+          "container canvas drag/resize (workspace not mounted)",
+          "animations (separate animation panel not mounted)",
+          "slide.show_title",
+          "metadata (label/description/author)"
+        ]
+      }
+    }
+  ]
+}

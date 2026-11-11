@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt, QCoreApplication
 QCoreApplication.setAttribute(
     Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
+pytestmark = pytest.mark.webengine
+
 _APP = []
 _KEEP = []
 

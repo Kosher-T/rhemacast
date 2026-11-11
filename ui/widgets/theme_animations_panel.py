@@ -77,12 +77,21 @@ _SECTION_STYLE = (
 
 # ─── Animation Types ────────────────────────────────────────────────────────
 
+from core.animation_registry import (
+    ANIMATION_TYPES as _REGISTRY_TYPES,
+    PRESET_TYPES as _PRESET_TYPES,
+    spec_for as _anim_spec,
+)
+
+_IN_TYPES = ["fade_up", "fade_in", "scale_up", "slide_up", "typewriter"]
+_OUT_TYPES = ["fade_down", "fade_out", "scale_down", "slide_down"]
 ANIMATION_TYPES = {
-    "display_enter": ["fade_up", "fade_in", "scale_up", "slide_up", "typewriter"],
-    "between_slides_out": ["fade_down", "fade_out", "scale_down", "slide_down"],
-    "between_slides_in": ["fade_up", "fade_in", "scale_up", "slide_up"],
-    "display_exit": ["fade_down", "fade_out", "scale_down", "slide_down"],
+    "display_enter": [t for t in _IN_TYPES if t in _REGISTRY_TYPES],
+    "between_slides_out": [t for t in _OUT_TYPES if t in _PRESET_TYPES],
+    "between_slides_in": [t for t in _IN_TYPES if t in _PRESET_TYPES],
+    "display_exit": [t for t in _OUT_TYPES if t in _PRESET_TYPES],
 }
+_ANIM_DEFAULT_MS = _anim_spec("fade_in").param("duration_ms").default
 
 
 # ─── Timeline Widget ────────────────────────────────────────────────────────
@@ -306,7 +315,7 @@ class AnimationCard(QFrame):
         dur_lbl.setStyleSheet(_LABEL_STYLE)
         dur_col.addWidget(dur_lbl)
 
-        self._duration_input = QLineEdit("600")
+        self._duration_input = QLineEdit(str(_ANIM_DEFAULT_MS))
         self._duration_input.setFixedHeight(24)
         self._duration_input.setPlaceholderText("ms")
         self._duration_input.setStyleSheet(_INPUT_STYLE)
@@ -353,7 +362,7 @@ class AnimationCard(QFrame):
         try:
             return int(self._duration_input.text())
         except ValueError:
-            return 600
+            return _ANIM_DEFAULT_MS
 
     def is_enabled(self) -> bool:
         return self._toggle.is_on()

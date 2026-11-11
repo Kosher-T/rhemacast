@@ -215,12 +215,12 @@ def test_theme_designer_refuses_to_unload_unsaved_edits(window):
     assert designer.is_dirty() is False
     assert window._can_unload_tab("THEME DESIGNER") == (True, "")
 
-    designer._working_theme["label"] = "Edited, not saved"
+    designer._document.set(("label",), "Edited, not saved")
     allowed, reason = window._can_unload_tab("THEME DESIGNER")
     assert allowed is False
     assert "unsaved" in reason.lower()
 
-    designer._working_theme = copy.deepcopy(designer._original_theme)
+    designer._document.replace(copy.deepcopy(designer._original_theme))
     assert window._can_unload_tab("THEME DESIGNER") == (True, "")
     assert window._unload_tab("THEME DESIGNER") is True
     assert window._theme_designer_tab is None

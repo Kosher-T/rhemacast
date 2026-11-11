@@ -22,6 +22,8 @@ import pytest
 from ui.widgets.lite_designer.rich_txt import (
     OUTLINE_PROP, OUTLINE_OFF, SHADOW_PROP, SHADOW_OFF)
 
+pytestmark = pytest.mark.webengine
+
 _RIBBONS = []
 
 

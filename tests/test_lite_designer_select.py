@@ -22,6 +22,8 @@ import pytest
 import core.database as db
 from core.clipboard import write_text
 
+pytestmark = pytest.mark.webengine
+
 _OPEN_DESIGNERS = []
 
 

@@ -67,6 +67,10 @@ authoring-only metadata.
 
 ## 3. Animation library (`animations`)
 
+Parameter defaults, ranges and enums are defined only in
+`core/animation_registry.py`; see `docs/animation_registry.md`. The
+table below describes the stored shape, not a second source of values.
+
 `animations` maps a definition name to a definition object. Names must match
 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`. Names are resolved for slots in this order:
 **local theme definitions → `themes/_shared/animations.json` → built-in

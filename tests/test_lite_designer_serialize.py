@@ -14,8 +14,12 @@ import ui.widgets.display_view  # noqa: F401
 
 from PyQt6.QtWidgets import QApplication
 
+import pytest
+
 from core.slide_parser import parse_slide_txt, _iter_inline_parts
 from ui.widgets.lite_designer.rich_txt import txt_to_doc, doc_to_txt
+
+pytestmark = pytest.mark.webengine
 
 _app = None
 

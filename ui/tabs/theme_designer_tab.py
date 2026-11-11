@@ -17,14 +17,17 @@ from PyQt6.QtWidgets import (
     QTextEdit, QComboBox, QStackedWidget, QApplication, QSizePolicy,
     QSplitter,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from ui.popups import install_combo
 from PyQt6.QtGui import QFont
 
-from ui.widgets.theme_properties_panel import ThemePropertiesPanel
+from ui.widgets.theme_designer import ThemePropertyEditor
+from ui.widgets.theme_designer.document import ThemeDocument
+from ui.theme_kit import SampleInjector, SampleState
+from ui.theme_kit.preview_manager import PreviewManager
 from ui.widgets.theme_preview import ThemePreview
-from ui.widgets.theme_animations_panel import ThemeAnimationsPanel
-from ui.widgets.container_editor import ContainerEditor
+from ui.widgets.theme_designer.animation_panel import AnimationPanel
+from ui.widgets.theme_designer.container_workspace import ContainerWorkspace
 from ui.styles import (
     TEXT_PRIMARY, TEXT_MUTED, TEXT_FAINT, SLATE_300, BG_RAISED,
     ACCENT, ACCENT_HOVER, SELECTION_BG, CHROME_SOFT, TEXT_SELECTION,
@@ -179,7 +182,15 @@ class ThemeDesignerTab(QWidget):
         super().__init__(parent)
         self._theme_name: str = "default"
         self._original_theme: dict = {}
-        self._working_theme: dict = {}
+        # Single document owner: every panel is a view over this object.
+        self._document = ThemeDocument({}, self)
+        self._document.changed.connect(self._on_document_changed)
+        self._document.replaced.connect(self._on_document_replaced)
+        self._preview_pending: dict | None = None
+        self._preview_paths: tuple = ()
+        self._preview_reload = False
+        # Single selection model for every container view (Stage 4).
+        self._selected_container_id: str = ""
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -202,13 +213,14 @@ class ThemeDesignerTab(QWidget):
 
         # Left column: Properties panel (280px)
         left_col = QWidget()
-        left_col.setFixedWidth(280)
+        left_col.setFixedWidth(260)
         left_col.setStyleSheet(f"background: {_PANEL_BG};")
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
-        self._properties_panel = ThemePropertiesPanel()
-        self._properties_panel.theme_changed.connect(self._on_theme_changed)
+        self._properties_panel = ThemePropertyEditor()
+        self._properties_panel.container_selected.connect(
+            self._on_container_selected)
         left_layout.addWidget(self._properties_panel)
         body.addWidget(left_col)
 
@@ -236,7 +248,7 @@ class ThemeDesignerTab(QWidget):
         toggle_layout.setContentsMargins(8, 4, 8, 4)
         toggle_layout.setSpacing(4)
 
-        self._btn_multi = QPushButton("Multi Preview")
+        self._btn_multi = QPushButton("Preview")
         self._btn_multi.setCheckable(True)
         self._btn_multi.setChecked(True)
         self._btn_multi.setFixedHeight(24)
@@ -258,56 +270,31 @@ class ThemeDesignerTab(QWidget):
         # Stacked: page 0 = multi-preview, page 1 = editor
         self._center_stack = QStackedWidget()
 
-        # Page 0: Multi-preview (three ThemePreviews in triangle)
-        multi_page = QWidget()
-        multi_page.setStyleSheet("background: transparent;")
-        multi_layout = QVBoxLayout(multi_page)
-        multi_layout.setContentsMargins(16, 12, 16, 12)
-        multi_layout.setSpacing(0)
-
-        preview_splitter = QSplitter(Qt.Orientation.Vertical)
-        preview_splitter.setStyleSheet(
-            "QSplitter::handle { background: rgba(255,255,255,0.06); height: 1px; }"
+        # Page 0: one preview, driven by the Stage 1 sample injector.
+        preview_page = QWidget()
+        preview_page.setStyleSheet("background: transparent;")
+        preview_layout = QVBoxLayout(preview_page)
+        preview_layout.setContentsMargins(16, 12, 16, 12)
+        preview_layout.setSpacing(8)
+        self._preview = ThemePreview(
+            verse_key="medium", label="Preview",
+            min_width=320, max_width=820
         )
-        preview_splitter.setChildrenCollapsible(False)
+        preview_layout.addWidget(self._preview, 1)
+        self._samples = SampleInjector(
+            [SampleState("shortest", "Shortest"),
+             SampleState("medium", "Medium"),
+             SampleState("longest", "Longest"),
+             SampleState("freeform", "Freeform")], "medium")
+        self._samples.changed.connect(self._on_sample_changed)
+        preview_layout.addWidget(self._samples, 0)
+        self._center_stack.addWidget(preview_page)
 
-        top_container = QWidget()
-        top_container.setStyleSheet("background: transparent;")
-        top_row = QHBoxLayout(top_container)
-        top_row.setContentsMargins(0, 0, 0, 0)
-        self._preview_medium = ThemePreview(
-            verse_key="medium", label="Medium Verse",
-            min_width=320, max_width=720
-        )
-        top_row.addStretch()
-        top_row.addWidget(self._preview_medium)
-        top_row.addStretch()
-        preview_splitter.addWidget(top_container)
-
-        bottom_container = QWidget()
-        bottom_container.setStyleSheet("background: transparent;")
-        bottom_row = QHBoxLayout(bottom_container)
-        bottom_row.setContentsMargins(0, 0, 0, 0)
-        bottom_row.setSpacing(12)
-        self._preview_shortest = ThemePreview(
-            verse_key="shortest", label="Shortest Verse",
-            min_width=320, max_width=600
-        )
-        bottom_row.addWidget(self._preview_shortest)
-        self._preview_longest = ThemePreview(
-            verse_key="longest", label="Longest Verse",
-            min_width=320, max_width=600
-        )
-        bottom_row.addWidget(self._preview_longest)
-        preview_splitter.addWidget(bottom_container)
-
-        multi_layout.addWidget(preview_splitter, 1)
-        self._center_stack.addWidget(multi_page)
-
-        # Page 1: Container editor
-        self._editor = ContainerEditor()
-        self._editor.container_changed.connect(self._on_container_changed)
-        self._center_stack.addWidget(self._editor)
+        # Page 1: container canvas + layer strip + exact geometry
+        self._workspace = ContainerWorkspace()
+        self._workspace.preview_changed.connect(self._on_workspace_preview)
+        self._workspace.container_selected.connect(self._on_container_selected)
+        self._center_stack.addWidget(self._workspace)
 
         self._center_stack.setCurrentIndex(0)
         center_layout.addWidget(self._center_stack, 1)
@@ -330,6 +317,18 @@ class ThemeDesignerTab(QWidget):
         body.addWidget(right_col)
 
         root_layout.addLayout(body, 1)
+
+        # Every panel reads the same document; none owns a second copy.
+        self._properties_panel.bind_document(self._document)
+        self._animations_panel.bind_document(self._document)
+        self._workspace.bind_document(self._document)
+
+        # One preview, one replay policy.  The manager never writes the
+        # document; it only decides which page-side phase to ask for.
+        self._preview_manager = PreviewManager(
+            self._preview, self._animations_panel, self)
+        self._animations_panel.replay_requested.connect(
+            self._preview_manager.request_replay)
 
         # ── Load default theme ──
         self.set_theme("default")
@@ -468,7 +467,7 @@ class ThemeDesignerTab(QWidget):
         self._right_stack = QStackedWidget()
 
         # Animations page
-        self._animations_panel = ThemeAnimationsPanel()
+        self._animations_panel = AnimationPanel()
         self._right_stack.addWidget(self._animations_panel)
 
         # JSON page
@@ -503,11 +502,18 @@ class ThemeDesignerTab(QWidget):
         self._btn_copy.clicked.connect(self._on_copy_json)
         json_header.addWidget(self._btn_copy)
 
+        self._btn_apply = QPushButton("Apply")
+        self._btn_apply.setStyleSheet(_TOOLBAR_BTN_SECONDARY)
+        self._btn_apply.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_apply.setFixedHeight(22)
+        self._btn_apply.clicked.connect(self._on_apply_json)
+        json_header.addWidget(self._btn_apply)
+
         json_layout.addLayout(json_header)
 
         # JSON text editor
         self._json_editor = QTextEdit()
-        self._json_editor.setReadOnly(True)
+        self._json_editor.setReadOnly(False)
         self._json_editor.setStyleSheet(_JSON_EDITOR_STYLE)
         mono = QFont("Consolas", 11)
         mono.setStyleHint(QFont.StyleHint.Monospace)
@@ -542,51 +548,43 @@ class ThemeDesignerTab(QWidget):
         )
         self._center_stack.setCurrentIndex(0 if is_multi else 1)
         if not is_multi:
-            self._editor.load_container(self._working_theme.get("container", {}))
+            self._workspace.set_selected(self._selected_container_id)
 
-    def _on_container_changed(self, container: dict):
-        """Called when the container editor updates container properties."""
-        self._working_theme["container"] = container
-        self._properties_panel.load_theme(self._working_theme)
-        self._apply_to_previews()
-        self._update_json_display()
+
 
     # ─── Public API ───────────────────────────────────────────────────────────
 
     def set_theme(self, name: str):
-        """Load a theme by name and update all panels and previews."""
+        """Load a theme by name into the one document every panel renders."""
         theme = core.theme_loader.get_theme(name)
         if theme is None:
             return
         self._theme_name = name
         self._original_theme = copy.deepcopy(theme)
-        self._working_theme = copy.deepcopy(theme)
-
-        # Update combo
+        self._preview_pending = None
+        self._selected_container_id = ""
         self._refresh_theme_combo()
+        self._document.replace(copy.deepcopy(theme), source=self)
 
-        # Update toolbar labels
-        display_label = theme.get("label", name.title())
-        self._name_badge.setText(display_label)
-        self._desc_label.setText(theme.get("description", ""))
+    @property
+    def _working_theme(self) -> dict:
+        """Read-only snapshot of the tab-owned document (legacy readers)."""
+        return self._document.snapshot()
 
-        # Load into properties panel (blocks signals internally)
-        self._properties_panel.load_theme(self._working_theme)
-
-        # Load into editor
-        self._editor.load_container(self._working_theme.get("container", {}))
-
-        # Apply to all previews
-        self._apply_to_previews()
-
-        # Update JSON display
-        self._update_json_display()
+    @_working_theme.setter
+    def _working_theme(self, theme: dict) -> None:
+        """Compatibility assignment used by dev harnesses; not a second copy."""
+        self._preview_pending = None
+        self._selected_container_id = ""
+        self._document.replace(theme if isinstance(theme, dict) else {},
+                               source=self)
 
     # ── Unload contract (see MainWindow._unload_tab) ─────────────────────
 
     def is_dirty(self) -> bool:
-        """True when the working copy differs from the last loaded/saved one."""
-        return bool(self._working_theme) and self._working_theme != self._original_theme
+        """True when the document differs from the last loaded/saved one."""
+        working = self._document.snapshot()
+        return bool(working) and working != self._original_theme
 
     def can_unload(self):
         if self.is_dirty():
@@ -605,30 +603,69 @@ class ThemeDesignerTab(QWidget):
 
     # ─── Signal handlers ──────────────────────────────────────────────────────
 
-    def _on_theme_changed(self, theme_dict: dict):
-        """Called when ThemePropertiesPanel emits an edit."""
-        self._working_theme = copy.deepcopy(theme_dict)
-        self._working_theme["name"] = self._theme_name
-        label = self._original_theme.get("label", self._theme_name.title())
-        self._working_theme["label"] = label
-        self._editor.load_container(self._working_theme.get("container", {}))
+    def _on_document_changed(self, paths, _source):
+        """The tab owns the document; panels already refreshed themselves."""
+        ids = self._container_ids()
+        if self._selected_container_id not in ids:
+            self._selected_container_id = ids[0] if ids else ""
+        self._preview_pending = None
+        self._preview_paths = tuple(paths or ())
+        self._preview_reload = False
+        self._refresh_toolbar_identity()
         self._apply_to_previews()
         self._update_json_display()
 
+    def _on_document_replaced(self, _source):
+        ids = self._container_ids()
+        self._selected_container_id = (
+            self._selected_container_id
+            if self._selected_container_id in ids else (ids[0] if ids else ""))
+        if self._selected_container_id:
+            self._on_container_selected(self._selected_container_id)
+        self._preview_pending = None
+        self._preview_paths = ()
+        self._preview_reload = True
+        self._refresh_toolbar_identity()
+        self._apply_to_previews()
+        self._update_json_display()
+
+    def _on_workspace_preview(self, theme_dict: dict):
+        """Canvas drag preview only; the document changes on release."""
+        if not isinstance(theme_dict, dict):
+            return
+        self._preview_pending = copy.deepcopy(theme_dict)
+        self._preview_paths = ()
+        self._preview_reload = False
+        self._apply_to_previews()
+
+    def _on_container_selected(self, container_id: str):
+        ids = self._container_ids()
+        if container_id not in ids:
+            return
+        self._selected_container_id = container_id
+        self._properties_panel.set_selected_container(container_id)
+        self._workspace.set_selected(container_id)
+        self._animations_panel.set_container(container_id)
+
+    def _refresh_toolbar_identity(self):
+        theme = self._working_theme
+        label = theme.get("label", self._theme_name.title())
+        self._name_badge.setText(str(label))
+        self._desc_label.setText(str(theme.get("description", "")))
+
     def _on_save(self):
-        """Save the working theme to disk and emit theme_saved."""
-        self._working_theme["name"] = self._theme_name
-        core.theme_loader.save_theme(self._theme_name, self._working_theme)
-        self._original_theme = copy.deepcopy(self._working_theme)
+        """Save the document to disk and emit theme_saved."""
+        self._document.set(("name",), self._theme_name, source=self)
+        working = self._document.snapshot()
+        core.theme_loader.save_theme(self._theme_name, working)
+        self._original_theme = copy.deepcopy(working)
         self.theme_saved.emit(self._theme_name)
 
     def _on_cancel(self):
         """Restore the original theme without saving."""
-        self._working_theme = copy.deepcopy(self._original_theme)
-        self._properties_panel.load_theme(self._working_theme)
-        self._editor.load_container(self._working_theme.get("container", {}))
-        self._apply_to_previews()
-        self._update_json_display()
+        self._selected_container_id = ""
+        self._preview_pending = None
+        self._document.replace(copy.deepcopy(self._original_theme), source=self)
 
     def _on_reset(self):
         """Reload the theme from disk (discard unsaved changes)."""
@@ -662,23 +699,93 @@ class ThemeDesignerTab(QWidget):
             theme["label"] = self._original_theme.get(
                 "label", self._theme_name.title()
             )
-        self._working_theme = theme
-        self._properties_panel.load_theme(self._working_theme)
-        self._apply_to_previews()
-        self._update_json_display()
+        self._selected_container_id = ""
+        self._preview_pending = None
+        self._document.replace(theme, source=self)
 
     # ─── Internal helpers ─────────────────────────────────────────────────────
 
     def _apply_to_previews(self):
-        """Push the working theme dict into all three preview widgets."""
-        self._preview_medium.apply_theme(self._working_theme)
-        self._preview_shortest.apply_theme(self._working_theme)
-        self._preview_longest.apply_theme(self._working_theme)
+        """Push the working theme into the single preview (debounced)."""
+        if not hasattr(self, "_preview_timer"):
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.setInterval(80)
+            self._preview_timer.timeout.connect(self._flush_preview)
+        self._preview_timer.start()
+
+    def _flush_preview(self):
+        theme = (self._preview_pending if self._preview_pending is not None
+                 else self._working_theme)
+        self._preview_pending = None
+        if self._preview_reload:
+            self._preview_manager.load_theme(theme, self._samples.current())
+        else:
+            self._preview_manager.update_theme(theme, self._preview_paths)
+        self._preview_reload = False
+        self._preview_paths = ()
+
+    def _on_sample_changed(self, sample_id: str, _reroll: bool = False):
+        self._preview_manager.set_sample(sample_id, self._working_theme)
+
+    def _container_ids(self) -> list[str]:
+        containers = self._working_theme.get("containers")
+        if not isinstance(containers, list):
+            return []
+        return [str(c.get("id", "")) for c in containers
+                if isinstance(c, dict)]
+
+    def _first_container_id(self) -> str:
+        ids = self._container_ids()
+        return ids[0] if ids else ""
+
+    def _ensure_selection(self) -> None:
+        ids = self._container_ids()
+        if self._selected_container_id not in ids:
+            self._selected_container_id = ids[0] if ids else ""
+
+    def _active_container(self) -> dict:
+        containers = self._working_theme.get("containers")
+        if isinstance(containers, list):
+            for container in containers:
+                if isinstance(container, dict) and str(
+                        container.get("id", "")) == self._selected_container_id:
+                    return container
+        container = self._working_theme.get("container")
+        return container if isinstance(container, dict) else {}
 
     def _update_json_display(self):
         """Refresh the JSON editor with the current working theme."""
         text = json.dumps(self._working_theme, indent=4, ensure_ascii=False)
         self._json_editor.setPlainText(text)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, "_preview_manager"):
+            self._preview_manager.set_visible(True)
+
+    def hideEvent(self, event):
+        if hasattr(self, "_preview_manager"):
+            self._preview_manager.set_visible(False)
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        if hasattr(self, "_preview_manager"):
+            self._preview_manager.shutdown()
+        super().closeEvent(event)
+
+    def _on_apply_json(self):
+        """Apply raw JSON edits; unknown keys are kept because the text is
+        the whole document, not a resolved projection."""
+        try:
+            parsed = json.loads(self._json_editor.toPlainText())
+        except (json.JSONDecodeError, ValueError):
+            return
+        if not isinstance(parsed, dict):
+            return
+        self._selected_container_id = ""
+        self._preview_pending = None
+        self._document.replace(parsed, source=self)
 
     def _on_format_json(self):
         """Re-format the JSON display (pretty-print with 4-space indent)."""

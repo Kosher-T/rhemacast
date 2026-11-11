@@ -32,9 +32,35 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from core.animation_registry import (
+    ANIMATION_SPECS,
+    ANIMATION_TYPES,
+    ANIMATION_EASINGS as EASINGS,
+    ORIGIN_VALUES as ORIGINS,
+    PRESET_TYPES,
+    SLOT_PARAMS,
+    cursor_defaults,
+    default_definitions,
+)
+
 SCHEMA_VERSION = 2
 
 KINDS = ("scripture", "freeform")
+FIT_MODES = ("contain", "none")
+OVERFLOWS = ("hidden", "visible")
+VALIGNS = ("top", "center", "bottom")
+TEXT_ALIGNS = ("left", "center", "right", "justify")
+TEXT_TRANSFORMS = ("none", "uppercase", "lowercase", "capitalize")
+FONT_STYLES = ("normal", "italic")
+TEXT_DECORATIONS = ("none", "underline", "line-through")
+DIRECTIONS = ("ltr", "rtl")
+VERTICAL_ALIGNS = ("top", "middle", "baseline", "bottom")
+REFERENCE_POSITIONS = ("above_verse", "below_verse")
+TRANSLATION_POSITIONS = (
+    "above_verse", "below_verse", "above_reference", "below_reference",
+    "left_of_reference", "right_of_reference",
+)
+VERSE_MODES = ("inline", "block")
 SCRIPTURE = "scripture"
 FREEFORM = "freeform"
 
@@ -42,27 +68,23 @@ ANCHORS = (
     "top_left", "top_right", "bottom_left", "bottom_right",
     "center", "left", "right", "top", "bottom", "fill",
 )
+#: Hard limits the Designer fields must use; the validator below reads them too.
+MAX_CONTAINERS = 16
+POSITION_LIMITS = (-10000.0, 10000.0)
+CONTAINER_MAX_WIDTH = 7680.0
+CONTAINER_MAX_HEIGHT = 4320.0
+#: Blocks whose animation may carry `split` (see theme_file_reference §4.1).
+SPLIT_BLOCKS = ("text", "reference", "title", "translation")
 CORNER_KEYS = ("top_left", "top_right", "bottom_left", "bottom_right")
 BORDER_STYLES = (
     "none", "solid", "dashed", "dotted", "double",
     "groove", "ridge", "inset", "outset",
-)
-EASINGS = ("ease-out", "ease-in", "ease-in-out", "linear", "spring", "smooth")
-ORIGINS = (
-    "center", "top", "bottom", "left", "right",
-    "top left", "top right", "bottom left", "bottom right",
 )
 FILTER_FUNCS = {
     "blur": (0, 60), "brightness": (0, 4), "contrast": (0, 4),
     "saturate": (0, 8), "grayscale": (0, 1), "sepia": (0, 1),
     "hue-rotate": (-1080, 1080), "opacity": (0, 1),
 }
-ANIMATION_TYPES = (
-    "fade_in", "fade_out", "fade_up", "fade_down",
-    "scale_up", "scale_down", "slide_up", "slide_down",
-    "typewriter", "custom",
-)
-PRESET_TYPES = tuple(t for t in ANIMATION_TYPES if t not in ("typewriter", "custom"))
 
 BLOCK_IDS = {
     SCRIPTURE: ("body", "text", "reference", "translation", "verse_num"),
@@ -752,60 +774,11 @@ def block_defaults(block_id: str) -> dict:
 # ─── Animations ──────────────────────────────────────────────────────────────
 
 
-def _preset_keyframes(typ: str) -> list:
-    if typ == "fade_in":
-        return [{"at": 0, "opacity": 0}, {"at": 100, "opacity": "base"}]
-    if typ == "fade_out":
-        return [{"at": 0, "opacity": "base"}, {"at": 100, "opacity": 0}]
-    if typ == "fade_up":
-        return [{"at": 0, "opacity": 0, "translate_y": 20},
-                {"at": 100, "opacity": "base", "translate_y": 0}]
-    if typ == "fade_down":
-        return [{"at": 0, "opacity": "base", "translate_y": 0},
-                {"at": 100, "opacity": 0, "translate_y": 20}]
-    if typ == "scale_up":
-        return [{"at": 0, "opacity": 0, "scale": 0.85},
-                {"at": 100, "opacity": "base", "scale": 1}]
-    if typ == "scale_down":
-        return [{"at": 0, "opacity": "base", "scale": 1},
-                {"at": 100, "opacity": 0, "scale": 0.85}]
-    if typ == "slide_up":
-        return [{"at": 0, "translate_y": "100%"}, {"at": 100, "translate_y": 0}]
-    if typ == "slide_down":
-        return [{"at": 0, "translate_y": 0}, {"at": 100, "translate_y": "100%"}]
-    return []
+_SLOT_DURATION = SLOT_PARAMS["duration_ms"]
+_SLOT_DELAY = SLOT_PARAMS["delay_ms"]
+_SLOT_EASING = SLOT_PARAMS["easing"]
 
-
-def _builtin_definitions() -> dict:
-    out = {}
-    for typ in PRESET_TYPES:
-        out[typ] = {
-            "type": typ,
-            "label": typ.replace("_", " ").title(),
-            "duration_ms": 600,
-            "delay_ms": 0,
-            "easing": "ease-out",
-            "origin": "center",
-            "keyframes": _preset_keyframes(typ),
-        }
-    out["typewriter"] = {
-        "type": "typewriter",
-        "label": "Typewriter",
-        "duration_ms": 900,
-        "delay_ms": 0,
-        "easing": "linear",
-        "reveal": "char",
-        "cursor": {
-            "char": "\u258c",
-            "color": "currentColor",
-            "blink_ms": 500,
-            "hide_after_ms": 600,
-        },
-    }
-    return out
-
-
-BUILTIN_ANIMATIONS = _builtin_definitions()
+BUILTIN_ANIMATIONS = default_definitions()
 
 
 def _coerce_easing(value: Any, default: str, *, path: str,
@@ -886,58 +859,72 @@ def validate_animation_definition(raw: Any, name: str, *, path: str,
                     type(raw).__name__)
         return None
     typ = raw.get("type")
-    if typ not in ANIMATION_TYPES:
+    if typ not in ANIMATION_SPECS:
         report.warn(f"{path}.type", "unknown animation type", typ,
                     "fade_in")
         return None
+    spec = ANIMATION_SPECS[typ]
     out: dict = {"type": typ}
     out["label"] = clean_text(raw.get("label"), 80, path=f"{path}.label",
                               report=report, default=name)
+    duration_spec = spec.param("duration_ms")
     duration = raw.get("duration_ms")
     if duration is None:
-        report.warn(f"{path}.duration_ms", "duration is required", None, 600)
-        out["duration_ms"] = 600
+        report.warn(f"{path}.duration_ms", "duration is required", None,
+                    duration_spec.default)
+        out["duration_ms"] = duration_spec.default
     else:
-        out["duration_ms"] = coerce_number(duration, 600, 0, 5000,
-                                           path=f"{path}.duration_ms",
-                                           report=report, integer=True,
-                                           label="duration_ms")
-    out["delay_ms"] = coerce_number(raw.get("delay_ms", 0), 0, 0, 5000,
-                                    path=f"{path}.delay_ms", report=report,
-                                    integer=True, label="delay_ms")
-    out["easing"] = _coerce_easing(raw.get("easing", "ease-out" if typ != "typewriter" else "linear"),
-                                   "ease-out" if typ != "typewriter" else "linear",
-                                   path=f"{path}.easing", report=report)
+        out["duration_ms"] = coerce_number(
+            duration, duration_spec.default, duration_spec.minimum,
+            duration_spec.maximum, path=f"{path}.duration_ms",
+            report=report, integer=True, label="duration_ms")
+    delay_spec = spec.param("delay_ms")
+    out["delay_ms"] = coerce_number(
+        raw.get("delay_ms", delay_spec.default), delay_spec.default,
+        delay_spec.minimum, delay_spec.maximum,
+        path=f"{path}.delay_ms", report=report, integer=True,
+        label="delay_ms")
+    easing_spec = spec.param("easing")
+    out["easing"] = _coerce_easing(
+        raw.get("easing", easing_spec.default), easing_spec.default,
+        path=f"{path}.easing", report=report)
 
     if typ == "custom":
-        frames = _validate_keyframes(raw.get("keyframes"), path=f"{path}.keyframes",
+        frames = _validate_keyframes(raw.get("keyframes"),
+                                     path=f"{path}.keyframes",
                                      report=report)
         if frames is None:
             return None
         out["keyframes"] = frames
-        out["origin"] = coerce_enum(raw.get("origin", "center"), ORIGINS, "center",
-                                    path=f"{path}.origin", report=report)
+        origin = spec.param("origin")
+        out["origin"] = coerce_enum(
+            raw.get("origin", origin.default), origin.option_values,
+            origin.default, path=f"{path}.origin", report=report)
         return out
 
     if typ == "typewriter":
         if "keyframes" in raw:
             report.warn(f"{path}.keyframes", "typewriter takes no keyframes")
-        out["reveal"] = coerce_enum(raw.get("reveal", "char"), ("char", "word"),
-                                    "char", path=f"{path}.reveal", report=report)
+        reveal = spec.param("reveal")
+        out["reveal"] = coerce_enum(
+            raw.get("reveal", reveal.default), reveal.option_values,
+            reveal.default, path=f"{path}.reveal", report=report)
+        defaults = cursor_defaults()
+        char_spec = spec.param("cursor.char")
+        blink_spec = spec.param("cursor.blink_ms")
+        hide_spec = spec.param("cursor.hide_after_ms")
         cursor = raw.get("cursor", "default")
         if cursor == "none":
             out["cursor"] = "none"
         elif cursor in ("default", None):
-            out["cursor"] = {
-                "char": "\u258c", "color": "currentColor",
-                "blink_ms": 500, "hide_after_ms": 600,
-            }
+            out["cursor"] = dict(defaults)
         elif isinstance(cursor, dict):
-            char = clean_text(cursor.get("char"), 2, path=f"{path}.cursor.char",
-                              report=report, default="\u258c")
+            char = clean_text(cursor.get("char"), char_spec.max_length,
+                              path=f"{path}.cursor.char", report=report,
+                              default=defaults["char"])
             if not char:
-                char = "\u258c"
-            color_raw = cursor.get("color", "currentColor")
+                char = defaults["char"]
+            color_raw = cursor.get("color", defaults["color"])
             if color_raw == "currentColor":
                 color = "currentColor"
             else:
@@ -949,34 +936,33 @@ def validate_animation_definition(raw: Any, name: str, *, path: str,
             out["cursor"] = {
                 "char": char,
                 "color": color,
-                "blink_ms": coerce_number(cursor.get("blink_ms", 500), 500, 0, 2000,
-                                          path=f"{path}.cursor.blink_ms",
-                                          report=report, integer=True,
-                                          label="blink_ms"),
+                "blink_ms": coerce_number(
+                    cursor.get("blink_ms", blink_spec.default),
+                    blink_spec.default, blink_spec.minimum,
+                    blink_spec.maximum, path=f"{path}.cursor.blink_ms",
+                    report=report, integer=True, label="blink_ms"),
                 "hide_after_ms": coerce_number(
-                    cursor.get("hide_after_ms", 600), 600, 0, 5000,
-                    path=f"{path}.cursor.hide_after_ms", report=report,
-                    integer=True, label="hide_after_ms"),
+                    cursor.get("hide_after_ms", hide_spec.default),
+                    hide_spec.default, hide_spec.minimum,
+                    hide_spec.maximum, path=f"{path}.cursor.hide_after_ms",
+                    report=report, integer=True, label="hide_after_ms"),
             }
         else:
             report.warn(f"{path}.cursor", "invalid cursor", cursor, "default")
-            out["cursor"] = {
-                "char": "\u258c", "color": "currentColor",
-                "blink_ms": 500, "hide_after_ms": 600,
-            }
+            out["cursor"] = dict(defaults)
         return out
 
     # Preset
     if "keyframes" in raw:
-        # §4.9.4: a preset is defined by its type; authoring keyframes on one
-        # is a mistake, not an override. Drop so the slot falls back per phase.
         report.warn(f"{path}.keyframes",
                     "only type=custom accepts keyframes", None,
                     "definition dropped")
         return None
-    out["origin"] = coerce_enum(raw.get("origin", "center"), ORIGINS, "center",
-                                path=f"{path}.origin", report=report)
-    out["keyframes"] = copy.deepcopy(BUILTIN_ANIMATIONS[typ]["keyframes"])
+    origin = spec.param("origin")
+    out["origin"] = coerce_enum(
+        raw.get("origin", origin.default), origin.option_values,
+        origin.default, path=f"{path}.origin", report=report)
+    out["keyframes"] = copy.deepcopy(list(spec.keyframes))
     return out
 
 
@@ -1022,15 +1008,19 @@ def _normalize_slot(raw: Any, *, path: str, phase: str,
         out = {"use": name}
         if "duration_ms" in raw:
             out["duration_ms"] = coerce_number(
-                raw["duration_ms"], 600, 0, 5000, path=f"{path}.duration_ms",
-                report=report, integer=True, label="duration_ms")
+                raw["duration_ms"], _SLOT_DURATION.default,
+                _SLOT_DURATION.minimum, _SLOT_DURATION.maximum,
+                path=f"{path}.duration_ms", report=report, integer=True,
+                label="duration_ms")
         if "delay_ms" in raw:
             out["delay_ms"] = coerce_number(
-                raw["delay_ms"], 0, 0, 5000, path=f"{path}.delay_ms",
+                raw["delay_ms"], _SLOT_DELAY.default, _SLOT_DELAY.minimum,
+                _SLOT_DELAY.maximum, path=f"{path}.delay_ms",
                 report=report, integer=True, label="delay_ms")
         if "easing" in raw:
-            out["easing"] = _coerce_easing(raw["easing"], "ease-out",
-                                           path=f"{path}.easing", report=report)
+            out["easing"] = _coerce_easing(
+                raw["easing"], _SLOT_EASING.default,
+                path=f"{path}.easing", report=report)
         extra = set(raw) - {"use", "duration_ms", "delay_ms", "easing"}
         if extra:
             report.note(path, "ignoring unknown slot keys", sorted(extra))
@@ -1059,12 +1049,12 @@ def _normalize_unit_look(raw: Any, *, path: str,
                                       integer=True, label="weight")
     if "font_style" in raw:
         out["font_style"] = coerce_enum(raw["font_style"],
-                                        ("normal", "italic"), "normal",
+                                        FONT_STYLES, "normal",
                                         path=f"{path}.font_style",
                                         report=report)
     if "text_decoration" in raw:
         out["text_decoration"] = coerce_enum(
-            raw["text_decoration"], ("none", "underline", "line-through"),
+            raw["text_decoration"], TEXT_DECORATIONS,
             "none", path=f"{path}.text_decoration", report=report)
     if "opacity" in raw:
         out["opacity"] = coerce_number(raw["opacity"], 1, 0, 1,
@@ -1082,6 +1072,11 @@ def _normalize_unit_look(raw: Any, *, path: str,
     return out
 
 
+def split_defaults() -> dict[str, Any]:
+    """Schema defaults for a newly created split assignment."""
+    return {"by": "line", "stagger_ms": 70}
+
+
 def _normalize_split(raw: Any, *, path: str, report: ThemeReport) -> Optional[dict]:
     """`animation.split`: render-time line/word units with staggered phases."""
     if raw is None:
@@ -1089,11 +1084,13 @@ def _normalize_split(raw: Any, *, path: str, report: ThemeReport) -> Optional[di
     if not isinstance(raw, dict):
         report.warn(path, "split must be an object", type(raw).__name__)
         return None
+    defaults = split_defaults()
     out: dict = {}
-    out["by"] = coerce_enum(raw.get("by", "line"), ("line", "word"), "line",
-                            path=f"{path}.by", report=report)
+    out["by"] = coerce_enum(raw.get("by", defaults["by"]), ("line", "word"),
+                            defaults["by"], path=f"{path}.by", report=report)
     out["stagger_ms"] = coerce_number(
-        raw.get("stagger_ms", 70), 70, 0, 2000,
+        raw.get("stagger_ms", defaults["stagger_ms"]),
+        defaults["stagger_ms"], 0, 2000,
         path=f"{path}.stagger_ms", report=report, integer=True,
         label="stagger_ms")
     for part in ("first", "rest"):
@@ -1205,7 +1202,7 @@ def _validate_canvas(raw: Any, *, report: ThemeReport) -> dict:
         "background": _coerce_paint(raw.get("background", "transparent"),
                                     "transparent", path=f"{path}.background",
                                     report=report),
-        "fit": coerce_enum(raw.get("fit", "contain"), ("contain", "none"),
+        "fit": coerce_enum(raw.get("fit", "contain"), FIT_MODES,
                            "contain", path=f"{path}.fit", report=report),
     }
 
@@ -1237,7 +1234,8 @@ def _validate_position(raw: Any, *, path: str, report: ThemeReport) -> dict:
         if axis in raw and raw[axis] is not None:
             out[axis] = coerce_length(
                 raw[axis], 0, path=f"{path}.{axis}", report=report,
-                minimum=-10000, maximum=10000, percent=True, label=axis)
+                minimum=POSITION_LIMITS[0], maximum=POSITION_LIMITS[1],
+                percent=True, label=axis)
     extra = set(raw) - {"anchor", "x", "y"} - set(CORNER_KEYS)
     if extra:
         report.note(path, "ignoring unknown position keys", sorted(extra))
@@ -1256,7 +1254,7 @@ def _validate_block(block_id: str, raw: Any, *, path: str,
                 out[key] = coerce_bool(raw[key], out[key],
                                        path=f"{path}.{key}", report=report)
         out["valign"] = coerce_enum(raw.get("valign", "center"),
-                                    ("top", "center", "bottom"), "center",
+                                    VALIGNS, "center",
                                     path=f"{path}.valign", report=report)
         out["gap"] = coerce_length(raw.get("gap", 0), 0, path=f"{path}.gap",
                                    report=report, minimum=0, maximum=200)
@@ -1356,20 +1354,20 @@ def _validate_block(block_id: str, raw: Any, *, path: str,
     if "text_transform" in raw:
         put("text_transform", coerce_enum(
             raw["text_transform"],
-            ("none", "uppercase", "lowercase", "capitalize"),
+            TEXT_TRANSFORMS,
             out["text_transform"], path=f"{path}.text_transform",
             report=report))
     if "text_align" in raw:
         put("text_align", coerce_enum(
-            raw["text_align"], ("left", "center", "right", "justify"),
+            raw["text_align"], TEXT_ALIGNS,
             out["text_align"], path=f"{path}.text_align", report=report))
     if "font_style" in raw:
-        put("font_style", coerce_enum(raw["font_style"], ("normal", "italic"),
+        put("font_style", coerce_enum(raw["font_style"], FONT_STYLES,
                                       out["font_style"],
                                       path=f"{path}.font_style", report=report))
     if "text_decoration" in raw:
         put("text_decoration", coerce_enum(
-            raw["text_decoration"], ("none", "underline", "line-through"),
+            raw["text_decoration"], TEXT_DECORATIONS,
             out["text_decoration"], path=f"{path}.text_decoration",
             report=report))
     if "opacity" in raw:
@@ -1386,7 +1384,7 @@ def _validate_block(block_id: str, raw: Any, *, path: str,
                                            report=report, integer=True,
                                            label="max_lines"))
     if "direction" in raw:
-        put("direction", coerce_enum(raw["direction"], ("ltr", "rtl"),
+        put("direction", coerce_enum(raw["direction"], DIRECTIONS,
                                      out["direction"], path=f"{path}.direction",
                                      report=report))
     for side in ("top", "right", "bottom", "left"):
@@ -1411,27 +1409,26 @@ def _validate_block(block_id: str, raw: Any, *, path: str,
     if block_id in ("reference", "title"):
         if "position" in raw:
             put("position", coerce_enum(
-                raw["position"], ("above_verse", "below_verse"), "below_verse",
+                raw["position"], REFERENCE_POSITIONS, "below_verse",
                 path=f"{path}.position", report=report))
     if block_id == "translation":
         if "position" in raw:
             put("position", coerce_enum(
                 raw["position"],
-                ("above_verse", "below_verse", "above_reference",
-                 "below_reference", "left_of_reference", "right_of_reference"),
+                TRANSLATION_POSITIONS,
                 "right_of_reference", path=f"{path}.position", report=report))
     if block_id == "verse_num":
         if "mode" in raw:
-            put("mode", coerce_enum(raw["mode"], ("inline", "block"), "inline",
+            put("mode", coerce_enum(raw["mode"], VERSE_MODES, "inline",
                                     path=f"{path}.mode", report=report))
         if "position" in raw:
             put("position", coerce_enum(
-                raw["position"], ("above_verse", "below_verse"), "above_verse",
+                raw["position"], REFERENCE_POSITIONS, "above_verse",
                 path=f"{path}.position", report=report))
         if "vertical_align" in raw:
             put("vertical_align", coerce_enum(
                 raw["vertical_align"],
-                ("top", "middle", "baseline", "bottom"), "top",
+                VERTICAL_ALIGNS, "top",
                 path=f"{path}.vertical_align", report=report))
         if "margin_right" in raw:
             put("margin_right", coerce_length(
@@ -1496,8 +1493,8 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
         "max_width": (None if raw.get("max_width") is None else
                       coerce_length(raw.get("max_width"), None,
                                     path=f"{path}.max_width", report=report,
-                                    minimum=0, maximum=7680, percent=True,
-                                    label="max_width")),
+                                    minimum=0, maximum=CONTAINER_MAX_WIDTH,
+                                    percent=True, label="max_width")),
         "min_height": coerce_length(raw.get("min_height", 0), 0,
                                     path=f"{path}.min_height", report=report,
                                     minimum=0, maximum=4320, percent=True,
@@ -1505,8 +1502,8 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
         "max_height": (None if raw.get("max_height") is None else
                        coerce_length(raw.get("max_height"), None,
                                      path=f"{path}.max_height", report=report,
-                                     minimum=0, maximum=4320, percent=True,
-                                     label="max_height")),
+                                     minimum=0, maximum=CONTAINER_MAX_HEIGHT,
+                                     percent=True, label="max_height")),
         "background": _coerce_paint(raw.get("background", "transparent"),
                                     "transparent", path=f"{path}.background",
                                     report=report),
@@ -1526,7 +1523,7 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
                                  path=f"{path}.opacity", report=report,
                                  label="opacity"),
         "overflow": coerce_enum(raw.get("overflow", "hidden"),
-                                ("hidden", "visible"), "hidden",
+                                OVERFLOWS, "hidden",
                                 path=f"{path}.overflow", report=report),
     }
     if "animation" in raw:
@@ -1694,10 +1691,10 @@ def _validate_top(raw: dict, *, kind: str, name: str,
         report.warn("containers", "no containers; generating `main`",
                     None, "main")
         raw_containers = [{"id": "main"}]
-    if len(raw_containers) > 16:
+    if len(raw_containers) > MAX_CONTAINERS:
         report.warn("containers", "more than 16 containers; excess dropped",
-                    len(raw_containers), 16)
-        raw_containers = raw_containers[:16]
+                    len(raw_containers), MAX_CONTAINERS)
+        raw_containers = raw_containers[:MAX_CONTAINERS]
 
     containers = []
     seen_ids = set()

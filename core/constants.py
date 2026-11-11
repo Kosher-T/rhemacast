@@ -200,6 +200,15 @@ SEARCH_AUTO_DELAY_MS_DEFAULT = 100
 SEARCH_AUTO_DELAY_MS_SLOTS = (80, 100, 150, 200, 250, 300, 400, 500, 600, 700)
 
 
+# ─── Theme Designer Preview ─────────────────────────────────────────────────
+
+# Wait after the last animation-property edit before replaying that phase.
+THEME_PREVIEW_REPLAY_DEBOUNCE_MS = 300
+
+# Repeat interval while focus remains inside an animation parameter field.
+THEME_PREVIEW_REPLAY_LOOP_MS = 3000
+
+
 # ─── Queue Depths & Backpressure ─────────────────────────────────────────────
 
 # Max pending 100ms PCM audio chunks (500 chunks = 50 seconds of audio buffer)

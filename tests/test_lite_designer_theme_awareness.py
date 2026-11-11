@@ -15,6 +15,8 @@ import pytest
 
 import core.database as db
 
+pytestmark = pytest.mark.webengine
+
 _OPEN_DESIGNERS = []
 
 
@@ -69,6 +71,12 @@ def test_freeform_preview_carries_slide_and_theme(tmp_path):
     assert isinstance(payload.get("theme_data"), dict) and payload["theme_data"]
 
 
+@pytest.mark.skip(
+    reason="Should not run: LiteDesigner._render_theme_preview was removed "
+           "when the freeform preview (follows the deck) and the theme "
+           "preview (sample verse) were deliberately split. This test still "
+           "asserts the old deck-following theme preview. Feature it covered: "
+           "the Theme tab preview rendering the active deck slide.")
 def test_theme_preview_renders_active_slide_for_deck(tmp_path):
     w = _designer(tmp_path)
     seen = []
@@ -93,6 +101,13 @@ def test_bogus_theme_falls_back_to_default(tmp_path):
     assert isinstance(seen[-1].get("theme_data"), dict)
 
 
+@pytest.mark.skip(
+    reason="Should not run: LiteDesigner._render_theme_preview was removed "
+           "when the freeform preview (follows the deck) and the theme "
+           "preview (sample verse) were deliberately split. This test still "
+           "expects a theme change to re-render the deck into the theme "
+           "preview. Feature it covered: live theme-change refresh of the "
+           "deck-following Theme tab preview.")
 def test_working_theme_change_rerenders_slide(tmp_path):
     w = _designer(tmp_path)
     seen = []
@@ -103,6 +118,12 @@ def test_working_theme_change_rerenders_slide(tmp_path):
     assert "First slide words" in seen[-1]["text"]
 
 
+@pytest.mark.skip(
+    reason="Should not run: calls the removed "
+           "LiteDesigner._render_theme_preview and asserts its old "
+           "deck-following behaviour, while the current theme preview "
+           "deliberately keeps the sample verse when no deck is open. "
+           "Feature it covered: the Theme tab preview without a deck.")
 def test_quick_edit_without_deck_keeps_sample_verse(tmp_path):
     _qt()
     db.DB_PATH = str(tmp_path / "app.db")

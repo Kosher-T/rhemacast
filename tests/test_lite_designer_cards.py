@@ -19,6 +19,8 @@ import pytest
 import core.database as db
 from core.slide_parser import slide_owns_marker
 
+pytestmark = pytest.mark.webengine
+
 # Regression bounds (generous headless caps — the table carries truth).
 SMALL_OP_MS = 500
 LARGE_OP_MS = 1000
