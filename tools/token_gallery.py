@@ -49,7 +49,9 @@ from ui.theme_kit import (
     ShadowField, SliderField, SplitEditor, Switch, TextInput, Timeline,
     ToggleButton, ValidationBadge, ValidationItem, attach_tooltip,
 )
+from ui.scrollbars import reserve_scrollbar_lane
 from ui.typography import install as install_typography
+from ui.widgets.theme_designer.column_handle import ColumnHandle
 
 PALETTE = [
     ("gold", "#D4AF37"),
@@ -636,6 +638,96 @@ def page_narrow(narrow: bool) -> QWidget:
     )
 
 
+def page_columns(narrow: bool) -> QWidget:
+    """Column drag handle in its idle, hover and dragging states."""
+
+    def demo(state: str) -> QWidget:
+        strip = QWidget()
+        strip.setFixedHeight(120)
+        layout = QHBoxLayout(strip)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        left = QLabel("Left column")
+        left.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left.setStyleSheet(
+            f"background: {tokens.BG_CARD}; color: {tokens.TEXT_MUTED};"
+            f"border: 1px solid {tokens.BORDER_HAIRLINE};"
+            f"font-size: {tokens.TYPE_CAPTION}px;")
+        preview = QLabel("Preview")
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setStyleSheet(
+            f"background: {tokens.BG_BASE}; color: {tokens.TEXT_MUTED};"
+            f"border: 1px solid {tokens.BORDER_HAIRLINE};"
+            f"font-size: {tokens.TYPE_CAPTION}px;")
+
+        handle = ColumnHandle("left")
+        if state in ("hover", "drag"):
+            handle._hovered = True
+        if state == "drag":
+            handle._dragging = True
+
+        layout.addWidget(left, 1)
+        layout.addWidget(handle)
+        layout.addWidget(preview, 2)
+        return strip
+
+    return _stack(
+        group("Idle", demo("idle"),
+              hint="Hairline plus a short accent grip."),
+        group("Hover", demo("hover"),
+              hint="Thicker accent line and a longer grip."),
+        group("Dragging", demo("drag"),
+              hint="Full-height accent wash; the column is moving."),
+    )
+
+
+def page_scrollbars(narrow: bool) -> QWidget:
+    """Reserved vertical and horizontal bar lanes."""
+
+    def scroller(horizontal: bool, rows: int) -> QWidget:
+        frame = QFrame()
+        frame.setFixedHeight(150)
+        frame.setStyleSheet(
+            f"QFrame {{ background: {tokens.BG_BASE};"
+            f"border: 1px solid {tokens.BORDER_HAIRLINE};"
+            f"border-radius: {tokens.RADIUS_MD}px; }}")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(tokens.scrollbar_qss())
+        body = QWidget()
+        if horizontal:
+            body.setMinimumWidth(560)
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(tokens.SPACE_8, tokens.SPACE_8,
+                                       tokens.SPACE_8, tokens.SPACE_8)
+        body_layout.setSpacing(tokens.SPACE_4)
+        for index in range(rows):
+            label = QLabel(f"Row {index + 1} · content does not move")
+            label.setStyleSheet(
+                f"color: {tokens.TEXT_SECONDARY}; background: transparent;")
+            body_layout.addWidget(label)
+        scroll.setWidget(body)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn if horizontal
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        reserve_scrollbar_lane(scroll, horizontal=horizontal)
+        frame_layout.addWidget(scroll)
+        return frame
+
+    return _stack(
+        group("Vertical", scroller(False, 30),
+              hint="The lane is always there; a thumb appears on overflow."),
+        group("Horizontal", scroller(True, 6),
+              hint="The bottom lane is reserved too, so height never jumps."),
+    )
+
+
 # ─── Gallery window ────────────────────────────────────────────────────────
 
 PAGES = [
@@ -652,6 +744,8 @@ PAGES = [
     ("Sample injector", page_injector),
     ("Small pieces", page_small),
     ("240 px", page_narrow),
+    ("Column handle", page_columns),
+    ("Scrollbars", page_scrollbars),
 ]
 
 
@@ -669,6 +763,7 @@ class Gallery(QTabWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        reserve_scrollbar_lane(scroll)
         content = QWidget()
         row = QHBoxLayout(content)
         row.setContentsMargins(tokens.SPACE_16, tokens.SPACE_16,

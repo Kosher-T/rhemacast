@@ -87,6 +87,7 @@ class LivePreviewPanel(QWidget):
     """Center panel: Preview (left) + Live (right) + macro controls."""
 
     clear_recall = pyqtSignal()
+    motion_toggle = pyqtSignal()
     prev_verse = pyqtSignal()
     next_verse = pyqtSignal()
     preview_double_clicked = pyqtSignal()
@@ -262,6 +263,17 @@ class LivePreviewPanel(QWidget):
         nav_bar.addWidget(btn_clear)
         self.btn_clear = btn_clear
 
+        # Out / In toggle: Out plays the exit and holds its final frame; In
+        # replays entry from that frame. Disabled while cloaked (In is
+        # meaningless behind a blank screen).
+        btn_motion = QPushButton("OUT")
+        btn_motion.setStyleSheet(icon_button_qss())
+        btn_motion.setFixedSize(42, BUTTON_HEIGHT)
+        btn_motion.setToolTip("Out: play the exit and hold its final frame")
+        btn_motion.clicked.connect(self.motion_toggle.emit)
+        nav_bar.addWidget(btn_motion)
+        self.btn_motion = btn_motion
+
         btn_next = QPushButton()
         btn_next.setStyleSheet(icon_button_qss())
         btn_next.setFixedSize(36, BUTTON_HEIGHT)
@@ -375,8 +387,38 @@ class LivePreviewPanel(QWidget):
                 self.preview_view.refresh(payload, _ack)
 
     def clear_live(self):
-        """Clear the live viewport."""
-        self.live_view.clear()
+        """Blank the live viewport INSTANTLY (cloak has no exit)."""
+        self.live_view.cloak()
+
+    def reveal_live(self, payload=None):
+        """Uncloak without an entry: show the stored payload, then reveal.
+
+        ``payload`` empty means the covered state was Out/empty: keep the
+        screen blank.
+        """
+        if isinstance(payload, dict) and payload:
+            self.live_view.refresh(payload)
+            self.live_view.uncloak(True)
+        else:
+            self.live_view.uncloak(False)
+
+    def set_motion_state(self, machine):
+        """Mirror the shared motion state on the Out/In button."""
+        cloaked = bool(getattr(machine, "is_cloaked", False))
+        self.btn_motion.setEnabled(not cloaked)
+        if cloaked:
+            self.btn_motion.setText("IN")
+            self.btn_motion.setToolTip(
+                "In is unavailable while cloaked — uncloak first")
+            return
+        if getattr(machine, "toggle_target", "out") == "in":
+            self.btn_motion.setText("IN")
+            self.btn_motion.setToolTip(
+                "In: play entry from the held exit frame")
+        else:
+            self.btn_motion.setText("OUT")
+            self.btn_motion.setToolTip(
+                "Out: play the exit and hold its final frame")
 
     def set_clear_active(self, active: bool):
         """Cloak indicator on the cloak button (amber when output is

@@ -87,6 +87,24 @@ def clear_output(output_id: str) -> bool:
     return _run(broadcast_display({"action": "clear"}, target=str(output_id)))
 
 
+def send_action(tab_key: str, payload: dict, *, scope_all: bool = False) -> bool:
+    """Send one motion action (out/in/cloak/uncloak) as-is to outputs.
+
+    These payloads carry no content or theme, so the normal themed fan-out
+    would rebuild them into display payloads. One tab may only ever write
+    to its own set; ``scope_all`` is for a shared live screen (cloak).
+    """
+    from core.websocket_server import broadcast_display
+    from core.outputs import TAB_OUTPUTS, active_outputs
+    keys = list(TAB_OUTPUTS) if scope_all else [tab_key]
+    did = False
+    for key in keys:
+        for output_id in active_outputs(key):
+            if _run(broadcast_display(payload, target=str(output_id))):
+                did = True
+    return did
+
+
 def cloak_other_tabs(tab_key: str) -> bool:
     """Prioritized mode: blank every other tab's ACTIVE output sets so
     exactly one set is on air. Also drops their stored per-output

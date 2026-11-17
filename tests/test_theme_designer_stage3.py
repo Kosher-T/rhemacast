@@ -75,9 +75,9 @@ def _form(card):
     return card.findChild(ParamForm)
 
 
-def test_four_registry_driven_phase_cards(qapp):
+def test_five_registry_driven_phase_cards(qapp):
     panel = _panel(qapp)
-    assert set(panel._cards) == {"entry", "transition_in",
+    assert set(panel._cards) == {"entry", "transition_in", "sustain",
                                  "transition_out", "out"}
     entry = panel.card("entry")
     assert entry.value() == "gold"
@@ -264,3 +264,46 @@ def test_repeated_slot_switches_do_not_accumulate_editors(qapp):
         assert len(entry.findChildren(Timeline)) <= 1
         assert len([f for f in entry.findChildren(ParamForm)
                     if f.isVisible()]) <= 1
+
+
+def test_motion_controls_edit_theme_level_settings(qapp):
+    theme = _theme()
+    theme["motion"] = {
+        "in_out": "sequential", "transition": "overlap",
+        "sustain_when_cloaked": "pause", "deck_steps": "instant",
+    }
+    panel = _panel(qapp, theme)
+    assert panel.motion_control("deck_steps").value() == "instant"
+    assert panel.motion_control("transition").value() == "overlap"
+    assert panel.motion_offset_field().value() == 200
+    assert not panel._motion_note.isHidden()
+    note = panel._motion_note.text()
+    assert "200 ms" in note
+    assert "incoming starts" in note
+    assert "not supported" not in note
+
+    panel.motion_offset_field().set_value(350, emit=True)
+    assert panel.theme()["motion"]["overlap_in_offset_ms"] == 350
+    assert "350 ms" in panel._motion_note.text()
+
+    panel.motion_control("deck_steps").set_value("out_in", emit=True)
+    panel.motion_control("transition").set_value("sequential", emit=True)
+    panel.motion_control("sustain_when_cloaked").set_value("run", emit=True)
+
+    motion = panel.theme()["motion"]
+    assert motion["deck_steps"] == "out_in"
+    assert motion["transition"] == "sequential"
+    assert motion["sustain_when_cloaked"] == "run"
+    assert motion["overlap_in_offset_ms"] == 350
+    assert panel._motion_note.isHidden()
+
+
+def test_motion_controls_show_defaults_when_theme_has_none(qapp):
+    theme = _theme()
+    theme.pop("motion", None)
+    panel = _panel(qapp, theme)
+    assert panel.motion_control("in_out").value() == "sequential"
+    assert panel.motion_control("deck_steps").value() == "out_in"
+    assert panel.motion_offset_field().value() == 200
+    panel.motion_control("deck_steps").set_value("instant", emit=True)
+    assert panel.theme()["motion"]["deck_steps"] == "instant"

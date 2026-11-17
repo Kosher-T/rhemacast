@@ -21,6 +21,35 @@ def cleanup():
     }
     yield
 
+def test_unlabelled_display_payload_is_stamped_other():
+    """Legacy senders keep working; the renderer sees an explicit kind.
+
+    ``kind_missing`` preserves the evidence that the label was absent at the
+    boundary, so the page can warn instead of silently treating the forced
+    ``other`` as a deliberate sender choice.
+    """
+    for payload in (
+        {"action": "display", "text": "A"},
+        {"action": "display", "text": "A", "kind": None},
+        {"action": "display", "text": "A", "kind": "  "},
+        {"action": "display", "text": "A", "kind": 7},
+    ):
+        out = ws_server.sanitize_payload(payload)
+        assert out["kind"] == "other"
+        assert out["kind_missing"] is True
+
+
+def test_labelled_display_and_clear_payloads_are_not_stamped():
+    for kind in ws_server.DISPLAY_KINDS:
+        out = ws_server.sanitize_payload(
+            {"action": "display", "text": "A", "kind": kind})
+        assert out["kind"] == kind
+        assert "kind_missing" not in out
+    cleared = ws_server.sanitize_payload({"action": "clear"})
+    assert "kind" not in cleared
+    assert "kind_missing" not in cleared
+
+
 def test_regression_phase6():
     """Verify intent regex engine still functional after display routing changes."""
     is_triggered, is_ignored, match = intent_classifier.evaluate_intent("turn off")

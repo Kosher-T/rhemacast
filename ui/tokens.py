@@ -581,9 +581,11 @@ def scrollbar_qss() -> str:
     Applied once at application level (``core.ui.RhemaCastApp``) so every
     panel inherits it. There is deliberately no groove/page area: the handle
     floats on whatever surface it scrolls, which is the only way one style
-    works over bg_app, bg_panel and bg_popover alike. Hover steps the handle
-    from the raised surface colour to muted text grey — a control, not text,
-    so no 4.5:1 floor applies, but it stays visible on every surface.
+    works over bg_app, bg_panel and bg_popover alike. The lane is transparent
+    because ``ui.scrollbars`` reserves it permanently; an empty lane must
+    read as blank space, not as a disabled control. Idle is the raised card
+    purple, hover is the accent edge and drag is the full accent, so the bar
+    belongs to the black and purple chrome rather than to the OS style.
 
     A widget with its own ``QScrollBar`` rules (``ui.styles``
     ``apply_minimal_scrollbar`` for the verse/schedule/deck lists) keeps
@@ -603,7 +605,17 @@ def scrollbar_qss() -> str:
             border-radius: {SCROLLBAR_HANDLE_RADIUS}px;
         }}
         QScrollBar::handle:vertical:hover {{
-            background: {TEXT_MUTED};
+            background: {ACCENT_BORDER};
+        }}
+        QScrollBar::handle:vertical:pressed {{
+            background: {ACCENT};
+        }}
+        /* Empty lane: the bar is always laid out, but there is nothing to
+           drag, so the lane must read as blank space. */
+        QScrollBar[rcLaneEmpty="true"]::handle:vertical,
+        QScrollBar[rcLaneEmpty="true"]::handle:vertical:hover,
+        QScrollBar[rcLaneEmpty="true"]::handle:vertical:pressed {{
+            background: transparent;
         }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
             height: 0px;
@@ -628,7 +640,15 @@ def scrollbar_qss() -> str:
             border-radius: {SCROLLBAR_HANDLE_RADIUS}px;
         }}
         QScrollBar::handle:horizontal:hover {{
-            background: {TEXT_MUTED};
+            background: {ACCENT_BORDER};
+        }}
+        QScrollBar::handle:horizontal:pressed {{
+            background: {ACCENT};
+        }}
+        QScrollBar[rcLaneEmpty="true"]::handle:horizontal,
+        QScrollBar[rcLaneEmpty="true"]::handle:horizontal:hover,
+        QScrollBar[rcLaneEmpty="true"]::handle:horizontal:pressed {{
+            background: transparent;
         }}
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
             height: 0px;

@@ -78,18 +78,44 @@ implemented with one `QTimer`; timers are stopped while invisible or inactive.
 The loop is intentionally short and obvious:
 
 - **Entry:** the current sample replays its entry on the current content.
-- **Transition in:** the alternate sample is placed first, then the current
-  sample animates in. The current sample is left on screen.
-- **Transition out:** the current sample animates out to the alternate sample,
-  then the selected sample is restored without an entry.
+- **Transition in:** with `motion.transition: sequential`, the alternate
+  sample is placed first, then the current sample animates in. With
+  `motion.transition: overlap`, the real pair plays: the outgoing sample is
+  frozen, the incoming sample starts after `motion.overlap_in_offset_ms`, and
+  the current sample is left on screen.
+- **Sustain:** the current sample replays its sustain slot once (the live
+  renderer loops it while the content is idle).
+- **Transition out:** with `sequential`, the current sample animates out to
+  the alternate sample, then the selected sample is restored without an
+  entry. With `overlap`, the frozen current sample goes out while the
+  alternate sample comes in at the offset, and the selected sample is
+  restored when the pair finishes.
 - **Exit:** the current sample plays its exit, then the selected sample is
   restored without an entry.
 
-### Sample swaps
+### Motion settings
+
+The Animation panel opens with a Motion section for the theme-level
+`motion` keys: In / out ordering, Transition ordering, Deck steps, and what
+sustain does while cloaked. Changing one writes `theme.motion.<key>` through
+the shared document, so the preview refresh and the theme file both see it.
+Selecting an overlap ordering shows a note naming the configured incoming
+offset, and the In offset field edits `motion.overlap_in_offset_ms`. The two
+transition replay buttons now play the real overlap pair, with the offset and
+stacking the live renderer uses. Entry, sustain and exit remain single-phase
+replays because the motion machine never pairs them. Choosing a sample still
+goes through the live handler.
+
+### Sample swaps and pairing
 
 Choosing a sample calls `ThemePreview.show_sample()`, which sends a new
-content payload through the normal renderer. The renderer's normal
-content-change transition plays (if the theme defines one). The manager stops
+content payload through the normal renderer. Payloads carry a display `kind`
+(`scripture`, `freeform`, or `other` when unlabelled); the renderer applies
+the same pairing rule as live output: scripture replaced by scripture plays
+transition out/in, every other pairing plays OUT then IN, and a missing phase
+is instant. A theme with `motion.deck_steps: instant` also steps instantly
+inside one deck, matching the live renderer. The preview therefore shows the
+phases the live screen would play, not a special Designer path. The manager stops
 the replay loop and cancels pending replay work first, so sample selection is
 not mistaken for an animation edit. This is deliberate: it gives immediate
 visual confirmation that the injector now changes the screen and matches what
@@ -106,6 +132,13 @@ Both timings are constants in `core/constants.py`:
 
 There is no new settings UI for these two values; they are Designer timing
 constants next to the other preview/runtime constants.
+
+## Debug readout
+
+A browser tab pointed at the display page with `?debug=1` shows a small
+bottom-left readout of the last motion plan (state, kind, kinds compared,
+phases). It is absent by default and is not loaded by the operator view or
+OBS, so output is unaffected.
 
 ## Verification and limits
 

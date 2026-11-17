@@ -260,6 +260,7 @@ class SlidesTab(QWidget):
 
         # Live/preview screens
         self.live_preview.clear_recall.connect(self._on_clear_recall)
+        self.live_preview.motion_toggle.connect(self._on_motion_toggle)
         self.live_preview.prev_verse.connect(self._on_prev)
         self.live_preview.next_verse.connect(self._on_next)
         self.live_preview.preview_double_clicked.connect(self._on_preview_double_click)
@@ -273,7 +274,12 @@ class SlidesTab(QWidget):
         # synchronously, so the button can never drift — whichever tab
         # toggles, both tabs' buttons follow).
         self._display.cloak_changed.connect(self.live_preview.set_clear_active)
+        self._display.cloak_changed.connect(
+            lambda _on: self._sync_motion_button())
+        self._display.revealed.connect(self.live_preview.reveal_live)
+        self._display.nav_changed.connect(self._sync_motion_button)
         self.live_preview.set_clear_active(self._display.cloaked)
+        self._sync_motion_button()
         if self._display.live_payload:
             self.live_preview.set_live_payload(self._display.live_payload)
         if self._display.preview_payload:
@@ -317,6 +323,7 @@ class SlidesTab(QWidget):
             "chapter": str(chapter or ""),
             "verse": str(verse or ""),
             "content": "slide" if is_slide else "verse",
+            "kind": "freeform" if is_slide else "scripture",
             "theme": theme_name,
             "theme_data": theme_data,
         }
@@ -414,7 +421,9 @@ class SlidesTab(QWidget):
                     payload, self._current_display,
                     self._display.live_sched_uid,
                     self._display.live_from_schedule)
-            self._broadcast_to_ws(payload)
+            # Pass the display data: without it the rebroadcast assumes a
+            # verse and re-labels a slide as scripture on the way to OBS.
+            self._broadcast_to_ws(payload, self._current_display)
             logger.info(f"Output {output_id} theme double-clicked: {theme_name}")
         else:
             logger.info(f"Output {output_id} theme double-clicked: {theme_name} (nothing live)")
@@ -889,15 +898,28 @@ class SlidesTab(QWidget):
         and touches no transition memory; reveal fires after 2
         presented frames carry the update (500ms timer as fallback).
         Cloak respected: cloaked re-blanks instead of re-pushing."""
+        out_hold = (self._display.motion.is_out
+                    and not self._display.cloaked)
         if self._display.cloaked:
             live = "clear"
+        elif out_hold and self._display.live_payload:
+            # Silent re-render, then replay the held exit after the cover
+            # lifts so a tab switch cannot reveal an Out screen.
+            live = self._display.live_payload
         elif self._display.live_payload:
             live = self._display.live_payload
         else:
             live = None
-        self.live_preview.refresh_views(live, self._display.preview_payload)
+
+        def _reveal():
+            if out_hold:
+                self.live_preview.live_view.motion("out")
+            self.live_preview.reveal_screens()
+
+        self.live_preview.refresh_views(
+            live, self._display.preview_payload, done=_reveal)
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(500, self.live_preview.reveal_screens)
+        QTimer.singleShot(500, _reveal)
 
     def _on_preview_double_click(self):
         """Double-click preview screen → push preview to live."""
@@ -946,43 +968,71 @@ class SlidesTab(QWidget):
             return
         self._uncloak_now()
 
-    def _cloak_now(self):
-        """Blank the live screen. The model, preview and strips stay
-        exactly as they are — everything keeps working underneath."""
-        self._set_cloak(True)
-        # set_cloaked already blanked the operator live views; OBS takes
-        # its blank here. Shared display -> one live screen, so EVERY set
-        # must blank (leaving another tab's outputs on air is how a cloaked
-        # deck still showed scripture).
+    def _sync_motion_button(self):
+        """Mirror the shared Out/In state on the live-panel button."""
+        self.live_preview.set_motion_state(self._display.motion)
+
+    def _on_motion_toggle(self):
+        """Out plays exit and holds; In replays entry from that frame."""
+        if self._display.cloaked:
+            return
         from core.outputs import shared_display_enabled
-        self._broadcast_to_ws({"action": "clear"}, self._current_display,
-                              scope_all=shared_display_enabled())
+        from core.output_router import send_action
+        machine = self._display.motion
+        actions = (machine.out() if machine.toggle_target == "out"
+                   else machine.enter())
+        # The content's owner drives its own output set (shared display can
+        # be showing scripture while the operator stands in SLIDES).
+        owner = self._display.content_owner_key()
+        for action in actions:
+            # Operator live view renders the same action, then OBS.
+            self.live_preview.live_view.motion(action["action"])
+            send_action(owner, action, scope_all=False)
+        self._sync_motion_button()
+
+    def _cloak_now(self):
+        """Blank the live screen INSTANTLY; everything stays working.
+
+        Cloak posts {"action": "cloak"} (no exit). Shared display -> one
+        live screen, so every active set blanks. Programmatic clear callers
+        keep {"action": "clear"} and its existing exit behaviour.
+        """
+        self._set_cloak(True)
+        from core.outputs import shared_display_enabled
+        from core.output_router import send_action
+        send_action("SLIDES", {"action": "cloak"},
+                    scope_all=shared_display_enabled())
         logger.info("Display cloaked")
 
     def _uncloak_now(self):
-        """Reveal whatever is current NOW (never a stale recall).
+        """Restore the covered state instantly: shown content, or still Out.
 
-        Replays the stored payload rather than rebuilding it: the stored
-        one carries the originating output theme, so a verse cloaked in
-        SCRIPTURE does not come back wearing this tab's slide/verse map.
+        Replays the stored payload (which carries the originating output
+        theme) while still muted, then sends the uncloak action so no entry
+        plays. If Out was held, uncloak reveals nothing.
         """
-        self._set_cloak(False)
+        from core.output_router import send_action
+        if self._display.motion.covered_name != "shown":
+            self._set_cloak(False)
+            send_action("SLIDES", {"action": "uncloak", "reveal": False},
+                        scope_all=False)
+            logger.info("Display uncloaked to blank (Out was held)")
+            return
         stored = self._display.matching_live_output_payload()
-        if stored is not None and self._current_display:
-            payload = stored
-            self._display.publish_live(
-                payload, self._current_display,
-                self._display.live_sched_uid,
-                self._display.live_from_schedule)
-            self._broadcast_to_ws(payload, self._current_display,
-                                  preserve_theme=True)
-        elif self._current_display:
+        payload = stored
+        if payload is None and self._current_display:
             payload = self._payload_for_display(self._current_display)
+        if payload is not None:
             self._display.publish_live(
                 payload, self._current_display,
                 self._display.live_sched_uid,
                 self._display.live_from_schedule)
-            self._broadcast_to_ws(payload, self._current_display)
+            silent = dict(payload)
+            silent["silent"] = True
+            send_action("SLIDES", silent, scope_all=False)
+        self._set_cloak(False)
+        send_action("SLIDES", {"action": "uncloak", "reveal": True},
+                    scope_all=False)
         if self._current_display:
             logger.info("Display uncloaked")
 

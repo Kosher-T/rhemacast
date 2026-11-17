@@ -209,6 +209,43 @@ THEME_PREVIEW_REPLAY_DEBOUNCE_MS = 300
 THEME_PREVIEW_REPLAY_LOOP_MS = 3000
 
 
+# ─── Theme Designer Columns ─────────────────────────────────────────────────
+
+# Three-column body: properties | preview | animations/JSON. The defaults are
+# the shipped widths and must not drift. Drags clamp to min/max, and the
+# preview keeps its own minimum before either side is allowed to take space.
+DESIGNER_LEFT_DEFAULT_WIDTH = 260
+DESIGNER_LEFT_MIN_WIDTH = 240
+DESIGNER_LEFT_MAX_WIDTH = 480
+
+DESIGNER_RIGHT_DEFAULT_WIDTH = 300
+DESIGNER_RIGHT_MIN_WIDTH = 260
+DESIGNER_RIGHT_MAX_WIDTH = 520
+
+# The preview is never part of the give-way calculation: when the window is
+# too small the side columns shrink first, and the tab's minimum size stops
+# the window before the preview can go under this width.
+DESIGNER_PREVIEW_MIN_WIDTH = 360
+
+# Custom-painted drag handle. Wide enough to grab, narrow enough that it does
+# not read as a column of its own.
+DESIGNER_HANDLE_WIDTH = 10
+
+
+# ─── Display Motion Overlap ──────────────────────────────────────────────────
+# When a theme selects `overlap` for motion.in_out or motion.transition, the
+# outgoing pair starts at t=0 and the incoming pair starts this many
+# milliseconds later, stacked above it. 200ms is one third of the 600ms
+# default animation: the outgoing move is unmistakable before the incoming
+# begins, and the whole pair still finishes in about 800ms instead of the
+# 1200ms sequential sum. Themes may override it under
+# motion.overlap_in_offset_ms; 0 starts both phases together, and 2000ms is
+# longer than any shipped phase while still bounded.
+OVERLAP_IN_OFFSET_MS = 200
+OVERLAP_IN_OFFSET_MIN_MS = 0
+OVERLAP_IN_OFFSET_MAX_MS = 2000
+
+
 # ─── Queue Depths & Backpressure ─────────────────────────────────────────────
 
 # Max pending 100ms PCM audio chunks (500 chunks = 50 seconds of audio buffer)

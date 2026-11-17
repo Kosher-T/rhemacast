@@ -1191,6 +1191,7 @@ class MainWindow(QMainWindow):
         # eventFilter() below, which runs before delivery, instead.
         action_handlers = {
             "clear_recall": self._hotkey_clear,
+            "out_in_toggle": self._hotkey_out_in,
             "fts_search": self._hotkey_fts_search,
             "fuzzy_search": self._hotkey_fuzzy_search,
             "next_verse": self._hotkey_next_verse,
@@ -1235,6 +1236,7 @@ class MainWindow(QMainWindow):
 
     _HOTKEY_DEFAULTS = {
         "clear_recall": "Esc",
+        "out_in_toggle": "F8",
         "fts_search": "Ctrl+Shift+F",
         "fuzzy_search": "Ctrl+Shift+S",
         "next_verse": "Right",
@@ -1691,6 +1693,12 @@ class MainWindow(QMainWindow):
         tab = self._active_workspace_tab()
         if tab and hasattr(tab, "live_preview"):
             tab.live_preview.clear_recall.emit()
+
+    def _hotkey_out_in(self):
+        """F8: Out/In toggle on the active display tab's shared screen."""
+        tab = self._active_workspace_tab()
+        if tab and hasattr(tab, "live_preview"):
+            tab.live_preview.motion_toggle.emit()
 
     def _hotkey_navigate_scripture(self):
         """Switch to SCRIPTURE and focus the navigator book field for typing."""

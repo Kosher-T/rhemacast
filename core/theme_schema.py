@@ -860,8 +860,7 @@ def validate_animation_definition(raw: Any, name: str, *, path: str,
         return None
     typ = raw.get("type")
     if typ not in ANIMATION_SPECS:
-        report.warn(f"{path}.type", "unknown animation type", typ,
-                    "fade_in")
+        report.warn(f"{path}.type", "unknown animation type", typ)
         return None
     spec = ANIMATION_SPECS[typ]
     out: dict = {"type": typ}
@@ -987,25 +986,32 @@ def _validate_animation_library(raw: Any, *, path: str,
 
 def _normalize_slot(raw: Any, *, path: str, phase: str,
                     report: ThemeReport) -> Optional[dict]:
-    """One phase value -> None, {"use": name, ...}, or an inline definition."""
-    if raw is None or raw == "none":
+    """One phase value -> None, {"use": name, ...}, or an inline definition.
+
+    Absent, blank, null and unknown slots mean no animation. A warning may be
+    reported, but the normalizer never invents a fade to fill the slot.
+    """
+    if raw is None:
         return None
     if isinstance(raw, str):
-        if _ANIM_NAME_RE.match(raw):
-            return {"use": raw}
-        report.warn(path, "invalid animation name", raw, phase and "fade_in")
-        return {"use": "fade_in" if phase != "out" else "fade_out"}
+        text = raw.strip()
+        if not text or text.lower() == "none":
+            return None
+        if _ANIM_NAME_RE.match(text):
+            return {"use": text}
+        report.warn(path, "invalid animation name", raw)
+        return None
     if not isinstance(raw, dict):
-        report.warn(path, "invalid animation slot", type(raw).__name__,
-                    "fade_in" if phase != "out" else "fade_out")
-        return {"use": "fade_in" if phase != "out" else "fade_out"}
+        report.warn(path, "invalid animation slot", type(raw).__name__)
+        return None
+    if not raw:
+        return None
     if "use" in raw:
         name = raw.get("use")
-        if not isinstance(name, str) or not _ANIM_NAME_RE.match(name):
-            report.warn(f"{path}.use", "invalid animation name", name,
-                        "fade_in" if phase != "out" else "fade_out")
-            return {"use": "fade_in" if phase != "out" else "fade_out"}
-        out = {"use": name}
+        if not isinstance(name, str) or not _ANIM_NAME_RE.match(name.strip()):
+            report.warn(f"{path}.use", "invalid animation name", name)
+            return None
+        out = {"use": name.strip()}
         if "duration_ms" in raw:
             out["duration_ms"] = coerce_number(
                 raw["duration_ms"], _SLOT_DURATION.default,
@@ -1025,12 +1031,10 @@ def _normalize_slot(raw: Any, *, path: str, phase: str,
         if extra:
             report.note(path, "ignoring unknown slot keys", sorted(extra))
         return out
-    # Inline definition
-    inline = validate_animation_definition(raw, "inline", path=path,
-                                           report=report)
-    if inline is None:
-        return {"use": "fade_in" if phase != "out" else "fade_out"}
-    return inline
+    # Inline definition. An unknown type drops the slot instead of replacing
+    # it with a fade.
+    return validate_animation_definition(raw, "inline", path=path,
+                                         report=report)
 
 
 def _normalize_unit_look(raw: Any, *, path: str,
@@ -1125,18 +1129,97 @@ def _normalize_split(raw: Any, *, path: str, report: ThemeReport) -> Optional[di
     return out
 
 
+PROPERTY_TRACK_PHASES = (
+    "entry", "sustain", "transition_in", "transition_out", "out",
+)
+_PROPERTY_TRACK_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+_BORDER_DRAW_RE = re.compile(
+    r"^(?:clockwise|counterclockwise|counter-clockwise"
+    r"|start:(?:top|right|bottom|left)"
+    r"(?:\s+(?:clockwise|counterclockwise|counter-clockwise))?)$")
+
+
+def _normalize_property_tracks(raw: Any, *, path: str,
+                               report: ThemeReport) -> dict:
+    """Validate `animation.properties` tracks, preserving unknown ones."""
+    if not isinstance(raw, dict):
+        report.warn(path, "properties must be an object",
+                    type(raw).__name__)
+        return {}
+    out: dict = {}
+    for track_id, raw_track in raw.items():
+        track_id = str(track_id)
+        tpath = f"{path}.{track_id}"
+        if not _PROPERTY_TRACK_RE.match(track_id):
+            report.warn(tpath, "invalid property track id", track_id)
+            continue
+        if not isinstance(raw_track, dict):
+            report.warn(tpath, "property track must be an object",
+                        type(raw_track).__name__)
+            continue
+        phase = raw_track.get("phase")
+        if phase not in PROPERTY_TRACK_PHASES:
+            report.warn(f"{tpath}.phase", "property track needs a valid phase",
+                        phase, "entry")
+            continue
+        track = copy.deepcopy(raw_track)
+        track["phase"] = phase
+        track["duration_ms"] = coerce_number(
+            track.get("duration_ms", 600), 600, 0, 5000,
+            path=f"{tpath}.duration_ms", report=report, integer=True,
+            label="duration_ms")
+        track["delay_ms"] = coerce_number(
+            track.get("delay_ms", 0), 0, 0, 5000,
+            path=f"{tpath}.delay_ms", report=report, integer=True,
+            label="delay_ms")
+        track["easing"] = coerce_enum(
+            track.get("easing"), EASINGS, "ease-out",
+            path=f"{tpath}.easing", report=report)
+        if track_id == "border.draw":
+            direction = str(track.get("direction", "clockwise")).strip().lower()
+            direction = direction.replace("counter-clockwise",
+                                          "counterclockwise")
+            if not _BORDER_DRAW_RE.match(direction):
+                report.warn(f"{tpath}.direction",
+                            "invalid border draw direction",
+                            track.get("direction"), "clockwise")
+                direction = "clockwise"
+            track["direction"] = direction
+            track["from"] = coerce_number(
+                track.get("from", 0), 0, 0, 1,
+                path=f"{tpath}.from", report=report, label="from")
+            track["to"] = coerce_number(
+                track.get("to", 1), 1, 0, 1,
+                path=f"{tpath}.to", report=report, label="to")
+            if "speed" in track and track["speed"] is not None:
+                track["speed"] = coerce_number(
+                    track["speed"], 0, 10, 5000,
+                    path=f"{tpath}.speed", report=report, label="speed")
+            else:
+                track.pop("speed", None)
+        else:
+            report.note(tpath, "unknown property track preserved", track_id)
+        out[track_id] = track
+    return out
+
+
 def normalize_animation_assignment(raw: Any, *, path: str,
                                    report: ThemeReport,
                                    allow_split: bool = True) -> dict:
     if raw is None:
         return {}
-    if raw == "none":
+    if isinstance(raw, str) and raw.strip().lower() == "none":
         return {}
     if not isinstance(raw, dict):
         report.warn(path, "animation assignment must be an object",
                     type(raw).__name__)
         return {}
     out: dict = {}
+    if "properties" in raw:
+        properties = _normalize_property_tracks(
+            raw["properties"], path=f"{path}.properties", report=report)
+        if properties:
+            out["properties"] = properties
     if "split" in raw:
         if allow_split:
             split = _normalize_split(raw["split"], path=f"{path}.split",
@@ -1150,6 +1233,11 @@ def normalize_animation_assignment(raw: Any, *, path: str,
                                report=report)
         if slot is not None:
             out["entry"] = slot
+    if "sustain" in raw:
+        slot = _normalize_slot(raw["sustain"], path=f"{path}.sustain",
+                               phase="sustain", report=report)
+        if slot is not None:
+            out["sustain"] = slot
     if "out" in raw:
         slot = _normalize_slot(raw["out"], path=f"{path}.out", phase="out",
                                report=report)
@@ -1158,7 +1246,8 @@ def normalize_animation_assignment(raw: Any, *, path: str,
     if "transition" in raw:
         value = raw["transition"]
         if isinstance(value, dict) and ("out" in value or "in" in value):
-            trans: dict = {}
+            trans: dict = {k: copy.deepcopy(v) for k, v in value.items()
+                           if k not in ("out", "in")}
             if "out" in value:
                 slot = _normalize_slot(value["out"], path=f"{path}.transition.out",
                                        phase="out", report=report)
@@ -1176,9 +1265,12 @@ def normalize_animation_assignment(raw: Any, *, path: str,
                                    report=report)
             if slot is not None:
                 out["transition"] = {"in": slot}
-    extra = set(raw) - {"entry", "out", "transition"}
+    extra = set(raw) - {"entry", "sustain", "out", "transition",
+                        "properties", "split"}
+    for key in sorted(extra):
+        out[key] = copy.deepcopy(raw[key])
     if extra:
-        report.note(path, "ignoring unknown animation keys", sorted(extra))
+        report.note(path, "preserving unknown animation keys", sorted(extra))
     return out
 
 
@@ -1612,16 +1704,14 @@ def _resolve_animation_refs(theme: dict, local: dict,
 
     referenced: dict = {}
 
-    def resolve_slot(slot: dict, path: str, phase: str) -> dict:
+    def resolve_slot(slot: dict, path: str, phase: str) -> Optional[dict]:
         if "use" not in slot:
             return slot
         name = slot["use"]
         definition = available.get(name)
         if definition is None:
-            fallback = "fade_out" if phase == "out" else "fade_in"
-            report.warn(path, "unknown animation name", name, fallback)
-            name = fallback
-            definition = BUILTIN_ANIMATIONS[fallback]
+            report.warn(path, "unknown animation name", name)
+            return None
         referenced[name] = copy.deepcopy(definition)
         return {"use": name, **{k: v for k, v in slot.items() if k != "use"}}
 
@@ -1629,19 +1719,44 @@ def _resolve_animation_refs(theme: dict, local: dict,
         if not isinstance(anim, dict):
             return
         if "entry" in anim:
-            anim["entry"] = resolve_slot(anim["entry"],
-                                         f"{path}.animation.entry", "entry")
+            slot = resolve_slot(anim["entry"],
+                                f"{path}.animation.entry", "entry")
+            if slot is None:
+                anim.pop("entry")
+            else:
+                anim["entry"] = slot
+        if "sustain" in anim:
+            slot = resolve_slot(
+                anim["sustain"], f"{path}.animation.sustain", "entry")
+            if slot is None:
+                anim.pop("sustain")
+            else:
+                anim["sustain"] = slot
         if "out" in anim:
-            anim["out"] = resolve_slot(anim["out"], f"{path}.animation.out",
-                                       "out")
+            slot = resolve_slot(anim["out"],
+                                f"{path}.animation.out", "out")
+            if slot is None:
+                anim.pop("out")
+            else:
+                anim["out"] = slot
         trans = anim.get("transition")
         if isinstance(trans, dict):
             if "out" in trans:
-                trans["out"] = resolve_slot(
+                slot = resolve_slot(
                     trans["out"], f"{path}.animation.transition.out", "out")
+                if slot is None:
+                    trans.pop("out")
+                else:
+                    trans["out"] = slot
             if "in" in trans:
-                trans["in"] = resolve_slot(
+                slot = resolve_slot(
                     trans["in"], f"{path}.animation.transition.in", "in")
+                if slot is None:
+                    trans.pop("in")
+                else:
+                    trans["in"] = slot
+            if not trans:
+                anim.pop("transition")
         split = anim.get("split")
         if isinstance(split, dict):
             for part in ("first", "rest"):
@@ -1655,6 +1770,63 @@ def _resolve_animation_refs(theme: dict, local: dict,
             walk(block.get("animation"),
                  f"containers[{index}].blocks.{block_id}")
     theme["animations"] = referenced
+
+
+def _validate_motion(raw: Any, *, report: ThemeReport) -> dict:
+    """Validate the theme's ``motion`` object (§ motion settings).
+
+    Defaults reproduce the pre-setting behavior: out then in, old content
+    out then new content in, sustain paused while cloaked.
+    """
+    from core.constants import (
+        OVERLAP_IN_OFFSET_MAX_MS,
+        OVERLAP_IN_OFFSET_MIN_MS,
+        OVERLAP_IN_OFFSET_MS,
+    )
+    defaults = {
+        "in_out": "sequential",
+        "transition": "sequential",
+        "overlap_in_offset_ms": OVERLAP_IN_OFFSET_MS,
+        "sustain_when_cloaked": "pause",
+        "deck_steps": "out_in",
+    }
+    if not isinstance(raw, dict):
+        if raw is not None:
+            report.warn("motion", "motion must be an object",
+                        type(raw).__name__, "default")
+        return dict(defaults)
+    out = dict(defaults)
+    try:
+        from core.motion_state import (DECK_STEP_VALUES, IN_OUT_VALUES,
+                                       SUSTAIN_VALUES, TRANSITION_VALUES)
+    except Exception:  # pragma: no cover - import cycle guard
+        IN_OUT_VALUES = ("sequential", "overlap")
+        TRANSITION_VALUES = ("sequential", "overlap")
+        SUSTAIN_VALUES = ("pause", "run")
+        DECK_STEP_VALUES = ("out_in", "instant")
+    out["in_out"] = coerce_enum(
+        raw.get("in_out", defaults["in_out"]), IN_OUT_VALUES,
+        defaults["in_out"], path="motion.in_out", report=report)
+    out["transition"] = coerce_enum(
+        raw.get("transition", defaults["transition"]), TRANSITION_VALUES,
+        defaults["transition"], path="motion.transition", report=report)
+    out["overlap_in_offset_ms"] = coerce_number(
+        raw.get("overlap_in_offset_ms", defaults["overlap_in_offset_ms"]),
+        defaults["overlap_in_offset_ms"],
+        OVERLAP_IN_OFFSET_MIN_MS, OVERLAP_IN_OFFSET_MAX_MS,
+        path="motion.overlap_in_offset_ms", report=report, integer=True,
+        label="overlap_in_offset_ms")
+    out["sustain_when_cloaked"] = coerce_enum(
+        raw.get("sustain_when_cloaked", defaults["sustain_when_cloaked"]),
+        SUSTAIN_VALUES, defaults["sustain_when_cloaked"],
+        path="motion.sustain_when_cloaked", report=report)
+    out["deck_steps"] = coerce_enum(
+        raw.get("deck_steps", defaults["deck_steps"]), DECK_STEP_VALUES,
+        defaults["deck_steps"], path="motion.deck_steps", report=report)
+    extra = set(raw) - set(defaults)
+    if extra:
+        report.note("motion", "ignoring unknown motion keys", sorted(extra))
+    return out
 
 
 def _validate_top(raw: dict, *, kind: str, name: str,
@@ -1680,6 +1852,7 @@ def _validate_top(raw: dict, *, kind: str, name: str,
                         kind)
     out["kind"] = kind
     out["canvas"] = _validate_canvas(raw.get("canvas"), report=report)
+    out["motion"] = _validate_motion(raw.get("motion"), report=report)
 
     raw_containers = raw.get("containers")
     if isinstance(raw_containers, dict):
@@ -1748,7 +1921,7 @@ def _validate_top(raw: dict, *, kind: str, name: str,
         }
     unknown = set(raw) - {
         "schema_version", "name", "label", "description", "author", "kind",
-        "canvas", "containers", "animations", "slide",
+        "canvas", "motion", "containers", "animations", "slide",
     }
     if unknown:
         report.note("", "ignoring unknown top-level keys", sorted(unknown))
@@ -1870,6 +2043,9 @@ def _safe_theme() -> dict:
         "kind": "scripture",
         "canvas": {"width": 1920, "height": 1080,
                    "background": "transparent", "fit": "contain"},
+        "motion": {"in_out": "sequential", "transition": "sequential",
+                   "overlap_in_offset_ms": 200,
+                   "sustain_when_cloaked": "pause"},
         "containers": [{
             "id": "main",
             "label": "Verse",

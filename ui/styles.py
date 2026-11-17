@@ -357,9 +357,12 @@ MINIMAL_SCROLLBAR_CSS = _scrollbar_qss()
 def apply_minimal_scrollbar(view):
     """Give any scroll area / item view the shared token scrollbar:
     permanently reserved lane (never pops in and shoves content), flat
-    thumb, no arrows. Appends to the widget's own stylesheet."""
+    thumb, no arrows. Appends to the widget's own stylesheet so the call
+    also works outside ``RhemaCastApp`` (tests, previews)."""
     from PyQt6.QtCore import Qt
-    view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+
+    from ui.scrollbars import reserve_scrollbar_lane
+    reserve_scrollbar_lane(view, horizontal=False)
     view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     existing = view.styleSheet() or ""
     if "QScrollBar:vertical" not in existing:

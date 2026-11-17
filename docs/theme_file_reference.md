@@ -37,20 +37,28 @@ Theme Designer.
 |---|---|---|---|
 | `schema_version` | integer | `1` when absent | Current version is `2`. Absent or `1` runs v1 migration. A value above `2` is fatal and returns `SAFE_THEME`. Numeric strings are accepted. |
 | `name` | string | filename stem | Max 64. Must match `^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$`. Loader supplies the filename stem when the key is absent. |
-| `label` | string | `name` | Max 120. Human-facing theme name. |
-| `description` | string | `""` | Max 500. |
+| `label` | string | prettified filename stem | Max 120. Human-facing theme name — this is the text every picker shows, and the Theme Designer's editable name field. Editing it never renames the file. Empty or absent falls back to the filename stem with `_`/`-` split into words and each word capitalised (`default_typewriter` → `Default Typewriter`). Duplicate labels stay legal; pickers add the ID in muted text to disambiguate. |
+| `description` | string | `""` | Max 500. Optional one-line blurb shown under the label in the Theme Designer's picker (truncated, never wrapped). |
 | `author` | string | `""` | Max 120. |
 | `kind` | enum | folder kind | `scripture` or `freeform`. The folder (or loader argument) is authoritative; a disagreeing value only warns. New themes must use the matching folder. |
 | `canvas` | object | see §2 | Design surface and background. |
+| `motion` | object | see §3.4 | Out/In ordering, transition ordering, overlap offset and sustain-while-cloaked policy. Unknown keys are noted and dropped. |
 | `containers` | array | `[{"id":"main"}]` | 1–16 containers. An object map is repaired to an array. More than 16 are truncated. Duplicate IDs get an `_index` suffix. |
 | `animations` | object | `{}` | Named animation definition library; see §3. Definitions are validated here and referenced by name from slots. |
-| `slide` | object | absent | Freeform presentation switches; see §1.1. |
+| `slide` | object | absent | Freeform presentation switches; see §1.2. |
+| `sort_order` | number | absent | Authoring-only ordering hint for pickers and the Theme Designer dropdown. Numeric strings are accepted; anything else is ignored. Lower values lead, and themes that define it sort ahead of themes that do not — those fall back to A→Z by resolved `label` (case-insensitive), then by ID. Read from the raw document and **not** part of the resolved theme, so it survives a designer save without affecting rendering. |
 
 Any other top-level key is dropped from the resolved theme and reported as a
 note. Save/round-trip the **raw** document if the designer must preserve
 authoring-only metadata.
 
-### 1.1 `slide`
+### 1.1 Identity, label and filename
+
+- **ID** — the filename stem (`default_typewriter.json` → `default_typewriter`). It is permanent: it is the dropdown value, the settings key, and what every other module stores. Nothing in the app renames a theme file.
+- **`name`** — the v2 document key that must match the stem; the loader supplies the stem when absent.
+- **`label`** — display only. Editing it changes what the operator reads, never the ID or the path.
+
+### 1.2 `slide`
 
 | Property | Type | Default | Rules |
 |---|---|---|---|
@@ -63,7 +71,7 @@ authoring-only metadata.
 | `width` | integer | `1920` | 320–7680. Design-space width. |
 | `height` | integer | `1080` | 240–4320. Design-space height. |
 | `background` | paint | `transparent` | Color or safe gradient. `@palette` tokens expand here. |
-| `fit` | enum | `contain` | `contain` scales the design canvas into the output; `none` uses the output viewport without canvas scaling. |
+| `fit` | enum | `contain` | `contain` scales the design canvas into the output; `none` uses the output viewport without canvas scaling. Both renderers honour it, including the Theme Designer preview: with `none` a canvas larger than the preview panel is shown at its authored size and clipped, exactly as OBS clips it when the browser source is smaller than the canvas. |
 
 ## 3. Animation library (`animations`)
 
@@ -122,6 +130,50 @@ uses the default object. An object supports:
 | `blink_ms` | integer | `500` | 0–2000. |
 | `hide_after_ms` | integer | `600` | 0–5000. |
 
+### 3.4 `motion` — ordering and cloak policy
+
+| Property | Type | Default | Rules |
+|---|---|---|---|
+| `in_out` | enum | `sequential` | `sequential` or `overlap`. Ordering of a paired Out then In. `overlap` plays the outgoing phase at t=0 and starts the incoming phase `motion.overlap_in_offset_ms` later, stacked above it. The Designer's Motion section edits the offset and names it in the note. |
+| `transition` | enum | `sequential` | `sequential` or `overlap`. `sequential` plays old content out, then new content in. `overlap` uses the same t=0 outgoing start and `motion.overlap_in_offset_ms` for the transition pair. |
+| `overlap_in_offset_ms` | integer | `200` | 0 to 2000 ms. Delay before the incoming phase starts while either ordering is `overlap`. `0` starts both phases together; values outside the range are clamped by `normalize_theme`. The incoming theme supplies the value; a theme without it falls back to `RC_ANIM_DEFAULTS.overlap_in_offset_ms` (200). It has no effect on sequential pairings. |
+| `sustain_when_cloaked` | enum | `pause` | `pause` stops sustain while cloaked; `run` keeps it alive behind the cloak so uncloak can reveal a mid-sustain frame. |
+| `deck_steps` | enum | `out_in` | `out_in` follows the normal pairing rule when Prev/Next moves within a deck. `instant` switches immediately when the old and new payloads have the same non-null `deck_id` and both are non-scripture; scripture pairs and cross-deck jumps are unaffected. |
+
+These defaults reproduce pre-setting behavior. Cloak is an instant blank and
+is independent of `out`; clear keeps the existing animated exit.
+
+**Pairing rule.** Replacing the live item compares display kinds
+(`scripture`, `freeform`, later `image`/`video`; unlabelled is `other`):
+scripture replaced by scripture plays `transition.out` on the old content and
+`transition.in` on the new, regardless of either theme. Every other pairing
+plays `out` on the old and `entry` on the new. A missing phase switches
+instantly — an exit or entry is never substituted for a transition, or the
+reverse. The incoming content's theme supplies the ordering (`motion.transition`
+for scripture pairs, `motion.in_out` for the rest); each phase's animation
+comes from the theme of the content that plays it. A display payload with no
+usable `kind` is stamped `other` at the WebSocket boundary rather than
+rejected, so legacy senders keep working and get the OUT/IN pairing.
+
+**Deck stepping.** A freeform theme that sets `motion.deck_steps` to
+`instant` skips the OUT/IN pair when the incoming and outgoing payloads carry
+the same `deck_id`. This is evaluated by the display renderer, which sees the
+ids; the Python motion machine still settles to `shown` after publish. The
+default `out_in` keeps the ordinary pairing rule.
+
+**Overlap.** Both orderings accept `overlap`. The outgoing phase starts at
+t=0 on a frozen copy of the previous content. The incoming phase starts
+`motion.overlap_in_offset_ms` later (0 to 2000 ms, default 200 from
+`core/constants.py`) and paints above that copy. The value is per theme; the
+generated `RC_ANIM_DEFAULTS.overlap_in_offset_ms` is only the fallback for a
+theme that does not set it.
+The incoming content is rendered immediately but stays hidden until its
+offset, so a missing incoming slot appears exactly at the offset. If the
+theme declares no outgoing animation the incoming phase starts at 0, so the
+stage never goes blank and no fallback animation is invented. Overlap applies
+to v2 themes; a v1 theme keeps the sequential path. `prefers-reduced-motion:
+reduce` still switches instantly and reports the plan as sequential.
+
 ## 4. Animation assignments
 
 Container and block `animation` values use the same assignment grammar.
@@ -130,10 +182,12 @@ Container and block `animation` values use the same assignment grammar.
 |---|---|---|---|
 | `animation` | object / `"none"` | absent | `"none"` or `{}` disables animation. A string other than `"none"` is invalid. |
 | `entry` | slot | absent | Runs when the element first appears. |
-| `transition` | object / slot | absent | `{"in": slot, "out": slot}`; a single slot is treated as `transition.in`. |
+| `sustain` | slot | absent | Loops while the element is visible and idle. Stops on exit, clear, a new transition, or cloak (unless `motion.sustain_when_cloaked` is `run`). |
+| `transition` | object / slot | absent | `{"in": slot, "out": slot}`; a single slot is treated as `transition.in`. `{}` disables it. |
 | `transition.in` | slot | absent | Runs when content changes while the element is visible. |
-| `transition.out` | slot | absent | Runs before replacement content is shown. |
+| `transition.out` | slot | absent | Runs before replacement content is shown, or concurrently with it under `motion.*: overlap`. |
 | `out` | slot | absent | Runs when the element is cleared/hidden. |
+| `properties` | object | absent | Typed property tracks keyed `area.property`; see §4.2. |
 
 `transition` accepts the sub-keys `in` and `out`, both optional. A **slot** is one of:
 
@@ -141,11 +195,14 @@ Container and block `animation` values use the same assignment grammar.
 2. An object `{ "use": "name", "duration_ms": ..., "delay_ms": ..., "easing": ... }`.
    Only those four keys are read; the three overrides are optional.
 3. An inline definition object with a `type` and its definition properties.
-4. `"none"` to disable that phase.
+4. `"none"`, `""`, `null`, `{}` or an unknown name to disable that phase.
 
-Unknown slot names fall back to `fade_in` (`fade_out` for out phases) with a
-warning. `split` is only valid on block animations, not on a container or
-`body` animation; those are dropped with a note.
+An absent, empty, null, `"none"` or unknown slot is **no animation**. It is
+dropped with a warning where the value is visibly wrong; nothing is substituted
+and nothing changes what is painted. Unknown assignment keys are preserved on
+round-trip and are never treated as animation. `split` is only valid on block
+animations, not on a container or `body` animation; those are dropped with a
+note.
 
 The resolved theme's `animations` map contains **only definitions actually
 referenced by slots** (and by split `first`/`rest` slots). It is not a copy of
@@ -187,6 +244,64 @@ typewriter phase, or more than 160 units.
 Line grouping uses the real rendered line boxes; the first rendered line is
 always unit 0. Word units are whitespace tokens. The verse number is folded
 into the first line rather than becoming its own unit.
+
+### 4.2 Property tracks (`animation.properties`)
+
+Property tracks animate values the keyframe channels cannot reach. They sit
+beside the phase slots, so a container can keep its `entry` keyframes and add
+a border draw in the same assignment:
+
+```json
+"animation": {
+  "entry": {"use": "fade_up"},
+  "properties": {
+    "border.draw": {
+      "phase": "entry",
+      "direction": "clockwise",
+      "speed": 900,
+      "from": 0,
+      "to": 1
+    }
+  }
+}
+```
+
+| Property | Type | Default | Rules |
+|---|---|---|---|
+| `properties` | object | absent | Keys are `area.property`, for example `border.draw`. Unknown track ids and unknown keys inside a track are preserved, not dropped. |
+| `properties.<id>.phase` | enum | required | `entry`, `sustain`, `transition_in`, `transition_out`, or `out`. A track without a valid phase is dropped. |
+| `properties.<id>.duration_ms` | integer | `600` | 0–5000. |
+| `properties.<id>.delay_ms` | integer | `0` | 0–5000. |
+| `properties.<id>.easing` | enum | `ease-out` | `ease-out`, `ease-in`, `ease-in-out`, `linear`, `spring`, or `smooth`. |
+
+A track runs only in its named phase: `entry` with the entry slot,
+`transition_in` with `transition.in`, `transition_out` with
+`transition.out`, `sustain` while the element is shown, and `out` on
+clear/hide. The phase duration is the maximum of the slot duration and every
+track's `delay_ms + duration_ms`, so overlap timing and the Designer preview
+wait for the track. Tracks run independently of `split`; a split assignment
+still runs its keyframes per unit.
+
+#### `border.draw`
+
+Draws the container border as one rounded SVG path, revealed by animating
+`stroke-dashoffset`. The overlay is pointer-transparent and sits inside the
+container padding box, so it changes neither layout nor hit testing. The
+static border is hidden with a transparent border colour while the overlay
+owns the ring and restored when the draw finishes or is cancelled.
+
+| Property | Type | Default | Rules |
+|---|---|---|---|
+| `direction` | string | `clockwise` | `clockwise`, `counterclockwise`, or `start:top`, `start:right`, `start:bottom`, `start:left` optionally followed by `clockwise` or `counterclockwise`. |
+| `speed` | number | absent | 10–5000 px per second. When present it overrides `duration_ms`; the rendered duration is `perimeter / speed`, clamped to 0–5000 ms. |
+| `from` | number | `0` | 0–1 draw progress at the start. |
+| `to` | number | `1` | 0–1 draw progress at the end. A `to` below 1 leaves the partial overlay in place until the next phase or payload. |
+
+`border.draw` uses the computed border width, colour and radius. The stroke
+is a single colour taken from the first opaque side, and dashed or dotted
+borders draw as a solid sweep, then return to their authored style when the
+overlay is removed. Reduced motion and a `duration_ms` of 0 leave the static
+border visible. A container with no border width skips the track.
 
 ## 5. Containers (`containers[]`)
 

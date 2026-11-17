@@ -538,6 +538,7 @@ BUILT_IN_BINDINGS = {
 
 DEFAULT_BINDINGS = {
     "clear_recall": ("Cloak / Uncloak", "Blank live output (cloak) or reveal current", "Esc", "global"),
+    "out_in_toggle": ("Out / In", "Play the exit and hold, or replay entry from the held frame", "F8", "global"),
     "next_verse": ("Next Verse", "Next verse (or next slide within the deck)", "Right", "global"),
     "prev_verse": ("Previous Verse", "Previous verse (or previous slide within the deck)", "Left", "global"),
     "next_schedule_item": ("Next Item", "Next item in the schedule", "Alt+Right", "global"),

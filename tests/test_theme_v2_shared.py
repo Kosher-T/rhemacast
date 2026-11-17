@@ -616,7 +616,7 @@ def test_a_malformed_shared_file_does_not_break_the_theme(shared):
     assert "unknown shared border name" in _joined(report)
 
 
-def test_a_dropped_shared_animation_falls_back_per_phase(shared):
+def test_a_dropped_shared_animation_disables_the_slot(shared):
     shared.write("animations", {"schema_version": 2, "animations": {
         "verse_rise": {"type": "nope", "duration_ms": 400},
     }}, mtime=os.path.getmtime(shared.root / "animations.json") + 30)
@@ -628,8 +628,8 @@ def test_a_dropped_shared_animation_falls_back_per_phase(shared):
         }],
     })
     animation = resolved["containers"][0]["animation"]
-    assert animation["entry"] == {"use": "fade_in"}
-    assert animation["out"] == {"use": "fade_out"}
+    assert "entry" not in animation
+    assert "out" not in animation
     assert "unknown animation name" in _joined(report)
 
 

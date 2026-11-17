@@ -134,8 +134,16 @@ class ThemePreview(QWidget):
         verse = SAMPLE_VERSES.get(verse_key, SAMPLE_VERSES["popup"])
         theme = (self._theme_data if theme_data is None
                  else theme_data)
+        resolved = (self._resolved_theme(theme)
+                    if theme is not None else None)
+        # Designer samples are scripture verses unless the theme is
+        # freeform: the pairing rule uses this label, not the theme name.
+        kind = (resolved or {}).get("kind") if isinstance(resolved, dict) else None
+        if kind not in ("scripture", "freeform"):
+            kind = "scripture"
         return {
             "action": "display",
+            "kind": kind,
             "text": verse["text"],
             "reference": verse["reference"],
             "translation": verse["translation"],
@@ -143,7 +151,7 @@ class ThemePreview(QWidget):
             "book": verse.get("book", ""),
             "chapter": verse.get("chapter", ""),
             "verse": verse.get("verse", ""),
-            "theme_data": self._resolved_theme(theme) if theme is not None else None,
+            "theme_data": resolved,
         }
 
     def apply_theme(self, theme_data: dict, *, sample_id: str | None = None):

@@ -11,7 +11,7 @@ timing and DOM state, not just data:
 - `out` per block plays on clear before the container is hidden.
 - A rapid second update coalesces: the superseded content never renders.
 - `prefers-reduced-motion: reduce` skips every phase and renders instantly.
-- A block-level outline suppresses typewriter (fade_in fallback, no split).
+- A block-level outline suppresses typewriter without substituting a fade.
 
 Timing is driven by setTimeout in the renderer, so it stays reliable under
 Chrome's virtual clock. WAAPI playback itself is compositor-driven and may be
@@ -28,6 +28,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+from core.constants import OVERLAP_IN_OFFSET_MS as RC_OFFSET
 
 ROOT = Path(__file__).resolve().parents[1]
 CHROME = (shutil.which("google-chrome-stable")
@@ -135,7 +137,7 @@ window.__snap = function (label) {
   });
 };
 window.__payload = function (p) {
-  handlePayload({action: "display", theme_data: window.__theme, ...p});
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme, ...p});
 };
 window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
 
@@ -210,7 +212,7 @@ window.__snap = function (label) {
   });
 };
 window.__payload = function (p) {
-  handlePayload({action: "display", theme_data: window.__theme, ...p});
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme, ...p});
 };
 window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
 
@@ -261,6 +263,11 @@ def _build_page(script_path: str, *, outline: bool = False,
                       "url('file://" + str(ROOT / "display/fonts") + "/")
     html = html.replace('<link rel="stylesheet" href="themes.css">',
                         f"<style>{css}</style>")
+    # The temp page cannot resolve relative script srcs; inline the generated
+    # defaults so RC_ANIM_DEFAULTS matches the shipped OBS page.
+    defaults = (ROOT / "display/animation_defaults.js").read_text()
+    html = html.replace('<script src="animation_defaults.js"></script>',
+                        f"<script>{defaults}</script>")
     html = html.replace('<script src="display.js"></script>',
                         f"<script>{_script_text(script_path)}</script>")
     html = html.replace(
@@ -274,7 +281,8 @@ def _build_page(script_path: str, *, outline: bool = False,
 
 def _drive(script_path: str, *, reduced: bool = False,
            outline: bool = False, theme: dict | None = None,
-           driver: str = DRIVER, budget_ms: int = 15000) -> dict:
+           driver: str = DRIVER, budget_ms: int = 15000,
+           debug: bool = False) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="rc-anim-runtime-"))
     try:
         page = tmp / "page.html"
@@ -286,7 +294,8 @@ def _drive(script_path: str, *, reduced: bool = False,
                 f"--virtual-time-budget={budget_ms}", "--dump-dom"]
         if reduced:
             args.insert(1, "--force-prefers-reduced-motion")
-        out = subprocess.run(args + [page.as_uri()], capture_output=True,
+        url = page.as_uri() + ("?debug=1" if debug else "")
+        out = subprocess.run(args + [url], capture_output=True,
                              text=True, timeout=120).stdout
         found = re.findall(
             r'<script[^>]*data-rc="log"[^>]*>(.*?)</script>', out, re.S)
@@ -361,13 +370,519 @@ def test_v2_animation_reduced_motion(renderer):
 
 @pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_v2_typewriter_falls_back_under_outline(renderer):
-    """A converted outline scope cannot be re-split into spans."""
+def test_v2_typewriter_is_suppressed_under_outline(renderer):
+    """A converted outline scope cannot be re-split, so nothing animates."""
     log = _drive(renderer, outline=True)
     swapped = log["trans-swapped"]
     assert swapped["tw"] == 0
-    assert swapped["anims"] >= 1
+    assert swapped["anims"] == 0
+    assert swapped["opacity"] == "1"
     assert log["trans-done"]["tw"] == 0
+    assert log["errors"]["errs"] == []
+
+
+NO_ANIMATION_THEME = {
+    "schema_version": 2,
+    "name": "no_animation_forms",
+    "kind": "scripture",
+    "canvas": {"width": 1920, "height": 1080, "fit": "contain",
+               "background": "transparent"},
+    "containers": [{
+        "id": "main", "visible": True, "layer": 1,
+        "width": "100%", "height": "100%",
+        "position": {"anchor": "center"},
+        "opacity": 1,
+        # Every slot form the Designer can write, all inert. The empty
+        # transition object used to be normalized to fade_in.
+        "animation": {
+            "entry": None, "sustain": "", "out": "none",
+            "transition": {"in": {}, "out": "does_not_exist"},
+        },
+        "blocks": {
+            "body": {"visible": True, "valign": "center", "gap": 12,
+                     "padding": 0, "animation": {"entry": ""}},
+            "text": {"visible": True, "size": 64, "color": "#ffffff",
+                     "line_height": 1.2, "text_align": "center",
+                     "animation": {
+                         "entry": "none", "sustain": None,
+                         "transition": {"in": "does_not_exist",
+                                        "out": ""},
+                     }},
+            "reference": {"visible": True, "size": 28,
+                          "color": "#dddddd",
+                          "animation": {"entry": {"type": "explode"}}},
+            "translation": {"visible": True, "size": 24,
+                            "color": "#aaaaaa",
+                            "animation": {"out": "none"}},
+        },
+    }],
+    "animations": {},
+}
+
+NO_ANIMATION_DRIVER = r"""
+window.__log = [];
+window.__errs = [];
+window.addEventListener("error", function (e) {
+  window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
+});
+function _readFrame() {
+  const one = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      text: el.textContent, opacity: cs.opacity, visibility: cs.visibility,
+      display: cs.display, transform: cs.transform, filter: cs.filter,
+      clip: cs.clipPath,
+      anims: el.getAnimations ? el.getAnimations().length : 0,
+    };
+  };
+  return { body: one("verse-text"), ref: one("verse-ref-text"),
+           trans: one("verse-ref-translation"),
+           container: one("container"), t: performance.now() };
+}
+window.__payload = function (p) {
+  handlePayload({action: "display", kind: "scripture",
+                 theme_data: window.__theme, ...p});
+};
+window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
+window.__switch = async function (label, payload) {
+  const frames = [];
+  let stop = false;
+  const tick = () => {
+    if (stop) return;
+    frames.push(_readFrame());
+    setTimeout(tick, 16);
+  };
+  if (payload.action) handlePayload(payload);
+  else window.__payload(payload);
+  // The first read is synchronous after the update, before the next paint:
+  // this is the frame the viewer gets. Headless virtual time does not tick
+  // requestAnimationFrame, so the rest of the window samples every 16ms.
+  frames.push(_readFrame());
+  tick();
+  await window.__wait(130);
+  stop = true;
+  window.__log.push({label: label, frames: frames});
+};
+window.__run = async function () {
+  window.__payload({text: "Jesus wept.", reference: "John 11:35",
+                    translation: "KJV"});
+  await window.__wait(350);
+  await window.__switch("short-long", {
+    text: "Now it came to pass in the third year of the reign of Ahasuerus, that he made a feast unto all his princes and his servants; even Esther the queen.",
+    reference: "Esther 8:9", translation: "KJV"});
+  await window.__switch("long-short", {
+    text: "Jesus wept.", reference: "John 11:35", translation: "KJV"});
+  await window.__switch("scripture-slide", {
+    kind: "freeform", text: "Sunday morning, we gather in Your presence.",
+    reference: "", translation: ""});
+  await window.__switch("slide-scripture", {
+    kind: "scripture", text: "The Lord is my shepherd.",
+    reference: "Psalm 23:1", translation: "KJV"});
+  handlePayload({action: "clear"});
+  const clearFrame = _readFrame();
+  window.__log.push({label: "clear", frame: clearFrame});
+  await window.__wait(100);
+  window.__payload({text: "Enter his gates with thanksgiving.",
+                    reference: "Psalm 100:4", translation: "KJV"});
+  await window.__wait(200);
+  window.__log.push({label: "uncloak", frame: _readFrame()});
+  window.__log.push({label: "errors", errs: window.__errs});
+  const tag = document.createElement("script");
+  tag.type = "text/plain";
+  tag.setAttribute("data-rc", "log");
+  tag.textContent = JSON.stringify(window.__log);
+  document.body.appendChild(tag);
+};
+"""
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_no_animation_forms_paint_every_element_complete(renderer):
+    """Empty, null, none and unknown slots never dim a scripture switch."""
+    log = _drive(renderer, theme=NO_ANIMATION_THEME,
+                 driver=NO_ANIMATION_DRIVER, budget_ms=8000)
+    wanted = {
+        "short-long": "Esther the queen",
+        "long-short": "Jesus wept",
+        "scripture-slide": "Sunday morning",
+        "slide-scripture": "The Lord is my shepherd",
+    }
+    for label, text in wanted.items():
+        frames = log[label]["frames"]
+        assert frames, label
+        assert text in frames[0]["body"]["text"], (label, frames[0])
+        for frame in frames:
+            for part in ("body", "ref", "trans", "container"):
+                style = frame[part]
+                assert style["opacity"] == "1", (label, part, style)
+                assert style["visibility"] == "visible", (label, part, style)
+                assert style["display"] != "none", (label, part, style)
+                assert style["anims"] == 0, (label, part, style)
+            assert frames[0]["body"]["anims"] == 0
+            assert frames[0]["ref"]["anims"] == 0
+            assert frames[0]["body"]["transform"] == "none"
+            assert frames[0]["body"]["filter"] == "none"
+            assert frames[0]["body"]["clip"] == "none"
+    assert log["clear"]["frame"]["container"]["visibility"] == "hidden"
+    assert log["uncloak"]["frame"]["body"]["opacity"] == "1"
+    assert "Psalm 100:4" in log["uncloak"]["frame"]["ref"]["text"]
+    assert log["errors"]["errs"] == []
+
+
+NO_TRANSITION_THEME = {
+    "schema_version": 2,
+    "name": "no_transition",
+    "kind": "scripture",
+    "canvas": {"width": 1920, "height": 1080, "fit": "contain",
+               "background": "transparent"},
+    "containers": [{
+        "id": "main", "visible": True, "layer": 1,
+        "width": "100%", "height": "100%",
+        "position": {"anchor": "center"},
+        "opacity": 1,
+        # Entry/out only. No `transition` anywhere, so a scripture pair has
+        # nothing to play and must stay silent rather than borrow OUT/IN.
+        "animation": {"entry": "fade_in", "out": "fade_out"},
+        "blocks": {
+            "body": {"visible": True, "valign": "center", "gap": 12,
+                     "padding": 0},
+            "text": {"visible": True, "size": 64, "color": "#ffffff",
+                     "line_height": 1.2, "text_align": "center"},
+            "reference": {"visible": True, "size": 28, "color": "#dddddd"},
+        },
+    }],
+    "animations": {
+        "fade_in": {
+            "type": "fade_in", "duration_ms": 150, "easing": "linear",
+            "keyframes": [{"at": 0, "opacity": 0},
+                          {"at": 100, "opacity": "base"}],
+        },
+        "fade_out": {
+            "type": "fade_out", "duration_ms": 150, "easing": "linear",
+            "keyframes": [{"at": 0, "opacity": "base"},
+                          {"at": 100, "opacity": 0}],
+        },
+    },
+}
+
+NO_TRANSITION_DRIVER = r"""
+window.__log = [];
+window.__errs = [];
+window.addEventListener("error", function (e) {
+  window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
+});
+// Record every authored animation the renderer actually starts. The
+// container is the only animated target in this theme, so a scripture pair
+// that plays anything will show up here.
+window.__played = [];
+const _origPlay = _playElementAnimation;
+window._playElementAnimation = function (el, def, opts) {
+  window.__played.push({
+    kind: (opts && opts.kind) || "",
+    phase: (opts && opts.phase) || ""
+  });
+  return _origPlay(el, def, opts);
+};
+window.__snap = function (label) {
+  const vt = document.getElementById("verse-text");
+  const ct = document.getElementById("container");
+  window.__log.push({
+    label: label,
+    text: vt ? vt.textContent : "",
+    plan: window.__rcMotionState.plan,
+    played: window.__played.slice(),
+    containerAnims: (ct && ct.getAnimations) ? ct.getAnimations().length : -1,
+  });
+};
+window.__payload = function (p) {
+  handlePayload({action: "display", theme_data: window.__theme, ...p});
+};
+window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
+
+window.__run = async function () {
+  window.__payload({kind: "scripture", text: "A", reference: "1:1"});
+  await window.__wait(400);
+  window.__played.length = 0;
+
+  // Scripture pair on a theme with no transition slots: the model still
+  // names the transition pair, but nothing is allowed to animate.
+  window.__payload({kind: "scripture", text: "B", reference: "1:2"});
+  window.__snap("scripture-pair");
+  await window.__wait(400);
+  window.__snap("scripture-pair-done");
+
+  // A kind change uses OUT/IN, so this same theme must play its slots.
+  window.__played.length = 0;
+  window.__payload({kind: "freeform", text: "Slide", reference: ""});
+  window.__snap("kind-change-start");
+  await window.__wait(500);
+  window.__snap("kind-change-done");
+
+  window.__log.push({label: "errors", errs: window.__errs});
+  const tag = document.createElement("script");
+  tag.type = "text/plain";
+  tag.setAttribute("data-rc", "log");
+  tag.textContent = JSON.stringify(window.__log);
+  document.body.appendChild(tag);
+};
+"""
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_no_transition_slots_is_silent_for_scripture(renderer):
+    """Scripture -> scripture on a theme without transition slots is instant.
+
+    The pairing rule is still the transition pair, but a theme that declares
+    no transition slots has nothing to run. The renderer must not fall back
+    to OUT/IN: the content swaps with zero animations.
+    """
+    log = _drive(renderer, theme=NO_TRANSITION_THEME,
+                 driver=NO_TRANSITION_DRIVER)
+    pair = log["scripture-pair"]
+    assert pair["plan"]["phases"] == ["transition_out", "transition_in"]
+    assert pair["played"] == []
+    assert pair["containerAnims"] == 0
+    assert "B" in pair["text"]
+    assert log["scripture-pair-done"]["played"] == []
+    assert "B" in log["scripture-pair-done"]["text"]
+
+    # The same theme still runs OUT then IN when the content kind changes.
+    start = log["kind-change-start"]
+    assert start["plan"]["phases"] == ["out", "in"]
+    assert [p["phase"] for p in start["played"]] == ["out"]
+    done = log["kind-change-done"]
+    assert [p["phase"] for p in done["played"]] == ["out", "entry"]
+    assert log["errors"]["errs"] == []
+
+
+OVERLAP_DRIVER = r"""
+window.__log = [];
+window.__errs = [];
+window.addEventListener("error", function (e) {
+  window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
+});
+// Every authored animation the renderer starts, with its clock reading and
+// whether it ran on the frozen outgoing layer.
+window.__events = [];
+const _origPlay = _playElementAnimation;
+window._playElementAnimation = function (el, def, opts) {
+  window.__events.push({
+    phase: (opts && opts.phase) || "in",
+    t: Math.round(performance.now()),
+    inLayer: !!(el && el.closest && el.closest(".rc-overlap-layer"))
+  });
+  return _origPlay(el, def, opts);
+};
+window.__snap = function (label) {
+  const layer = document.querySelector(".rc-overlap-layer");
+  const live = document.getElementById("verse-text");
+  const ct = document.getElementById("container");
+  const dbg = document.getElementById("rc-motion-debug");
+  window.__log.push({
+    label: label, t: Math.round(performance.now()),
+    text: live ? live.textContent : "",
+    layer: !!layer,
+    layerText: layer
+      ? String(((layer.querySelector("#verse-text") || {}).textContent) || "")
+      : "",
+    layerZ: layer ? getComputedStyle(layer).zIndex : "",
+    hidden: !!(ct && ct.classList.contains("hidden")),
+    plan: window.__rcMotionState.plan,
+    events: window.__events.slice(),
+    debug: dbg ? dbg.textContent : "",
+    errors: window.__errs.slice()
+  });
+};
+window.__payload = function (p) {
+  handlePayload({ action: "display", theme_data: window.__theme, ...p });
+};
+window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
+
+window.__run = async function () {
+  window.__payload({ kind: "scripture", text: "Alpha", reference: "1:1" });
+  await window.__wait(800);
+  window.__events.length = 0;
+
+  window.__payload({ kind: "scripture", text: "Beta", reference: "1:2" });
+  window.__snap("start");
+  await window.__wait(100);
+  window.__snap("before-incoming");
+  await window.__wait(250);
+  window.__snap("after-incoming");
+  await window.__wait(900);
+  window.__snap("done");
+
+  // A kind change takes the OUT/IN pair, ordered by motion.in_out.
+  window.__events.length = 0;
+  window.__payload({ kind: "freeform", text: "Slide", reference: "" });
+  window.__snap("kind-start");
+  await window.__wait(100);
+  window.__snap("kind-before-incoming");
+  await window.__wait(250);
+  window.__snap("kind-after-incoming");
+  await window.__wait(900);
+  window.__snap("kind-done");
+
+  window.__log.push({ label: "errors", errs: window.__errs });
+  const tag = document.createElement("script");
+  tag.type = "text/plain";
+  tag.setAttribute("data-rc", "log");
+  tag.textContent = JSON.stringify(window.__log);
+  document.body.appendChild(tag);
+};
+"""
+
+
+def _motion_theme(mode: str, offset: int | None = None) -> dict:
+    theme = copy.deepcopy(THEME)
+    theme["name"] = "animation_runtime_" + mode
+    theme["motion"] = {"in_out": mode, "transition": mode,
+                       "sustain_when_cloaked": "pause",
+                       "deck_steps": "out_in"}
+    if offset is not None:
+        theme["motion"]["overlap_in_offset_ms"] = offset
+    return theme
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_overlap_pair_offsets_the_incoming_phase(renderer):
+    """Overlap keeps the old content on screen and staggers the new one.
+
+    The outgoing layer is a frozen clone at t=0; the incoming content renders
+    immediately but stays hidden until the fixed offset, then animates live.
+    """
+    log = _drive(renderer, theme=_motion_theme("overlap"),
+                 driver=OVERLAP_DRIVER, debug=True)
+    start = log["start"]
+    assert start["errors"] == []
+    assert start["plan"]["order"] == "overlap"
+    assert start["plan"]["offset_ms"] == RC_OFFSET
+    assert start["layer"] is True
+    assert start["layerZ"] == "-1"
+    assert "Alpha" in start["layerText"]
+    assert "Beta" in start["text"]
+    assert start["hidden"] is True
+    # Both transition_out and out reach the player as phase "out"; the pair
+    # plan above proves which slot was selected.
+    outs = [e for e in start["events"] if e["phase"] == "out"]
+    assert outs
+    assert all(e["inLayer"] for e in outs)
+    assert outs[0]["t"] - start["t"] < 150
+
+    # Before the offset: only the outgoing layer has moved, and the incoming
+    # content is still invisible.
+    before = log["before-incoming"]
+    assert before["layer"] is True
+    assert before["hidden"] is True
+    assert not any(e["phase"] in ("in", "entry") for e in before["events"])
+    assert "overlap offset " + str(RC_OFFSET) + "ms" in before["debug"]
+    assert "outgoing clone" in before["debug"]
+    assert "incoming live" in before["debug"]
+
+    # After the offset: the incoming phase runs on the live DOM, above the
+    # still-mounted clone.
+    after = log["after-incoming"]
+    assert after["hidden"] is False
+    assert after["layer"] is True
+    incoming = [e for e in after["events"]
+                if e["phase"] in ("in", "entry")]
+    assert incoming
+    assert all(not e["inLayer"] for e in incoming)
+    assert RC_OFFSET - 50 <= incoming[0]["t"] - start["t"] <= RC_OFFSET + 250
+
+    done = log["done"]
+    assert done["layer"] is False
+    assert done["plan"]["order"] == "overlap"
+    assert "Beta" in done["text"]
+
+    # A kind change uses motion.in_out, with the same order and offset.
+    kind_start = log["kind-start"]
+    assert kind_start["plan"]["phases"] == ["out", "in"]
+    assert kind_start["plan"]["order"] == "overlap"
+    assert kind_start["plan"]["offset_ms"] == RC_OFFSET
+    kind_before = log["kind-before-incoming"]
+    assert kind_before["layer"] is True
+    assert [e["phase"] for e in kind_before["events"]] == ["out"]
+    kind_after = log["kind-after-incoming"]
+    entry = [e for e in kind_after["events"] if e["phase"] == "entry"]
+    assert entry
+    assert RC_OFFSET - 50 <= entry[0]["t"] - kind_start["t"] <= RC_OFFSET + 250
+    assert log["kind-done"]["layer"] is False
+    assert "Slide" in log["kind-done"]["text"]
+    assert log["errors"]["errs"] == []
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_sequential_pair_timings_are_unchanged(renderer):
+    """Sequential still swaps only after the outgoing phase finishes."""
+    log = _drive(renderer, theme=_motion_theme("sequential"),
+                 driver=OVERLAP_DRIVER)
+    start = log["start"]
+    assert start["plan"] == {
+        "old": "scripture", "new": "scripture",
+        "phases": ["transition_out", "transition_in"],
+        "order": "sequential", "offset_ms": 0,
+    }
+    assert start["layer"] is False
+    assert start["debug"] == ""
+    assert all(not e["inLayer"] for e in start["events"])
+
+    done = log["done"]
+    events = [e for e in done["events"] if not e["inLayer"]]
+    phases = [e["phase"] for e in events]
+    out_t = events[phases.index("out")]["t"] - start["t"]
+    in_t = events[phases.index("in")]["t"] - start["t"]
+    assert out_t < 150
+    # fade_down runs 300ms; the incoming starts only after it completes.
+    assert in_t >= 250
+    assert "Beta" in done["text"]
+    assert log["kind-start"]["plan"]["order"] == "sequential"
+    assert log["kind-start"]["plan"]["offset_ms"] == 0
+    assert not any(snap["layer"] for label, snap in log.items()
+                   if label != "errors")
+    assert log["errors"]["errs"] == []
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_overlap_offset_comes_from_the_theme(renderer):
+    """A theme can move the incoming phase without changing the plan shape."""
+    log = _drive(renderer, theme=_motion_theme("overlap", 350),
+                 driver=OVERLAP_DRIVER, debug=True)
+    start = log["start"]
+    assert start["errors"] == []
+    assert start["plan"]["order"] == "overlap"
+    assert start["plan"]["offset_ms"] == 350
+    assert "overlap offset 350ms" in start["debug"]
+
+    before = log["before-incoming"]
+    assert before["layer"] is True
+    assert not any(e["phase"] in ("in", "entry") for e in before["events"])
+
+    after = log["after-incoming"]
+    incoming = [e for e in after["events"]
+                if e["phase"] in ("in", "entry")]
+    assert incoming
+    assert 300 <= incoming[0]["t"] - start["t"] <= 600
+    assert log["done"]["plan"]["offset_ms"] == 350
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_v2_overlap_is_instant_under_reduced_motion(renderer):
+    log = _drive(renderer, reduced=True, theme=_motion_theme("overlap"),
+                 driver=OVERLAP_DRIVER)
+    start = log["start"]
+    assert start["layer"] is False
+    assert start["plan"]["order"] == "sequential"
+    assert start["events"] == []
+    assert "Beta" in start["text"]
     assert log["errors"]["errs"] == []
 
 
@@ -467,7 +982,7 @@ function box(el) {
           height: Math.round(el.getBoundingClientRect().height)};
 }
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__theme,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme,
                  text: "The Lord is my shepherd; I shall not want.",
                  reference: "Psalm 23:1", translation: "KJV"});
   await new Promise(r => setTimeout(r, 400));
@@ -514,7 +1029,7 @@ _BAR_LONG_VERSE = (
 _BAR_FIT_DRIVER = r"""
 window.__log = [];
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__theme,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme,
                  text: window.__text, reference: "Esther 8:9",
                  translation: "KJV"});
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
@@ -638,7 +1153,7 @@ window.addEventListener("error", function (e) {
 });
 window.__run = async function () {
   for (const name of Object.keys(window.__themes)) {
-    handlePayload({action: "display", theme_data: window.__themes[name],
+    handlePayload({action: "display", kind: "scripture", theme_data: window.__themes[name],
                    text: "The Lord is my shepherd; I shall not want.",
                    reference: "Psalm 23:1", translation: "KJV"});
     await new Promise(r => setTimeout(r, 2600));
@@ -709,7 +1224,7 @@ function report(id) {
   };
 }
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__theme,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme,
                  text: "The Lord is my shepherd; I shall not want. He maketh "
                        + "me to lie down in green pastures; he leadeth me "
                        + "beside the still waters. He restoreth my soul.",
@@ -778,7 +1293,7 @@ window.addEventListener("error", function (e) {
   window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
 });
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__theme,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme,
     text: "So the king's scribes were called at that time, in the third month, "
           + "which is the month of Sivan, on the twenty-third day; and it was "
           + "written, according to all that Mordecai commanded, to the Jews, "
@@ -842,7 +1357,7 @@ window.addEventListener("error", function (e) {
   window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
 });
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__theme,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__theme,
     text: "The king's scribes were called at that time, in the third month, "
           + "which is the twenty-third day; and it was written according to "
           + "all that Mordecai commanded, to the Jews, and to the governors, "
@@ -961,7 +1476,7 @@ function _unitReport() {
 }
 
 window.__run = async function () {
-  handlePayload({action: "display", theme_data: window.__themes.line,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__themes.line,
     text: "The Lord is my shepherd; I shall not want. ".repeat(12),
     reference: "Psalm 23:1", translation: "KJV"});
   await new Promise(r => setTimeout(r, 120));
@@ -986,7 +1501,7 @@ window.__run = async function () {
     // Opacity multiplies: a line look must not repaint its own words.
     restWordOpacity: restWord ? getComputedStyle(restWord).opacity : ""});
 
-  handlePayload({action: "display", theme_data: window.__themes.word,
+  handlePayload({action: "display", kind: "scripture", theme_data: window.__themes.word,
     text: "One two three four five six",
     reference: "Psalm 23:1", translation: "KJV"});
   await new Promise(r => setTimeout(r, 120));

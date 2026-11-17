@@ -121,6 +121,12 @@ class RhemaCastApp(QApplication):
         from ui.typography import install as install_typography
         install_typography(self)
 
+        # Reserved scrollbar lanes: every scrollable surface keeps its bar
+        # gutter, so overflow never changes content width. The filter covers
+        # widgets constructed later, including popups and dialogs.
+        from ui.scrollbars import install as install_scrollbar_lanes
+        install_scrollbar_lanes(self)
+
         # Apply app-theme palette for native look + accessibility
         apply_theme(self)
         

@@ -53,6 +53,9 @@
   },
   "schema_version": 2,
   "kind": "freeform",
+  "motion": {
+    "deck_steps": "instant"
+  },
   "canvas": {
     "width": 1920,
     "height": 1080,

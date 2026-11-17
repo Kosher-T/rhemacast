@@ -32,6 +32,17 @@
   - Direct JSON editor with syntax highlighting
   - Import/Export JSON
 
+### Theme picker and external edits
+- **Option text is the theme's `label`**; the option value is the ID (filename stem) and never changes when a label is edited. Missing label falls back to the prettified stem (`default_typewriter` → `Default Typewriter`).
+- Duplicate labels are allowed; collisions append the ID in muted text (`Standard (default_2)`).
+- Sort is case-insensitive A→Z by label, except entries with `sort_order`, which lead in ascending order (§9.1).
+- `description`, when present, is a muted, single-line truncated second row (never wraps).
+- The toolbar name field edits `label` inline. Each keystroke updates the picker from one in-memory store keyed by ID; selection is preserved by ID across re-sorts. An empty field shows the fallback in the picker but stays empty in the field and is not written to disk.
+- The themes folder is watched (250 ms debounce). Files added, removed or edited outside the app refresh the picker without a restart. The app's own saves are ignored by content hash.
+  - Open theme with unsaved edits: the in-editor edits win until the operator chooses **Reload** or **Keep editing** in the notice bar.
+  - Invalid JSON: the last good version stays loaded, with a warning dot and tooltip on that option.
+  - Deleting the selected theme: falls back to `default` and the notice says unsaved edits were discarded.
+
 ---
 
 ## 2. Container System
@@ -294,21 +305,22 @@ Status key:
 |---|---|---|
 | `schema_version` | preserve-only | Loader/migration owns it; Save writes the raw value. |
 | `name` | preserve-only | Theme identity is the filename stem; Save writes the selected theme name. |
-| `label` | raw | Toolbar shows it; authoring metadata lives in the file/JSON pane. |
-| `description` | raw | Toolbar shows it; authoring metadata. |
+| `label` | editable | Toolbar name field (inline, styled as a heading). Typing updates the picker per keystroke and the file on Save. Empty stays empty in the field, shows the prettified ID in pickers, and is not written to disk. Duplicate labels are allowed. |
+| `description` | raw | Toolbar shows it; pickers render it as a muted second line. Authoring metadata otherwise. |
 | `author` | raw | Authoring metadata. |
 | `kind` | preserve-only | Folder is authoritative; changing it is a file move, not a property edit. |
 | `canvas` | editable | Canvas page. |
 | `containers` | editable | Workspace + Container/Blocks pages; add, duplicate, delete, reorder. |
 | `animations` | raw | Library management (add/rename/delete definitions) is JSON-only. Definition fields reached from a container-0 slot are covered in §9.4. |
-| `slide` | needs control | Only `show_title`; the freeform switches have no page. |
+| `slide` | editable | Only `show_title`; freeform themes expose it on the Canvas page. |
+| `sort_order` | preserve-only | Authoring-only ordering hint; read from the raw document, dropped from the resolved theme. Not exposed in the UI. |
 | unknown top-level keys | preserve-only | Raw round-trip; the resolved theme drops them with a note. |
 
 ### 9.2 `slide`
 
 | Key | Status | Where / note |
 |---|---|---|
-| `show_title` | needs control | No control; freeform themes only. |
+| `show_title` | editable | Canvas page, Freeform slide section; defaults on when absent and is only written after an operator toggle. |
 
 ### 9.3 Canvas
 
@@ -392,7 +404,7 @@ Status key:
 |---|---|---|
 | `id` | preserve-only | Shown read-only; generated for add/duplicate. Renaming is not supported. |
 | `label` | editable | Container page. |
-| `kind` | editable | Container page, dropdown. |
+| `kind` | preserve-only | Authoring metadata; the renderer does not filter by it, so the control is hidden and the value is kept. |
 | `layer` | editable | Container page and workspace. |
 | `visible` | editable | Container page and workspace. |
 | `position` | editable | Workspace anchor + X/Y fields and canvas drag. |
@@ -456,7 +468,7 @@ Status key:
 
 | Key | Status | Where / note |
 |---|---|---|
-| `blocks.body.visible` | editable | Blocks page, Body tab. |
+| `blocks.body.visible` | preserve-only | Accepted and preserved; the renderer does not read it and the container `visible` switch is the supported control. |
 | `blocks.body.valign` | editable | Body tab, chips. |
 | `blocks.body.gap` | editable | Body tab. |
 | `blocks.body.padding` | editable | Body tab, linked four-side field. |
@@ -475,7 +487,7 @@ Status key:
 | shared `line_height` | editable | Every content block tab. |
 | shared `letter_spacing` | editable | Every content block tab. |
 | shared `word_spacing` | editable | Text/reference/title tabs. |
-| shared `text_shadow` | editable | Text/reference/title tabs, shadow editor (literal shadows only; no shared reference). |
+| shared `text_shadow` | editable | Text/reference/title tabs, shadow editor (literal shadows only; no shared reference, and a hand-authored shared reference paints no shadow on a block). |
 | shared `text_outline` | editable | Text/reference/title tabs, free-text field. |
 | shared `text_transform` | editable | Every content block tab, chips. |
 | shared `text_align` | editable | Every content block tab, chips. |
@@ -508,7 +520,7 @@ Status key:
 | `blocks.translation.color` | editable | Translation tab. |
 | `blocks.translation.margin_left` | editable | Translation tab. |
 | `blocks.verse_num.mode` | editable | Verse # tab. |
-| `blocks.verse_num.position` | editable | Verse # tab. |
+| `blocks.verse_num.position` | preserve-only | Unsupported by the renderer; the control is hidden with a note and the stored value is kept. |
 | `blocks.verse_num.vertical_align` | editable | Verse # tab. |
 | `blocks.verse_num.margin_right` | editable | Verse # tab. |
 | `blocks.verse_num.size` | editable | Verse # tab. |
@@ -530,8 +542,8 @@ Status key:
 ### 9.13 What remains after M1-01
 
 The `needs control` rows are the complete M1 build list that is not yet a
-control: `slide.show_title`; library-level definition timing/label/type;
-animation phases for containers `1..n`, `body` and blocks; and `body.animation`.
+control: library-level definition timing/label/type; animation phases for
+containers `1..n`, `body` and blocks; and `body.animation`.
 Everything else is either editable now or explicitly preserve-only/raw.
 
 ---

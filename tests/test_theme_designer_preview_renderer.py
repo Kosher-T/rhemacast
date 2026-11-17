@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_theme_v2_animation_runtime import RENDERERS, _drive
+from tests.test_theme_v2_animation_runtime import (
+    RENDERERS, _drive, _motion_theme,
+)
 
 PREVIEW_DRIVER = r"""
 window.__log = [];
@@ -66,6 +68,104 @@ window.__run = async function () {
   document.body.appendChild(tag);
 };
 """
+
+
+OVERLAP_PREVIEW_DRIVER = r"""
+window.__log = [];
+window.__errs = [];
+window.__events = [];
+window.addEventListener("error", function (e) {
+  window.__errs.push(String(e.message) + " @" + e.lineno + ":" + e.colno);
+});
+window.__wait = function (ms) { return new Promise(r => setTimeout(r, ms)); };
+const _origPlay = _playElementAnimation;
+window._playElementAnimation = function (el, def, opts) {
+  window.__events.push({
+    phase: (opts && opts.phase) || "in",
+    t: Math.round(performance.now()),
+    inLayer: !!(el && el.closest && el.closest(".rc-overlap-layer"))
+  });
+  return _origPlay(el, def, opts);
+};
+window.__run = async function () {
+  const current = {action: "display", theme_data: window.__theme,
+                   text: "Jesus wept.", reference: "John 11:35"};
+  const alternate = {action: "display", theme_data: window.__theme,
+                     text: "Alpha beta gamma.", reference: "Gen 1:1"};
+  handlePayload(current);
+  await window.__wait(500);
+
+  window.__events.length = 0;
+  const inStart = Math.round(performance.now());
+  previewReplay("transition_in", current, alternate);
+  await window.__wait(40);
+  window.__log.push({label: "in-running", state: previewState(),
+                     events: window.__events.slice(), start: inStart});
+  await window.__wait(700);
+  window.__log.push({label: "in-done", state: previewState(),
+                     events: window.__events.slice(), start: inStart});
+
+  window.__events.length = 0;
+  const outStart = Math.round(performance.now());
+  previewReplay("transition_out", current, alternate);
+  await window.__wait(40);
+  window.__log.push({label: "out-running", state: previewState(),
+                     events: window.__events.slice(), start: outStart});
+  await window.__wait(800);
+  window.__log.push({label: "out-done", state: previewState(),
+                     events: window.__events.slice(), start: outStart,
+                     text: document.getElementById("verse-text").textContent});
+
+  window.__log.push({label: "errors", errs: window.__errs});
+  const tag = document.createElement("script");
+  tag.type = "text/plain";
+  tag.setAttribute("data-rc", "log");
+  tag.textContent = JSON.stringify(window.__log);
+  document.body.appendChild(tag);
+};
+"""
+
+
+@pytest.mark.skipif(
+    __import__("tests.test_theme_v2_animation_runtime", fromlist=["CHROME"]).CHROME
+    is None,
+    reason="no Chrome/Chromium available",
+)
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_preview_transition_replay_uses_overlap_pair(renderer):
+    """Both transition buttons freeze the old content and offset the new one."""
+    log = _drive(renderer, theme=_motion_theme("overlap"),
+                 driver=OVERLAP_PREVIEW_DRIVER, budget_ms=7000)
+
+    running = log["in-running"]
+    assert running["state"]["phase"] == "transition_in"
+    assert running["state"]["status"] == "running"
+    outs = [e for e in running["events"] if e["phase"] == "out"]
+    assert outs and all(e["inLayer"] for e in outs)
+    assert not any(e["phase"] in ("in", "entry")
+                   for e in running["events"])
+
+    done = log["in-done"]
+    assert done["state"]["status"] == "finished"
+    incoming = [e for e in done["events"]
+                if e["phase"] in ("in", "entry")]
+    assert incoming
+    assert all(not e["inLayer"] for e in incoming)
+    assert incoming[0]["t"] - done["start"] >= 150
+
+    running = log["out-running"]
+    assert running["state"]["phase"] == "transition_out"
+    assert running["state"]["status"] == "running"
+    outs = [e for e in running["events"] if e["phase"] == "out"]
+    assert outs and all(e["inLayer"] for e in outs)
+    assert not any(e["phase"] in ("in", "entry")
+                   for e in running["events"])
+
+    done = log["out-done"]
+    assert done["state"]["status"] == "finished"
+    assert any(e["phase"] in ("in", "entry") for e in done["events"])
+    assert "Jesus wept." in done["text"]
+    assert log["errors"]["errs"] == []
 
 
 @pytest.mark.skipif(

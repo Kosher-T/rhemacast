@@ -22,6 +22,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
+from core.constants import OVERLAP_IN_OFFSET_MS
+
 __all__ = [
     "ANIMATION_EASINGS", "ANIMATION_SPECS", "ANIMATION_TYPES",
     "AnimationSpec", "ORIGIN_VALUES", "PRESET_TYPES", "ParamOption",
@@ -349,6 +351,7 @@ def runtime_defaults() -> dict:
         "duration_ms": ANIMATION_SPECS["fade_in"].param("duration_ms").default,
         "typewriter_duration_ms":
             ANIMATION_SPECS["typewriter"].param("duration_ms").default,
+        "overlap_in_offset_ms": OVERLAP_IN_OFFSET_MS,
         "delay_ms": 0,
         "easing": "ease-out",
         "typewriter_easing": "linear",

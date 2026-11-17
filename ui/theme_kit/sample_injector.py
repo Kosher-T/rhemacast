@@ -338,6 +338,7 @@ class SampleInjector(QWidget):
         popup = _SampleListPopup(self._states, self._current, self)
         self._popup = popup
         popup.picked.connect(self._on_list_picked)
+        popup.closed.connect(self._on_popup_closed)
         popup.destroyed.connect(self._on_popup_destroyed)
         popup.show_below(self, width=max(200, self.width()),
                          max_height=320, align="left")
@@ -347,6 +348,14 @@ class SampleInjector(QWidget):
             if state.id == state_id:
                 self._choose(state)
                 return
+
+    def _on_popup_closed(self) -> None:
+        # Popups are not deleted on close; release and drop them so the next
+        # click opens a fresh one.
+        popup = self._popup
+        self._popup = None
+        if popup is not None:
+            popup.deleteLater()
 
     def _on_popup_destroyed(self, *_args) -> None:
         self._popup = None
@@ -359,6 +368,7 @@ class SampleInjector(QWidget):
                                  self)
         self._custom = popover
         popover.applied.connect(self._on_custom_applied)
+        popover.closed.connect(self._on_custom_closed)
         popover.destroyed.connect(self._on_custom_destroyed)
         popover.show_below(self, width=260, max_height=220, align="left")
 
@@ -367,6 +377,12 @@ class SampleInjector(QWidget):
         self._custom_reference = reference
         self.changed.emit(self._current, False)
         self.custom_requested.emit(text, reference)
+
+    def _on_custom_closed(self) -> None:
+        popover = self._custom
+        self._custom = None
+        if popover is not None:
+            popover.deleteLater()
 
     def _on_custom_destroyed(self, *_args) -> None:
         self._custom = None

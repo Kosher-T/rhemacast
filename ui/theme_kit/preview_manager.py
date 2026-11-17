@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from core import constants
 
-_PHASE_PRIORITY = ("entry", "transition_in", "transition_out", "out")
+_PHASE_PRIORITY = ("entry", "transition_in", "sustain", "transition_out", "out")
 
 
 def _animation_slot_phases(animation: Any, name: str) -> list[str]:
@@ -37,6 +37,8 @@ def _animation_slot_phases(animation: Any, name: str) -> list[str]:
 
     if uses(animation.get("entry")):
         found.append("entry")
+    if uses(animation.get("sustain")):
+        found.append("sustain")
     transition = animation.get("transition")
     if isinstance(transition, dict):
         if uses(transition.get("in")):
@@ -108,7 +110,7 @@ def phase_for_paths(paths: Iterable[Any], theme: dict) -> Optional[str]:
             # transition object itself defaults to the in phase.
             found.append("transition_out" if len(rest) > 1 and rest[1] == "out"
                          else "transition_in")
-        elif head in ("entry", "out"):
+        elif head in ("entry", "sustain", "out"):
             found.append(head)
     if not found:
         return None

@@ -254,16 +254,21 @@ def paint_value(painter: QPainter, rect: QRectF, value: Any,
         painter.fillRect(rect, color)
 
 
-def _describe(value: Any) -> str:
+def _describe(value: Any, palette: Optional[dict[str, str]] = None) -> str:
     if value is None or str(value).strip() == "":
         return "Not set"
-    text = str(value)
-    if text.strip().lower() in ("none", "transparent"):
-        return text.strip().capitalize()
+    text = str(value).strip()
     spec = parse_gradient(text)
     if spec is not None:
         return ("Linear gradient" if spec.kind == "linear"
                 else "Radial gradient")
+    # Show the colour, not a symbolic name: theme files may store ``@gold``
+    # or ``transparent``, but the field paints hex.
+    color = resolve_paint_color(text, palette)
+    if color is not None and (
+            text.startswith("@")
+            or text.casefold() in ("transparent", "none")):
+        return css_color(color, force_alpha=color.alpha() < 255)
     return text
 
 
@@ -898,7 +903,8 @@ class PaintField(QWidget):
                            QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAccessibleName("Paint")
-        attach_tooltip(self, lambda: self._warning or self._value
+        attach_tooltip(self, lambda: self._warning
+                       or _describe(self._value, self._palette_map)
                        or "Not set")
 
     # ── public ──────────────────────────────────────────────────────────────
@@ -941,6 +947,7 @@ class PaintField(QWidget):
         self._open_value = self._value
         popover.committed.connect(self._on_popover_committed)
         popover.cancelled.connect(self._on_popover_cancelled)
+        popover.closed.connect(self._on_popover_closed)
         popover.destroyed.connect(self._on_popover_destroyed)
         popover.show_below(self, width=270, max_height=500, align="left")
 
@@ -961,6 +968,13 @@ class PaintField(QWidget):
         self._value = self._open_value
         self.update()
         self.preview.emit(self.value())
+
+    def _on_popover_closed(self) -> None:
+        popover = self._popover
+        self._popover = None
+        if popover is not None:
+            popover.deleteLater()
+        self.update()
 
     def _on_popover_destroyed(self, *_args) -> None:
         self._popover = None
@@ -1032,7 +1046,8 @@ class PaintField(QWidget):
             text_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             QFontMetrics(label_font).elidedText(
-                _describe(self._value), Qt.TextElideMode.ElideRight,
+                _describe(self._value, self._palette_map),
+                Qt.TextElideMode.ElideRight,
                 int(text_rect.width())))
         draw_chevron(
             painter, QRectF(rect.right() - 16, rect.top(), 12,

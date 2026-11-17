@@ -204,21 +204,19 @@ def test_animation_names_reject_injection(bad_name):
         "containers": [{"id": "main", "animation": {"entry": bad_name}}],
     }, name="evil")
     assert bad_name not in resolved["animations"]
-    # The slot degrades to the documented default, not to the bad name.
-    assert resolved["containers"][0]["animation"]["entry"] == {"use": "fade_in"}
+    assert "entry" not in resolved["containers"][0].get("animation", {})
     assert report.warnings
 
 
-def test_unknown_animation_names_fall_back_with_a_warning():
+def test_unknown_animation_names_disable_the_slot():
     resolved, report = normalize_theme({
         "schema_version": 2,
         "containers": [{"id": "main",
                         "animation": {"entry": "does_not_exist"}}],
     }, name="probe")
-    assert resolved["containers"][0]["animation"]["entry"] == {"use": "fade_in"}
+    assert "entry" not in resolved["containers"][0].get("animation", {})
     assert any("unknown animation name" in w for w in report.warnings)
-    # The fallback definition is embedded, so the renderer never chases a name.
-    assert resolved["animations"]["fade_in"]["type"] == "fade_in"
+    assert "fade_in" not in resolved["animations"]
 
 
 def test_keyframe_css_values_cannot_smuggle_functions():

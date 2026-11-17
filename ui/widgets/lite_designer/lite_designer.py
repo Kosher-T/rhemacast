@@ -2571,6 +2571,9 @@ class LiteDesigner(QWidget):
             "chapter": "",
             "verse": "",
             "content": "slide",
+            # Preview-only render: the motion model still pairs by kind, and
+            # an unlabelled payload would take the OUT/IN path.
+            "kind": "freeform",
             "theme": theme_name,
             "theme_data": theme_data,
             "slide_format": self._format or None,

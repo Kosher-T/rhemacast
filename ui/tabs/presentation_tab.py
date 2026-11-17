@@ -378,6 +378,8 @@ class PresentationTab(QWidget):
         
         # Live output: clear/recall toggle
         self.live_preview.clear_recall.connect(self._on_clear_recall)
+        # Live output: Out/In toggle (one shared motion state)
+        self.live_preview.motion_toggle.connect(self._on_motion_toggle)
         
         # Live output: prev/next verse navigation (uses schedule)
         self.live_preview.prev_verse.connect(self._on_prev_verse)
@@ -443,7 +445,12 @@ class PresentationTab(QWidget):
         # Cloak button mirrors the SHARED cloak state — whichever tab
         # toggles, both tabs' buttons follow.
         self._display.cloak_changed.connect(self.live_preview.set_clear_active)
+        self._display.cloak_changed.connect(
+            lambda _on: self._sync_motion_button())
+        self._display.revealed.connect(self.live_preview.reveal_live)
+        self._display.nav_changed.connect(self._sync_motion_button)
         self.live_preview.set_clear_active(self._display.cloaked)
+        self._sync_motion_button()
         # Render whatever is already showing (e.g. published before this tab loaded)
         if self._display.live_payload:
             self.live_preview.set_live_payload(self._display.live_payload)
@@ -481,6 +488,11 @@ class PresentationTab(QWidget):
             "chapter": str(chapter),
             "verse": str(verse),
             "content": content,
+            # Display kind for motion pairing (scripture->scripture plays
+            # transitions; everything else plays OUT then IN). Unknown
+            # content is "other".
+            "kind": ("scripture" if content == "verse"
+                     else "freeform" if content == "slide" else "other"),
             "theme": theme_name,
             "theme_data": theme_data,
         }
@@ -1038,15 +1050,28 @@ class PresentationTab(QWidget):
         """Cover-gated silent re-push of shared payloads into this tab's
         views (idempotent). See SlidesTab.resync_screens for the full
         rationale; cloak re-blanks instead of re-pushing."""
+        out_hold = (self._display.motion.is_out
+                    and not self._display.cloaked)
         if self._display.cloaked:
             live = "clear"
+        elif out_hold and self._display.live_payload:
+            # Silent re-render, then replay the held exit after the cover
+            # lifts so a tab switch cannot reveal an Out screen.
+            live = self._display.live_payload
         elif self._display.live_payload:
             live = self._display.live_payload
         else:
             live = None
-        self.live_preview.refresh_views(live, self._display.preview_payload)
+
+        def _reveal():
+            if out_hold:
+                self.live_preview.live_view.motion("out")
+            self.live_preview.reveal_screens()
+
+        self.live_preview.refresh_views(
+            live, self._display.preview_payload, done=_reveal)
         from PyQt6.QtCore import QTimer
-        QTimer.singleShot(500, self.live_preview.reveal_screens)
+        QTimer.singleShot(500, _reveal)
 
     def _on_live_clicked(self):
         """Called when operator clicks the live screen. Navigates browser to the displayed verse."""
@@ -1073,33 +1098,73 @@ class PresentationTab(QWidget):
             return
         self._uncloak_now()
 
+    def _sync_motion_button(self):
+        """Mirror the shared Out/In state on the live-panel button."""
+        self.live_preview.set_motion_state(self._display.motion)
+
+    def _on_motion_toggle(self):
+        """Out plays exit and holds; In replays entry from that frame."""
+        if self._display.cloaked:
+            return
+        from core.outputs import shared_display_enabled
+        from core.output_router import send_action
+        machine = self._display.motion
+        actions = (machine.out() if machine.toggle_target == "out"
+                   else machine.enter())
+        # The content's owner drives its own output set (shared display can
+        # be showing a deck while the operator stands in SCRIPTURE).
+        owner = self._display.content_owner_key()
+        for action in actions:
+            # Operator live view renders the same action, then OBS.
+            self.live_preview.live_view.motion(action["action"])
+            send_action(owner, action, scope_all=False)
+        self._sync_motion_button()
+
     def _cloak_now(self):
-        """Blank the live screen; the model and preview stay intact."""
+        """Blank the live screen INSTANTLY; model and preview stay intact.
+
+        Cloak is its own action now: it posts {"action": "cloak"}, which the
+        renderer applies with no exit. Programmatic clear callers keep
+        {"action": "clear"} and its existing exit behaviour.
+        """
         self._set_cloak(True)
         from core.outputs import shared_display_enabled
-        self._broadcast_to_ws({"action": "clear"}, self._current_display,
-                              scope_all=shared_display_enabled())
+        from core.output_router import send_action
+        send_action("SCRIPTURE", {"action": "cloak"},
+                    scope_all=shared_display_enabled())
         logger.info("Display cloaked")
 
     def _uncloak_now(self):
-        """Reveal what is current now, replaying the stored payload so the
-        originating output theme returns with it (a deck cloaked in SLIDES
-        does not come back wearing SCRIPTURE's theme)."""
-        self._set_cloak(False)
+        """Restore the covered state instantly: shown content, or still Out.
+
+        Content is staged while the tab is still cloaked, then revealed by
+        an uncloak action, so no entry plays. If Out was the covered state,
+        uncloak keeps the exit frame and reveals nothing.
+        """
+        from core.output_router import send_action
+        if self._display.motion.covered_name != "shown":
+            self._set_cloak(False)
+            send_action("SCRIPTURE",
+                        {"action": "uncloak", "reveal": False},
+                        scope_all=False)
+            logger.info("Display uncloaked to blank (Out was held)")
+            return
         stored = self._display.matching_live_output_payload()
-        if stored is not None and self._current_display:
-            payload = stored
-            self._display.publish_live(payload, self._current_display,
-                                       self._display.live_sched_uid,
-                                       self._display.live_from_schedule)
-            self._broadcast_to_ws(payload, self._current_display,
-                                  preserve_theme=True)
-        elif self._current_display:
+        payload = stored
+        if payload is None and self._current_display:
             payload = self._payload_for_display(self._current_display)
+        if payload is not None:
+            # Still cloaked/muted: this updates the model without rendering,
+            # so the reveal can be instant.
             self._display.publish_live(payload, self._current_display,
                                        self._display.live_sched_uid,
                                        self._display.live_from_schedule)
-            self._broadcast_to_ws(payload, self._current_display)
+            silent = dict(payload)
+            silent["silent"] = True
+            # Stage only this tab's own set; other sets stay blank.
+        self._set_cloak(False)
+        send_action("SCRIPTURE", {"action": "uncloak", "reveal": True},
+                    scope_all=False)
         if self._current_display:
             logger.info("Display uncloaked")
 

@@ -93,14 +93,32 @@ def _ws_server_options() -> Dict[str, Any]:
     }
 
 
+DISPLAY_KINDS = ("scripture", "freeform", "image", "video", "other")
+
+
 def sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Sanitize all string fields to prevent XSS."""
+    """Sanitize all string fields to prevent XSS.
+
+    Display payloads without a usable content kind are stamped ``other`` at
+    this boundary so the renderer's pairing rule is explicit. A payload is
+    never dropped: a legacy sender still gets its content on screen.
+    ``kind_missing`` records that stamping happened, so the page can warn
+    instead of silently losing the evidence at this boundary.
+    """
     sanitized = {}
     for k, v in payload.items():
         if isinstance(v, str):
             sanitized[k] = html.escape(v)
         else:
             sanitized[k] = v
+    if sanitized.get("action") == "display":
+        kind = sanitized.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            sanitized["kind"] = "other"
+            sanitized["kind_missing"] = True
+            logger.warning(
+                "Display payload has no content kind, sending as 'other' "
+                "(OUT/IN): %s", sanitized.get("ref") or sanitized.get("reference") or "")
     return sanitized
 
 

@@ -38,6 +38,8 @@ import copy
 import logging
 import weakref
 
+from core.motion_state import MotionState, State as MotionPhase
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +51,9 @@ class DisplayState(QObject):
     cleared = pyqtSignal()               # live was cleared
     nav_changed = pyqtSignal()           # data/anchor fields changed (no re-render)
     cloak_changed = pyqtSignal(bool)     # invisibility-cloak state changed
+    # Uncloak result: the payload to show instantly, or {} when the covered
+    # state was Out/empty and the screen must stay blank.
+    revealed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,6 +88,10 @@ class DisplayState(QObject):
         # shared across tabs (replaces per-tab clear). While on, pushes
         # update the model with zero renders and nothing is broadcast.
         self.cloaked = False
+        # Motion policy for this screen: Out/In state, cloak coverage and
+        # whether sustain runs behind the cloak. Shared by every tab that
+        # publishes through this scope and by the Designer preview manager.
+        self.motion = MotionState()
 
     def set_live_muted(self, muted: bool):
         """Mute operator live renders (cloak support): while muted,
@@ -100,9 +109,17 @@ class DisplayState(QObject):
             return
         self.cloaked = on
         self.set_live_muted(on)
+        if on:
+            self.motion.cloak()
+        else:
+            self.motion.uncloak()
         self.cloak_changed.emit(on)
         if on:
             self.cleared.emit()
+        else:
+            reveal = (self.motion.state is MotionPhase.SHOWN
+                      and self.live_payload is not None)
+            self.revealed.emit(dict(self.live_payload) if reveal else {})
         self.nav_changed.emit()
 
     def remember_live_output_payloads(self, payloads: dict | None) -> None:
@@ -239,6 +256,15 @@ class DisplayState(QObject):
             self.seed_output_id = str(seed_output_id)
         self.live_payload = dict(payload)
         _note_authority(self)
+        self.motion.apply_theme(payload.get("theme_data"))
+        self.motion.push(payload.get("kind") or "other",
+                         has_content=payload.get("action") == "display")
+        # The renderer owns phase timing; the shared model settles as soon as
+        # content is published so Out/In and cloak coverage read the right
+        # state. Out still cancels an entry in the renderer.
+        if self.motion.state in (MotionPhase.ENTERING,
+                                 MotionPhase.TRANSITIONING):
+            self.motion.phase_finished()
         if data is not None:
             self.live_data = data
         self.live_sched_uid = sched_uid
@@ -274,6 +300,7 @@ class DisplayState(QObject):
         self.live_payload = None
         self.live_data = None
         self.live_output_payloads = {}
+        self.motion.clear()
         self.is_cleared = True
         _note_authority(self)
         self.cleared.emit()
@@ -312,6 +339,7 @@ def _carry_into(source: "DisplayState", target: "DisplayState") -> None:
                                    source.preview_data)
         if source.cloaked:
             target.set_cloaked(True)
+        target.motion.copy_from(source.motion)
     except Exception:
         logger.exception("failed to carry display state across scopes")
 
@@ -330,6 +358,7 @@ def _clear_scope(scope: "DisplayState") -> None:
         scope.live_from_schedule = False
         scope.cloaked = False
         scope.live_muted = False
+        scope.motion.clear()
     except Exception:
         logger.exception("failed to clear display scope")
 
@@ -385,6 +414,7 @@ class DisplayStateHandle(QObject):
     cleared = pyqtSignal()
     nav_changed = pyqtSignal()
     cloak_changed = pyqtSignal(bool)
+    revealed = pyqtSignal(dict)
 
     def __init__(self, tab_key: str, parent=None):
         super().__init__(parent)
@@ -411,6 +441,7 @@ class DisplayStateHandle(QObject):
             (s.cleared, self.cleared.emit),
             (s.nav_changed, self.nav_changed.emit),
             (s.cloak_changed, self.cloak_changed.emit),
+            (s.revealed, self.revealed.emit),
         )
         for signal, slot in pairs:
             signal.connect(slot)
@@ -460,6 +491,8 @@ class DisplayStateHandle(QObject):
             else:
                 self.live_changed.emit(dict(s.live_payload))
             self.cloak_changed.emit(bool(s.cloaked))
+            if not s.cloaked:
+                self.revealed.emit(dict(s.live_payload or {}))
             self.nav_changed.emit()
         except Exception:
             logger.exception("failed to replay display state to subscribers")
@@ -540,6 +573,11 @@ class DisplayStateHandle(QObject):
     @property
     def cloaked(self) -> bool:
         return self._scope.cloaked
+
+    @property
+    def motion(self) -> MotionState:
+        """The shared motion machine for this screen."""
+        return self._scope.motion
 
     @property
     def seed_output_id(self) -> str:

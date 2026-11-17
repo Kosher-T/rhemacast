@@ -122,6 +122,10 @@ class PropertyRow(QFrame):
         self.setObjectName("rcPropertyRow")
         self._label_text = str(label)
         self._label_width = label_width
+        # A label longer than the configured column grows it instead of
+        # eliding. The configured width stays the minimum, so ordinary rows
+        # keep the shared column at any panel width.
+        self._effective_label_width = int(label_width)
         self._full_width = bool(full_width)
         self._changed = bool(changed)
         self._warning = ""
@@ -202,7 +206,8 @@ class PropertyRow(QFrame):
             self._outer.addWidget(self._label_row)
             self._outer.addWidget(self._control_host)
         else:
-            self._label_row.setFixedWidth(self._label_width)
+            self._effective_label_width = self.required_label_width()
+            self._label_row.setFixedWidth(self._effective_label_width)
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(tokens.SPACE_4)
@@ -215,13 +220,38 @@ class PropertyRow(QFrame):
         self._reset.raise_()
         self._position_reset()
 
+    def required_label_width(self) -> int:
+        """The configured column, or the width this label actually needs."""
+        metrics = QFontMetrics(self._label.font())
+        chrome = 12  # changed dot and its spacing
+        if self._warning_dot.isVisible():
+            chrome += 6 + tokens.SPACE_4
+        # The reset glyph is an overlay at the right edge of the column. Its
+        # 16 px plus a hair of clearance stay inside the column so showing it
+        # does not elide the label. Two extra pixels keep elidedText from
+        # replacing the last glyph at exactly the text width.
+        chrome += 16 + 3
+        needed = metrics.horizontalAdvance(self._label_text) + chrome
+        return max(int(self._label_width), needed)
+
+    def _update_label_column(self) -> None:
+        """Grow the label column to its text; never shrink below the minimum."""
+        if self._full_width:
+            return
+        width = self.required_label_width()
+        if width == self._effective_label_width:
+            return
+        self._effective_label_width = width
+        self._label_row.setFixedWidth(width)
+        self._position_reset()
+
     def _sync_label_width(self) -> None:
         if self._full_width:
             available = max(0, self._label_row.width() - 20)
         else:
             # The label starts after the changed dot and its spacing (8 px);
             # the reset glyph is painted 17 px from the right edge.
-            available = max(0, self._label_width
+            available = max(0, self._effective_label_width
                             - (27 if self._reset.isVisible() else 12))
             if self._warning_dot.isVisible():
                 available -= 6 + tokens.SPACE_4
@@ -239,6 +269,7 @@ class PropertyRow(QFrame):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._update_label_column()
         self._sync_label_width()
         self._position_reset()
 
@@ -248,7 +279,7 @@ class PropertyRow(QFrame):
             x = max(0, self.width() - 17)
             y = 4
         else:
-            x = max(0, self._label_width - 17)
+            x = max(0, self._effective_label_width - 17)
             y = max(0, (tokens.CONTROL_HEIGHT - 16) // 2)
         self._reset.move(x, y)
         self._reset.raise_()
@@ -295,6 +326,15 @@ class PropertyRow(QFrame):
 
     def set_label(self, text: str) -> None:
         self._label_text = str(text)
+        self._update_label_column()
+        self._sync_label_width()
+
+    def set_label_column_width(self, width: int) -> None:
+        """Adopt a shared column width; the row never drops below it."""
+        if self._full_width:
+            return
+        self._label_width = max(int(width), self._label_width)
+        self._update_label_column()
         self._sync_label_width()
 
     def label(self) -> str:
@@ -313,6 +353,7 @@ class PropertyRow(QFrame):
     def set_warning(self, text: str) -> None:
         self._warning = str(text or "")
         self._warning_dot.setVisible(bool(self._warning))
+        self._update_label_column()
         self._sync_label_width()
         self._refresh_reset()
 
@@ -516,6 +557,7 @@ class PropertySection(QWidget):
                  expanded: bool = True, parent=None):
         super().__init__(parent)
         self.state_key = state_key or title
+        self._rows: list[PropertyRow] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -540,7 +582,31 @@ class PropertySection(QWidget):
 
     def add_row(self, row: QWidget) -> QWidget:
         self._body_layout.addWidget(row)
+        if isinstance(row, PropertyRow):
+            self._rows.append(row)
+            self._align_rows()
         return row
+
+    def _align_rows(self) -> None:
+        """Give every row in the section the widest label column."""
+        rows = []
+        for row in self._rows:
+            try:
+                if row.parent() is not None:
+                    rows.append(row)
+            except RuntimeError:
+                # A rebuilt form deleted the underlying widget.
+                continue
+        self._rows = rows
+        if not rows:
+            return
+        width = max(row.required_label_width() for row in rows)
+        for row in rows:
+            row.set_label_column_width(width)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._align_rows()
 
     def add_widget(self, widget: QWidget) -> QWidget:
         self._body_layout.addWidget(widget)

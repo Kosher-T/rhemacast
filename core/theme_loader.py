@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +51,23 @@ _loaded = False
 _current_theme: str = "default"
 # Track file modification times to detect edits
 _file_mtimes: dict[str, float] = {}
+
+
+@dataclass(frozen=True)
+class ThemeRef:
+    """One theme file, addressed by its permanent ID (the filename stem).
+
+    The ID is what settings, the designer document and every cross-reference
+    use. ``name`` is the loader key (normally the same string; a legacy file
+    may carry a different ``name`` key). A label is display text only and
+    never changes either field.
+    """
+
+    id: str
+    name: str
+    path: Path
+    kind: str
+
 
 
 def set_current_theme(name: str):
@@ -387,6 +405,89 @@ def get_themes_by_kind(kind: str) -> dict[str, dict]:
             if _kind_for_path(_paths.get(n, _THEMES_DIR)) == kind}
 
 
+# ─── ID-keyed file index (the designer's selector, the file watcher) ────────
+
+def themes_dir() -> Path:
+    """The themes root. Tests point this at a disposable copy."""
+    return _THEMES_DIR
+
+
+def iter_theme_files() -> list[Path]:
+    """Every theme JSON file on disk, support folders excluded.
+
+    This scans the folder, not the cache: the file watcher needs files that
+    are new, deleted or temporarily unparsable.
+    """
+    if not _THEMES_DIR.exists():
+        return []
+    return sorted(path for path in _THEMES_DIR.rglob("*.json")
+                  if _is_theme_path(path))
+
+
+def theme_name_for(theme: dict, path: Path) -> str:
+    """The loader key a theme file would be stored under."""
+    return _theme_name(theme, path)
+
+
+def theme_kind_for(path: Path) -> str:
+    """The kind a theme file belongs to, from its folder."""
+    return _kind_for_path(path)
+
+
+def get_theme_refs() -> dict[str, ThemeRef]:
+    """Every loaded theme keyed by its permanent ID (filename stem)."""
+    _load_all()
+    refs: dict[str, ThemeRef] = {}
+    for name, path in _paths.items():
+        refs[path.stem] = ThemeRef(
+            id=path.stem,
+            name=name,
+            path=path,
+            kind=_kind_for_path(path),
+        )
+    return refs
+
+
+def get_theme_path(name: str) -> Optional[Path]:
+    """The file a loaded theme lives in, or None for an unknown name."""
+    _load_all()
+    return _paths.get(name)
+
+
+def dump_theme(theme: dict) -> str:
+    """The exact text `save_theme` writes (also used for write markers)."""
+    return json.dumps(theme, indent=4, ensure_ascii=False)
+
+
+def update_theme_from_disk(path: Path, theme: dict) -> str:
+    """Store an externally edited theme without guessing from mtime.
+
+    The file watcher has already read and parsed the content, so this only
+    reconciles the cache. Returns the loader key the theme now lives under.
+    """
+    _load_all()
+    name = _theme_name(theme, path)
+    for previous, previous_path in list(_paths.items()):
+        if previous_path == path and previous != name:
+            _cache.pop(previous, None)
+            _paths.pop(previous, None)
+            _resolved_cache.pop(previous, None)
+    _store(name, theme, path, os.path.getmtime(path))
+    return name
+
+
+def forget_theme_file(path: Path) -> None:
+    """Drop a theme whose file was deleted on disk."""
+    _load_all()
+    for name, previous in list(_paths.items()):
+        if previous == path:
+            _cache.pop(name, None)
+            _paths.pop(name, None)
+            _resolved_cache.pop(name, None)
+    _file_mtimes.pop(str(path), None)
+
+
+
 def slide_title_visible(theme_data: Optional[dict]) -> bool:
     """Whether a slide payload rendered with this theme shows the deck title.
 
@@ -579,7 +680,7 @@ def reload_themes():
     _load_all()
 
 
-def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None):
+def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None) -> Path:
     """Write a theme dict to its subfolder file and update the cache.
 
     The dict is written exactly as given — no normalization. The designer's
@@ -587,7 +688,8 @@ def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None):
     validation happens on load/resolve, never here.
 
     Existing themes save back to their own file; new themes go under
-    themes/{subdir}/ (default "scripture").
+    themes/{subdir}/ (default "scripture"). The ID is the file name, so a
+    label edit never renames or moves the file. Returns the file written.
     """
     _load_all()
     if name in _paths:
@@ -597,9 +699,10 @@ def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None):
         path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(theme_dict, f, indent=4, ensure_ascii=False)
+            f.write(dump_theme(theme_dict))
         _store(name, theme_dict, path, os.path.getmtime(path))
         logger.info(f"Theme '{name}' saved to {path}")
+        return path
     except Exception as e:
         logger.error(f"Failed to save theme '{name}': {e}")
         raise

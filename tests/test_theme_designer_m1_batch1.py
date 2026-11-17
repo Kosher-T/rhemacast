@@ -26,6 +26,7 @@ from PyQt6 import QtWebEngineWidgets  # noqa: F401,E402
 
 import core.theme_loader as theme_loader  # noqa: E402
 from core import theme_schema as schema  # noqa: E402
+from ui.theme_kit import BlockTabBar  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _THEMES = _ROOT / "themes"
@@ -209,6 +210,47 @@ def _edit_one_field_per_group(tab, raw):
         card.changed.emit(card.value())
     else:
         panel.card("entry")._write_override("duration_ms", 777)
+
+    # Per-element animation: every container's text block must be reachable
+    # and must write to its own path, not container 0.
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        container_id = str(container.get("id", ""))
+        if not container_id:
+            continue
+        tab._on_container_selected(container_id)
+        panel.set_block("text")
+        # Add only: replacing an authored slot would change its leaf shape
+        # (a name is one leaf, an inline definition has many) and this gate
+        # is about key survival.
+        if panel._slot("sustain") in (None, "none", ""):
+            panel._write_slot("sustain", {"use": "fade_in"})
+        panel._on_split_changed({"by": "word", "stagger_ms": 90})
+
+
+def test_block_selection_drives_animation_panel(designer):
+    """Left Blocks tabs and container selection both steer the right panel."""
+    designer.set_theme("fullscreen_rise")
+    props = designer._properties_panel
+    panel = designer._animations_panel
+
+    props.set_selected_block("text")
+    assert props._page() == "blocks"
+    bar = props.findChild(BlockTabBar)
+    assert bar is not None
+    bar.set_current("reference", emit=True)
+    assert panel._block == "reference"
+    assert panel._animation_path() == (
+        "containers", 0, "blocks", "reference", "animation")
+
+    for index, container_id in enumerate(designer._container_ids()):
+        designer._on_container_selected(container_id)
+        assert panel._container_id == container_id
+        assert panel._animation_path()[1] == index
+
+    panel._on_target_changed("body")
+    assert props.selected_block() == "body"
 
 
 @pytest.mark.parametrize(

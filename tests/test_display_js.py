@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from core.constants import OVERLAP_IN_OFFSET_MS as RC_OFFSET
+
 ROOT = Path(__file__).resolve().parents[1]
 STUB = Path(__file__).with_name("jsdom_stub.js")
 
@@ -65,6 +67,28 @@ RENDERERS = ["display/display.js", "ui/widgets/display_view.py"]
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
+def test_border_draw_helpers_agree(renderer):
+    """Direction parsing and the rounded path are shared pure helpers."""
+    body = """
+const path = _roundedRectPathData(100, 60, 8, "top");
+console.log(JSON.stringify({
+  clockwise: _borderDirection("clockwise"),
+  counter: _borderDirection("counterclockwise"),
+  start_left: _borderDirection("start:left counterclockwise"),
+  square: _roundedRectPathData(100, 60, 0, "right"),
+  path: path,
+}));
+"""
+    out = run(renderer, body)
+    assert out["clockwise"] == {"start": "top", "clockwise": True}
+    assert out["counter"] == {"start": "top", "clockwise": False}
+    assert out["start_left"] == {"start": "left", "clockwise": False}
+    assert out["square"].startswith("M 100 0 V 60")
+    assert out["path"].startswith("M 8 0 H 92")
+    assert out["path"].endswith(" Z")
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
 def test_outline_width_bounds_match_core_constants(renderer):
     """The JS renderers cannot import core.constants, so the 1..12 outline
     bounds are written out in each parser. They must not drift from the
@@ -94,6 +118,34 @@ console.log(JSON.stringify({
     assert out["parts"]["width"] == OUTLINE_MAX_PX, (renderer, out)
     assert out["at_max"]["width"] == OUTLINE_MAX_PX, (renderer, out)
     assert out["over"]["width"] == OUTLINE_MAX_PX, (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_canvas_fit_is_honoured_including_in_the_preview(renderer):
+    """``canvas.fit`` must reach the picture, in the OBS renderer and in the
+    Designer preview (which loads the embedded copy). The preview used to
+    force "contain" whenever ``__RC_PREVIEW`` was set, so switching Fit to
+    "none" changed the theme file and nothing on screen."""
+    body = """
+window.__RC_PREVIEW = true;
+applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "contain"});
+var stg = document.getElementById("stage");
+var contain = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
+               bg: stg.style.background};
+applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "none"});
+var none = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
+            bg: stg.style.background};
+console.log(JSON.stringify({contain: contain, none: none}));
+"""
+    out = run(renderer, body)
+    # 1920x1080 viewport, 960x540 canvas -> exactly 2x, no letterbox offset.
+    assert out["contain"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
+    assert out["contain"]["w"] == "960px", (renderer, out)
+    assert out["contain"]["bg"] == "#102030", (renderer, out)
+    # "none" keeps the authored size: no scale transform, still 960x540.
+    assert out["none"]["tf"] == "", (renderer, out)
+    assert out["none"]["w"] == "960px", (renderer, out)
+    assert out["none"]["h"] == "540px", (renderer, out)
 
 
 def _inline_render_cases():
@@ -821,6 +873,428 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_out_cloak_uncloak_keeps_exit_held(renderer):
+    """Out -> Cloak -> Uncloak must not reveal content; In replays entry."""
+    body = """
+const theme = {
+  schema_version: 2,
+  containers: [{ id: "main", animation: { entry: "fade_in", out: "fade_out" } }],
+  animations: {
+    fade_in: { type: "fade_in", duration_ms: 100, delay_ms: 0, easing: "ease-out" },
+    fade_out: { type: "fade_out", duration_ms: 100, delay_ms: 0, easing: "ease-out" }
+  }
+};
+handlePayload({ action: "display", text: "A", reference: "1:1", theme_data: theme });
+const shown = _motionState;
+handlePayload({ action: "out" });
+const out = _motionState;
+handlePayload({ action: "out" });
+const outTwice = _motionState;
+handlePayload({ action: "cloak" });
+const cloaked = [_motionState, _motionCovered];
+handlePayload({ action: "uncloak", reveal: false });
+const afterUncloak = _motionState;
+handlePayload({ action: "in" });
+const afterIn = _motionState;
+console.log(JSON.stringify({ shown, out, outTwice, cloaked, afterUncloak, afterIn }));
+"""
+    res = run(renderer, body)
+    assert res["shown"] == "shown"
+    assert res["out"] == res["outTwice"] == "out"
+    assert res["cloaked"] == ["cloaked", "out"]
+    assert res["afterUncloak"] == "out"
+    assert res["afterIn"] == "shown"
+
+
+_MOTION_THEME = """
+const MADEF = {
+  fade_in: { type: "fade_in", duration_ms: 0, delay_ms: 0, easing: "ease-out" },
+  fade_out: { type: "fade_out", duration_ms: 0, delay_ms: 0, easing: "ease-out" }
+};
+function motionTheme(name, withPhases) {
+  const anim = withPhases
+    ? { entry: "fade_in", out: "fade_out",
+        transition: { in: "fade_in", out: "fade_out" } }
+    : undefined;
+  const containers = anim ? [{ id: "main", animation: anim }]
+                          : [{ id: "main" }];
+  return { schema_version: 2, name: name, containers: containers,
+           animations: MADEF };
+}
+"""
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_cloak_hides_the_canvas_background(renderer):
+    """Cloak blanks the page (canvas included); uncloak restores it."""
+    body = _MOTION_THEME + """
+const theme = motionTheme("t", false);
+theme.canvas = { width: 1920, height: 1080, background: "#123456" };
+handlePayload({ action: "display", kind: "scripture", text: "A",
+                reference: "1:1", theme_data: theme });
+const before = stage.style.visibility || "";
+handlePayload({ action: "cloak" });
+const cloaked = stage.style.visibility;
+const state = window.__rcMotionState.state;
+handlePayload({ action: "uncloak" });
+const restored = stage.style.visibility || "";
+console.log(JSON.stringify({ before, cloaked, state, restored }));
+"""
+    res = run(renderer, body)
+    assert res["before"] == ""
+    assert res["cloaked"] == "hidden"
+    assert res["state"] == "cloaked"
+    assert res["restored"] == ""
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_pairing_phases_by_kind(renderer):
+    body = _MOTION_THEME + """
+const a = motionTheme("a", true);
+const b = motionTheme("b", true);
+
+handlePayload({ action: "display", kind: "scripture", text: "A", reference: "1:1", theme_data: a });
+handlePayload({ action: "display", kind: "scripture", text: "B", reference: "1:2", theme_data: b });
+const scripturePair = window.__rcMotionState.plan;
+
+handlePayload({ action: "display", kind: "scripture", text: "C", reference: "1:3", theme_data: a });
+handlePayload({ action: "display", kind: "freeform", text: "D", theme_data: b });
+const scriptureToFreeform = window.__rcMotionState.plan;
+
+handlePayload({ action: "display", kind: "scripture", text: "E", reference: "1:4", theme_data: a });
+const freeformToScripture = window.__rcMotionState.plan;
+
+handlePayload({ action: "display", kind: "other", text: "F", theme_data: b });
+const unlabelled = window.__rcMotionState.plan;
+
+console.log(JSON.stringify({ scripturePair, scriptureToFreeform, freeformToScripture, unlabelled }));
+"""
+    res = run(renderer, body)
+    assert res["scripturePair"]["phases"] == ["transition_out", "transition_in"]
+    assert res["scriptureToFreeform"]["phases"] == ["out", "in"]
+    assert res["freeformToScripture"]["phases"] == ["out", "in"]
+    assert res["unlabelled"]["phases"] == ["out", "in"]
+    assert res["unlabelled"]["old"] == "scripture"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_overlap_plan_carries_the_fixed_offset(renderer):
+    """Both orderings publish the same plan shape; overlap adds the offset."""
+    body = _MOTION_THEME + """
+const overlapped = motionTheme("o", true);
+overlapped.motion = { transition: "overlap", in_out: "overlap",
+                      sustain_when_cloaked: "pause", deck_steps: "out_in" };
+const plain = motionTheme("p", true);
+handlePayload({ action: "display", kind: "scripture", text: "A",
+                reference: "1:1", theme_data: plain });
+handlePayload({ action: "display", kind: "scripture", text: "B",
+                reference: "1:2", theme_data: overlapped });
+const transitionPlan = window.__rcMotionState.plan;
+handlePayload({ action: "display", kind: "freeform", text: "C",
+                theme_data: overlapped });
+const inOutPlan = window.__rcMotionState.plan;
+console.log(JSON.stringify({ transitionPlan, inOutPlan }));
+"""
+    res = run(renderer, body)
+    for plan in (res["transitionPlan"], res["inOutPlan"]):
+        assert plan["order"] == "overlap"
+        assert plan["offset_ms"] == RC_OFFSET
+    assert res["transitionPlan"]["phases"] == ["transition_out",
+                                                "transition_in"]
+    assert res["inOutPlan"]["phases"] == ["out", "in"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_transition_pair_actually_animates(renderer):
+    """Scripture pairing starts the out phase, then the in phase."""
+    body = _MOTION_THEME + """
+const slow = {
+  schema_version: 2,
+  containers: [{ id: "main", animation: {
+    entry: "fade_in", out: "fade_out",
+    transition: { in: "fade_in", out: "fade_out" } } }],
+  animations: {
+    fade_in: { type: "fade_in", duration_ms: 200, easing: "ease-out" },
+    fade_out: { type: "fade_out", duration_ms: 200, easing: "ease-out" }
+  }
+};
+const played = [];
+const originalPlay = _playElementAnimation;
+_playElementAnimation = function (el, def, opts) {
+  played.push((opts && opts.phase) || "in");
+  return originalPlay(el, def, opts);
+};
+handlePayload({ action: "display", kind: "scripture", text: "A", reference: "1:1", theme_data: slow });
+setTimeout(function () {
+  played.length = 0;
+  handlePayload({ action: "display", kind: "scripture", text: "B", reference: "1:2", theme_data: slow });
+  const outAnims = _animatedEls.size;
+  setTimeout(function () {
+    console.log(JSON.stringify({
+      outAnims: outAnims, played: played.slice(),
+      state: window.__rcMotionState.state,
+      plan: window.__rcMotionState.plan
+    }));
+  }, 300);
+}, 300);
+"""
+    res = run(renderer, body)
+    assert res["outAnims"] >= 1
+    assert "out" in res["played"]
+    assert "in" in res["played"]
+    assert res["state"] == "shown"
+    assert res["plan"]["phases"] == ["transition_out", "transition_in"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_freeform_pair_plays_out_then_entry(renderer):
+    body = _MOTION_THEME + """
+const t = motionTheme("f", true);
+const played = [];
+const originalPlay = _playElementAnimation;
+_playElementAnimation = function (el, def, opts) {
+  played.push((opts && opts.phase) || "in");
+  return originalPlay(el, def, opts);
+};
+handlePayload({ action: "display", kind: "freeform", text: "A", theme_data: t });
+played.length = 0;
+handlePayload({ action: "display", kind: "freeform", text: "B", theme_data: t });
+console.log(JSON.stringify({
+  played: played.slice(), plan: window.__rcMotionState.plan,
+}));
+"""
+    res = run(renderer, body)
+    assert res["plan"]["phases"] == ["out", "in"]
+    assert res["played"][0] == "out"
+    assert "entry" in res["played"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_no_transition_slots_plays_nothing_for_scripture_pairing(renderer):
+    """Zero animation is the correct result when the theme has no slots.
+
+    The pairing rule still says scripture -> scripture. A theme that only
+    declares entry/out must not invent a transition: the old content is
+    replaced with no motion rather than falling back to OUT/IN.
+    """
+    body = _MOTION_THEME + """
+const t = {
+  schema_version: 2,
+  containers: [{ id: "main", animation: { entry: "fade_in", out: "fade_out" } }],
+  animations: {
+    fade_in: { type: "fade_in", duration_ms: 100, easing: "linear" },
+    fade_out: { type: "fade_out", duration_ms: 100, easing: "linear" }
+  }
+};
+const played = [];
+const originalPlay = _playElementAnimation;
+_playElementAnimation = function (el, def, opts) {
+  played.push((opts && opts.phase) || "in");
+  return originalPlay(el, def, opts);
+};
+handlePayload({ action: "display", kind: "scripture", text: "A", reference: "1:1", theme_data: t });
+setTimeout(function () {
+  played.length = 0;
+  handlePayload({ action: "display", kind: "scripture", text: "B", reference: "1:2", theme_data: t });
+  setTimeout(function () {
+    console.log(JSON.stringify({
+      played: played.slice(), plan: window.__rcMotionState.plan,
+      text: document.getElementById("verse-text").innerHTML
+    }));
+  }, 300);
+}, 300);
+"""
+    res = run(renderer, body)
+    assert res["plan"]["phases"] == ["transition_out", "transition_in"]
+    assert res["played"] == []
+    assert "B" in res["text"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_no_transition_slots_still_plays_out_then_in_for_a_slide(renderer):
+    """Scripture -> slide is not a scripture pair: it keeps OUT then IN.
+
+    The same theme that is silent for scripture -> scripture must still run
+    its declared out/entry slots when the content kind changes.
+    """
+    body = _MOTION_THEME + """
+const t = {
+  schema_version: 2,
+  containers: [{ id: "main", animation: { entry: "fade_in", out: "fade_out" } }],
+  animations: {
+    fade_in: { type: "fade_in", duration_ms: 100, easing: "linear" },
+    fade_out: { type: "fade_out", duration_ms: 100, easing: "linear" }
+  }
+};
+const played = [];
+const originalPlay = _playElementAnimation;
+_playElementAnimation = function (el, def, opts) {
+  played.push((opts && opts.phase) || "in");
+  return originalPlay(el, def, opts);
+};
+handlePayload({ action: "display", kind: "scripture", text: "A", reference: "1:1", theme_data: t });
+setTimeout(function () {
+  played.length = 0;
+  handlePayload({ action: "display", kind: "freeform", text: "B", theme_data: t });
+  setTimeout(function () {
+    console.log(JSON.stringify({
+      played: played.slice(), plan: window.__rcMotionState.plan,
+      text: document.getElementById("verse-text").innerHTML
+    }));
+  }, 300);
+}, 300);
+"""
+    res = run(renderer, body)
+    assert res["plan"]["phases"] == ["out", "in"]
+    assert res["played"] == ["out", "entry"]
+    assert "B" in res["text"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_unlabelled_payload_warns_and_is_treated_as_other(renderer):
+    """A missing kind is visible, not silent, and never borrows scripture.
+
+    The server stamps ``kind="other"`` at the wire boundary, so
+    ``kind_missing`` is the only surviving evidence; both shapes must warn.
+    """
+    body = _MOTION_THEME + """
+const t = motionTheme("u", true);
+const warnings = [];
+const originalWarn = console.warn;
+console.warn = function () {
+  warnings.push(Array.prototype.join.call(arguments, " "));
+};
+handlePayload({ action: "display", text: "A", reference: "1:1", theme_data: t });
+const missing = {
+  kind: window.__rcMotionState.kind,
+  unlabelled: window.__rcMotionState.unlabelled,
+  plan: window.__rcMotionState.plan,
+};
+handlePayload({ action: "display", kind: "scripture", text: "B", reference: "1:2", theme_data: t });
+const labelled = {
+  kind: window.__rcMotionState.kind,
+  unlabelled: window.__rcMotionState.unlabelled,
+  plan: window.__rcMotionState.plan,
+};
+handlePayload({ action: "display", kind: "other", kind_missing: true,
+                text: "C", reference: "1:3", theme_data: t });
+const stamped = {
+  kind: window.__rcMotionState.kind,
+  unlabelled: window.__rcMotionState.unlabelled,
+  plan: window.__rcMotionState.plan,
+};
+console.warn = originalWarn;
+console.log(JSON.stringify({ warnings: warnings, missing: missing,
+                             labelled: labelled, stamped: stamped }));
+"""
+    res = run(renderer, body)
+    # The first push is an entry: no pairing ran, so there is no plan. The
+    # missing label is still recorded and warned about.
+    assert res["missing"]["kind"] == "other"
+    assert res["missing"]["unlabelled"] is True
+    assert res["missing"]["plan"] is None
+    assert res["labelled"]["kind"] == "scripture"
+    assert res["labelled"]["unlabelled"] is False
+    assert res["labelled"]["plan"]["phases"] == ["out", "in"]
+    assert res["stamped"]["kind"] == "other"
+    assert res["stamped"]["unlabelled"] is True
+    assert res["stamped"]["plan"]["phases"] == ["out", "in"]
+    assert sum("no kind" in w for w in res["warnings"]) == 2
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_theme_deck_steps_can_skip_out_in_inside_one_deck(renderer):
+    """A freeform theme may make Prev/Next inside one deck instant."""
+    body = _MOTION_THEME + """
+const theme = motionTheme("deck", true);
+theme.motion = { deck_steps: "instant" };
+handlePayload({ action: "display", kind: "freeform", deck_id: 7,
+                text: "A", theme_data: theme });
+handlePayload({ action: "display", kind: "freeform", deck_id: 7,
+                text: "B", theme_data: theme });
+const inDeck = window.__rcMotionState.plan;
+const state = window.__rcMotionState.state;
+const animations = _animatedEls.size;
+handlePayload({ action: "display", kind: "freeform", deck_id: 8,
+                text: "C", theme_data: theme });
+const crossDeck = window.__rcMotionState.plan;
+console.log(JSON.stringify({
+  inDeck: inDeck, crossDeck: crossDeck, state: state,
+  animations: animations,
+}));
+"""
+    res = run(renderer, body)
+    assert res["inDeck"]["phases"] == []
+    assert res["state"] == "shown"
+    assert res["animations"] == 0
+    assert res["crossDeck"]["phases"] == ["out", "in"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_pairing_without_phases_is_instant(renderer):
+    """No transition slots: the switch is instant, never an exit/entry."""
+    body = _MOTION_THEME + """
+const bare = motionTheme("bare", false);
+const exiting = { schema_version: 2, containers: [{ id: "main",
+  animation: { entry: "fade_in", out: "fade_out" } }], animations: MADEF };
+handlePayload({ action: "display", kind: "scripture", text: "A", reference: "1:1", theme_data: exiting });
+handlePayload({ action: "display", kind: "scripture", text: "B", reference: "1:2", theme_data: bare });
+const plan = window.__rcMotionState.plan;
+const state = window.__rcMotionState.state;
+const animations = _animatedEls.size;
+console.log(JSON.stringify({ plan, state, animations }));
+"""
+    res = run(renderer, body)
+    assert res["plan"]["phases"] == ["transition_out", "transition_in"]
+    assert res["state"] == "shown"
+    # The new theme has no transition slots: no exit or entry substituted.
+    assert res["animations"] == 0
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_sustain_runs_until_stopped(renderer):
+    """Sustain starts one infinite animation and Out cancels it."""
+    body = """
+const theme = {
+  schema_version: 2,
+  containers: [{ id: "main", animation: { sustain: "fade_up" } }],
+  animations: { fade_up: { type: "fade_up", duration_ms: 200, delay_ms: 0,
+                           easing: "ease-out" } }
+};
+const el = document.getElementById("rc-cont-main");
+const orig = el.animate;
+let iterations = null;
+el.animate = function (frames, opts) {
+  iterations = String(opts.iterations);
+  return orig.call(el, frames, opts);
+};
+handlePayload({ action: "display", text: "A", reference: "1:1", theme_data: theme });
+const started = iterations;
+handlePayload({ action: "out" });
+const afterOut = _motionState;
+console.log(JSON.stringify({ started, afterOut }));
+"""
+    res = run(renderer, body)
+    assert res["started"] == "Infinity"
+    assert res["afterOut"] == "out"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_motion_cloak_remembers_shown_content(renderer):
+    body = """
+const theme = { schema_version: 2, containers: [{ id: "main" }] };
+handlePayload({ action: "display", text: "A", reference: "1:1", theme_data: theme });
+handlePayload({ action: "cloak" });
+const cloaked = [_motionState, _motionCovered];
+handlePayload({ action: "uncloak" });
+console.log(JSON.stringify({ cloaked, after: _motionState }));
+"""
+    res = run(renderer, body)
+    assert res["cloaked"] == ["cloaked", "shown"]
+    assert res["after"] == "shown"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
 def test_v2_canvas_fit_scaling(renderer):
     """canvas.fit='contain' applies transform scaling and centering to stage."""
     body = """
@@ -880,22 +1354,68 @@ console.log(JSON.stringify([res1, res2, res3, res4]));
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_v2_unknown_animation_slot_falls_back_by_phase(renderer):
-    """An unknown name resolves to the phase fallback, never to undefined."""
+def test_v2_unknown_animation_slot_disables_the_slot(renderer):
+    """An unknown name resolves to no animation, never a phase fallback."""
     body = """
 console.log(JSON.stringify([
   _resolveSlotDef("nope", {}, "in"),
   _resolveSlotDef("nope", {}, "out"),
   _resolveSlotDef({ use: "nope", duration_ms: 900 }, {}, "out"),
+  _resolveSlotDef({}, {}, "in"),
   _resolveSlotDef(null, {}, "in")
 ]));
 """
     res = run(renderer, body)
-    assert res[0]["type"] == "fade_in"
-    assert res[1]["type"] == "fade_out"
-    assert res[2]["type"] == "fade_out"
-    assert res[2]["duration_ms"] == 900
+    assert res[0] is None
+    assert res[1] is None
+    assert res[2] is None
     assert res[3] is None
+    assert res[4] is None
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_animation_resolution_has_no_fade_fallback(renderer):
+    """The resolver and typewriter must not substitute a hidden fade.
+
+    `_playElementAnimation` legitimately knows how to play a fade that the
+    theme asks for; the fallback path is what this guard pins. The empty
+    transition object in default_typewriter used to become fade_in here and
+    in core/theme_schema.py.
+    """
+    src = _script_text(renderer)
+    for name in ("_resolveSlotDef", "_playTypewriter",
+                 "_collectTransitionIn", "_collectTransitionOut"):
+        body = _extract_fn(src, name)
+        assert "fade_in" not in body, (renderer, name)
+        assert "fade_out" not in body, (renderer, name)
+        assert "visibility = \"hidden\"" not in body, (renderer, name)
+    # The render itself has no timer, opacity or visibility staging: the
+    # update swaps DOM and applies the theme in one synchronous call.
+    render = _extract_fn(src, "_renderDisplay")
+    assert "setTimeout" not in render, renderer
+    assert "opacity" not in render, renderer
+    assert "visibility" not in render, renderer
+
+
+def test_stylesheet_content_animation_is_allowlisted():
+    """Every CSS animation declaration is a justified, known exception.
+
+    `transition: none` disables inherited transitions on the container.
+    `rc-blink` is the theme-authored typewriter cursor. Nothing else may
+    animate or transition content in the stylesheet.
+    """
+    css = (ROOT / "display" / "themes.css").read_text()
+    allowed = {
+        "transition: none;": "container transitions disabled",
+        "animation: rc-blink 1s step-start infinite;": "typewriter cursor",
+        "@keyframes rc-blink {": "typewriter cursor frames",
+    }
+    hits = [line.strip() for line in css.splitlines()
+            if "@keyframes" in line or "animation:" in line
+            or "transition:" in line]
+    for hit in hits:
+        assert hit in allowed, hit
+    assert len(hits) == len(allowed)
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -1024,3 +1544,81 @@ console.log(JSON.stringify({
     assert res["rest"]["transition"]["in"] == {"use": "scale_up"}
     assert res["rest"]["transition"]["out"] == {"use": "fade_out"}
     assert res["rest"]["out"] == {"use": "fade_out"}
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_verse_num_authored_properties_reach_the_number_span(renderer):
+    """Every authored number property is an inline style on the span.
+
+    Inline styles beat themes.css, so an authored value is the single
+    effective source instead of competing with the stylesheet defaults.
+    """
+    body = """
+const theme = {
+  schema_version: 2,
+  canvas: { width: 1920, height: 1080 },
+  containers: [{
+    id: "main", visible: true,
+    blocks: {
+      text: { visible: true },
+      verse_num: {
+        visible: true, mode: "inline", color: "#abcdef",
+        size: "1.1em", weight: 800, opacity: 0.55,
+        line_height: 1.4, vertical_align: "middle", margin_right: 12
+      }
+    }
+  }]
+};
+handlePayload({ action: "display", text: "Hello", reference: "John 3:16",
+                theme_data: theme });
+console.log(JSON.stringify({
+  html: document.getElementById("verse-text").innerHTML,
+  attrs: _verseNumAttrs(theme.containers[0].blocks.verse_num)
+}));
+"""
+    res = run(renderer, body)
+    assert "class=\"verse-num\"" in res["html"], (renderer, res)
+    for expected in ("color:#abcdef", "font-size:1.1em", "font-weight:800",
+                     "opacity:0.55", "line-height:1.4",
+                     "vertical-align:middle", "margin-right:12px"):
+        assert expected in res["html"], (renderer, expected, res)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_text_shadow_object_string_none_and_shared(renderer):
+    """Structured shadows become valid CSS; shared text references paint none."""
+    body = """
+console.log(JSON.stringify({
+  object: _textShadowCss({x: 2, y: 3, blur: 4, spread: 9, color: "#112233"}),
+  inset: _textShadowCss({x: 0, y: 1, blur: 0, color: "red", inset: true}),
+  string: _textShadowCss("0 4px 12px rgba(0,0,0,0.4)"),
+  none: _textShadowCss("none"),
+  shared: _textShadowCss({shared: "soft"})
+}));
+"""
+    res = run(renderer, body)
+    assert res["object"] == "2px 3px 4px #112233", (renderer, res)
+    assert "9px" not in res["object"], (renderer, res)
+    assert res["inset"] == "inset 0px 1px 0px red", (renderer, res)
+    assert res["string"] == "0 4px 12px rgba(0,0,0,0.4)", (renderer, res)
+    assert res["none"] == "none", (renderer, res)
+    assert res["shared"] == "", (renderer, res)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_text_shadow_object_reaches_the_root_css_variable(renderer):
+    body = """
+const theme = {
+  schema_version: 2,
+  canvas: { width: 1920, height: 1080 },
+  containers: [{ id: "main", visible: true,
+    blocks: { text: { text_shadow: {x: 1, y: 2, blur: 3,
+                                    color: "#445566"} } } }]
+};
+applyTheme(theme);
+console.log(JSON.stringify({
+  shadow: document.documentElement.style.getPropertyValue("--rc-text-shadow")
+}));
+"""
+    res = run(renderer, body)
+    assert res["shadow"] == "1px 2px 3px #445566", (renderer, res)

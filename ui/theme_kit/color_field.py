@@ -180,6 +180,26 @@ def _normalise_text(text: str) -> Optional[str]:
     return css_color(color)
 
 
+def display_color_text(value: Any,
+                       palette: Optional[dict[str, str]] = None) -> str:
+    """Human-facing text for a colour value: hex, never a ``@token``.
+
+    The stored value is untouched — a theme may keep ``@gold`` so the palette
+    still owns it — but a field must show the colour it actually paints, not
+    the symbolic name.
+    """
+    raw = "" if value is None else str(value)
+    if not raw:
+        return ""
+    text = raw.strip()
+    color = resolve_paint_color(text, palette)
+    if color is not None and (
+            text.startswith("@")
+            or text.casefold() in ("transparent", "none")):
+        return css_color(color, force_alpha=color.alpha() < 255)
+    return raw
+
+
 # ─── Painted picker pieces ──────────────────────────────────────────────────
 
 class _ColorPlane(QWidget):
@@ -214,6 +234,10 @@ class _ColorPlane(QWidget):
 
     def set_hue(self, hue: int) -> None:
         self._hue = max(0, min(359, int(hue)))
+        # Same resurrection rule as a plane click: a hue change on a fully
+        # transparent swatch must become visible.
+        if self._alpha == 0:
+            self._alpha = 255
         self.update()
 
     def set_alpha(self, alpha: int) -> None:
@@ -229,6 +253,12 @@ class _ColorPlane(QWidget):
             (x - rect.left()) / max(1.0, rect.width()) * 255)))
         self._val = max(0, min(255, round(
             (1.0 - (y - rect.top()) / max(1.0, rect.height())) * 255)))
+        # A theme default of "transparent" seeds alpha = 0. Picking a hue
+        # then produced #rrggbb00 — an invisible colour, so "changing the
+        # canvas background" looked like it did nothing. A deliberate pick
+        # on the plane means "paint this"; the alpha strip can lower it again.
+        if self._alpha == 0:
+            self._alpha = 255
         self.update()
         self.preview.emit(self.color())
 
@@ -268,6 +298,8 @@ class _ColorPlane(QWidget):
             changed = False
             super().keyPressEvent(event)
         if changed:
+            if self._alpha == 0:
+                self._alpha = 255
             self.update()
             self.preview.emit(self.color())
             self.committed.emit(self.color())
@@ -569,7 +601,8 @@ class ColorEditor(QWidget):
                 self.hue.set_value(max(0, color.hsvHue()))
                 self.alpha.set_value(color.alpha())
                 self.alpha.set_base_color(color)
-            self.hex_edit.setText(self._text)
+            self.hex_edit.setText(
+                display_color_text(self._text, self._palette_map))
             self._sync_keyword_buttons()
             self._sync_palette_buttons()
         finally:
@@ -596,7 +629,8 @@ class ColorEditor(QWidget):
         self._text = text
         self._updating = True
         try:
-            self.hex_edit.setText(text)
+            self.hex_edit.setText(
+                display_color_text(text, self._palette_map))
             self._sync_keyword_buttons()
             self._sync_palette_buttons()
         finally:
@@ -609,6 +643,7 @@ class ColorEditor(QWidget):
         if self._updating:
             return
         self._last_color = color
+        self.alpha.set_value(color.alpha())
         self.alpha.set_base_color(color)
         self._emit(css_color(color), commit=False)
 
@@ -616,6 +651,7 @@ class ColorEditor(QWidget):
         if self._updating:
             return
         self._last_color = color
+        self.alpha.set_value(color.alpha())
         self.alpha.set_base_color(color)
         self._emit(css_color(color), commit=True)
 
@@ -640,11 +676,17 @@ class ColorEditor(QWidget):
             return
         raw = self.hex_edit.text().strip()
         if not raw:
-            self.hex_edit.setText(self._text)
+            self.hex_edit.setText(
+                display_color_text(self._text, self._palette_map))
+            return
+        # The edit shows a token's resolved hex. Leaving the field unchanged
+        # must not rewrite ``@gold`` into ``#d4af37``.
+        if raw == display_color_text(self._text, self._palette_map):
             return
         normalised = _normalise_text(raw)
         if normalised is None:
-            self.hex_edit.setText(self._text)
+            self.hex_edit.setText(
+                display_color_text(self._text, self._palette_map))
             return
         if normalised == self._text:
             return
@@ -704,7 +746,8 @@ class ColorEditor(QWidget):
                 self.alpha.set_value(color.alpha())
                 self.alpha.set_base_color(color)
             self._text = value
-            self.hex_edit.setText(value)
+            self.hex_edit.setText(
+                display_color_text(value, self._palette_map))
             self._sync_keyword_buttons()
             self._sync_palette_buttons()
         finally:
@@ -919,7 +962,8 @@ class ColorField(QWidget):
 
     # ── syncing ─────────────────────────────────────────────────────────────
     def _sync(self) -> None:
-        self._edit.setText(self._value)
+        self._edit.setText(display_color_text(self._value,
+                                              self._palette_map))
         self._clear.setVisible(self._nullable and bool(self._value))
         self._swatch.set_value(self._value, self._palette_map)
         self.update()
@@ -933,6 +977,11 @@ class ColorField(QWidget):
                 self.changed.emit(None)
             else:
                 self._edit.setText(self._value)
+            return
+        # Focus-out re-emits the text the field itself painted; a token's
+        # displayed hex is not an edit, and must not replace the token.
+        if raw == display_color_text(self._value, self._palette_map):
+            self._sync()
             return
         normalised = _normalise_text(raw)
         if normalised is None:
@@ -968,13 +1017,15 @@ class ColorField(QWidget):
         self._open_value = self._value
         popover.committed.connect(self._on_popover_committed)
         popover.cancelled.connect(self._on_popover_cancelled)
+        popover.closed.connect(self._on_popover_closed)
         popover.destroyed.connect(self._on_popover_destroyed)
         popover.show_below(self, width=248, max_height=400,
                            align="left")
 
     def _on_popover_preview(self, text: str) -> None:
         self._value = "" if text is None else str(text)
-        self._edit.setText(self._value)
+        self._edit.setText(display_color_text(self._value,
+                                              self._palette_map))
         self._swatch.set_value(self._value, self._palette_map)
         self._clear.setVisible(self._nullable and bool(self._value))
         self.preview.emit(self.value())
@@ -991,6 +1042,13 @@ class ColorField(QWidget):
         self._value = getattr(self, "_open_value", self._value)
         self._sync()
         self.preview.emit(self.value())
+
+    def _on_popover_closed(self) -> None:
+        popover = self._popover
+        self._popover = None
+        if popover is not None:
+            popover.deleteLater()
+        self.update()
 
     def _on_popover_destroyed(self, *_args) -> None:
         self._popover = None

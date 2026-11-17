@@ -1,0 +1,4186 @@
+{
+ "_meta": {
+  "generated": "2026-11-12",
+  "source": "docs/theme_parameter_atlas.json",
+  "entries": 446,
+  "verdict_counts": {
+   "works": 317,
+   "ignored": 124,
+   "partial": 5
+  },
+  "method": "Paths are the atlas leaves. Renderer flags come from the actual read sites in display/display.js and the inline copy; Designer flags come from the property editor, container geometry, animation and motion panels. Harness means an existing Node renderer test exercises the behaviour; code reading means the read site was inspected but the specific leaf was not individually harnessed.",
+  "limitations": "The Node stub records style writes rather than painted pixels, so 'works' means the renderer applies the value, not that it was visually inspected in OBS."
+ },
+ "_disagreements": [],
+ "_animatable_gaps": {
+  "already_reachable": [
+   "container opacity (keyframe opacity)",
+   "container position/translate (keyframe translate_x/translate_y)",
+   "scale/rotate (keyframe scale/rotate)",
+   "blur (keyframe blur)",
+   "text opacity (keyframe opacity)"
+  ],
+  "not_reachable": [
+   {
+    "property": "canvas.background",
+    "atlas_paths": [
+     "canvas.background"
+    ],
+    "needs": "paint interpolation or a background-color keyframe track"
+   },
+   {
+    "property": "canvas.width/height/fit",
+    "atlas_paths": [
+     "canvas.width",
+     "canvas.height",
+     "canvas.fit"
+    ],
+    "needs": "canvas transform track; fit is layout policy, not animatable"
+   },
+   {
+    "property": "container background",
+    "atlas_paths": [
+     "containers.*.background"
+    ],
+    "needs": "paint interpolation (color or gradient stop tracks)"
+   },
+   {
+    "property": "border colour/width/style/radius and sides",
+    "atlas_paths": [
+     "containers.*.border.*",
+     "containers.*.border_radius"
+    ],
+    "needs": "border track per side; CSS border-color/width interpolation"
+   },
+   {
+    "property": "box shadow",
+    "atlas_paths": [
+     "containers.*.box_shadow.*"
+    ],
+    "needs": "shadow track (x, y, blur, spread, colour, inset)"
+   },
+   {
+    "property": "backdrop filter",
+    "atlas_paths": [
+     "containers.*.backdrop_filter"
+    ],
+    "needs": "filter track with function interpolation"
+   },
+   {
+    "property": "text colour",
+    "atlas_paths": [
+     "containers.*.blocks.*.color"
+    ],
+    "needs": "colour track; current frames have no colour channel"
+   },
+   {
+    "property": "text shadow",
+    "atlas_paths": [
+     "containers.*.blocks.*.text_shadow.*"
+    ],
+    "needs": "shadow track, plus fix the object form first"
+   },
+   {
+    "property": "text outline",
+    "atlas_paths": [
+     "containers.*.blocks.*.text_outline"
+    ],
+    "needs": "outline layer width/colour track"
+   },
+   {
+    "property": "font family/style/weight/size/line height",
+    "atlas_paths": [
+     "containers.*.blocks.*.font_family",
+     "containers.*.blocks.*.font_style",
+     "containers.*.blocks.*.weight",
+     "containers.*.blocks.*.size",
+     "containers.*.blocks.*.min_size",
+     "containers.*.blocks.*.max_size",
+     "containers.*.blocks.*.line_height"
+    ],
+    "needs": "font metric tracks; family/style are discrete, size is numeric"
+   },
+   {
+    "property": "letter spacing/word spacing",
+    "atlas_paths": [
+     "containers.*.blocks.*.letter_spacing",
+     "containers.*.blocks.*.word_spacing"
+    ],
+    "needs": "length tracks on the text element"
+   },
+   {
+    "property": "text align/transform/decoration/direction",
+    "atlas_paths": [
+     "containers.*.blocks.*.text_align",
+     "containers.*.blocks.*.text_transform",
+     "containers.*.blocks.*.text_decoration",
+     "containers.*.blocks.*.direction"
+    ],
+    "needs": "discrete tracks, no interpolation"
+   },
+   {
+    "property": "block margins/padding",
+    "atlas_paths": [
+     "containers.*.blocks.*.margin_*",
+     "containers.*.blocks.*.padding*"
+    ],
+    "needs": "length tracks; most are not read today"
+   },
+   {
+    "property": "body gap/padding",
+    "atlas_paths": [
+     "containers.*.blocks.body.gap",
+     "containers.*.blocks.body.padding*"
+    ],
+    "needs": "length tracks on the flex container"
+   },
+   {
+    "property": "container size/min/max and layer",
+    "atlas_paths": [
+     "containers.*.width",
+     "containers.*.height",
+     "containers.*.min_width",
+     "containers.*.max_width",
+     "containers.*.min_height",
+     "containers.*.max_height",
+     "containers.*.layer"
+    ],
+    "needs": "size tracks; layer is discrete and should stay stepped"
+   },
+   {
+    "property": "container overflow and visibility",
+    "atlas_paths": [
+     "containers.*.overflow",
+     "containers.*.visible"
+    ],
+    "needs": "discrete tracks, not interpolation"
+   }
+  ],
+  "keyframe_channels": [
+   "at",
+   "opacity",
+   "translate_x",
+   "translate_y",
+   "scale",
+   "rotate",
+   "blur"
+  ],
+  "conclusion": "The keyframe set is a transform/opacity/blur channel list. Colour, border, shadow, filter, background and font metrics need new typed tracks in the schema and in the animation builder; they cannot be expressed today."
+ },
+ "leaves": [
+  {
+   "path": "schema_version",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": false,
+   "verdict": "works",
+   "evidence": "display/display.js:440 (isV2 check)",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "name",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "metadata only; no renderer read",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "label",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "metadata only; Designer shows it read-only",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "description",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "metadata only; Designer shows it read-only",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "author",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "metadata only; no reader",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "kind",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "theme loader/folder; display.js never reads theme.kind",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "canvas.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:268-270 stage size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "canvas.height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:268-270 stage size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "canvas.background",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:267-270 stage background",
+   "verified_by": "harness"
+  },
+  {
+   "path": "canvas.fit",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:266-282 contain scaling",
+   "verified_by": "harness"
+  },
+  {
+   "path": "motion.in_out",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js:3143 and 3145 return it; no renderer path consumes it",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "motion.transition",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js:3144 returns it; pairing executes sequentially",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "motion.sustain_when_cloaked",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:3184,3234",
+   "verified_by": "harness"
+  },
+  {
+   "path": "motion.deck_steps",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:3340-3348",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.id",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.label",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js:302-312 filters visible only",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.kind",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:302-312 renders every visible container; Designer control hidden, key preserved",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.layer",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.anchor",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:370-386 anchored placement",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.x",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:370-386 anchored placement",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.y",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:370-386 anchored placement",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.top_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "core/theme_schema.py:1220-1240 normalizes to anchor",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.top_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "core/theme_schema.py:1220-1240 normalizes to anchor",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.bottom_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "core/theme_schema.py:1220-1240 normalizes to anchor",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.position.bottom_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "core/theme_schema.py:1220-1240 normalizes to anchor",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.min_width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.max_width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.min_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.max_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.background",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.top.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.top.style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.top.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.top.radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.right.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.right.style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.right.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.right.radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.bottom.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.bottom.style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.bottom.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.bottom.radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.left.width",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.left.style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.left.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border.sides.left.radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:145-200 per-side border application",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.border_radius",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.x",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.y",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.blur",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.spread",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.box_shadow.inset",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1213-1221 shadow object -> CSS string",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.backdrop_filter",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.overflow",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:340-430 container styles",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.animation.split.by",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.stagger_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.first.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.rest.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.font_style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.text_decoration",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.first.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.font_style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.text_decoration",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.animation.split.look.rest.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.visible",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js never reads body.visible; Designer control hidden, container visible is the switch",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.valign",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.gap",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.padding",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.padding_top",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.padding_right",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.padding_bottom",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.padding_left",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:409-425 body flex/padding",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.by",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.stagger_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.first.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.entry.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.entry.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.entry.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.entry.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.entry.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.sustain.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.sustain.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.sustain.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.sustain.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.sustain.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.out.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.out.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.out.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.out.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.out.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.in.use",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.in.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.in.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.in.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.rest.transition.in.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.font_style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.text_decoration",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.first.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.font_style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.text_decoration",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.body.animation.split.look.rest.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.visible",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.color",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.font_family",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.font_family",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.min_size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.min_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.max_size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.max_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.weight",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.line_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.line_height",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.letter_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.word_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "partial",
+   "evidence": "display.js:1257 multi-container text only",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.x",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.y",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.blur",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.spread",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_shadow.inset",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js _textShadowCss; object, string and none forms",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_outline",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.text_outline",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.text_transform",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.text_transform",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.text_align",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.text_align",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.font_style",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.font_style",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.text_decoration",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.text_decoration",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.opacity",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.max_lines",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.max_lines",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.direction",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.direction",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.margin_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.margin_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.margin_bottom",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.margin_bottom",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.margin_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.padding",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.padding_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.padding_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.padding_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.padding_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.text.animation",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.text.autosize",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for text.autosize",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.reference.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.visible",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.color",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.font_family",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.font_family",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.min_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.min_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.max_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.max_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.weight",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.line_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "partial",
+   "evidence": "display.js block renderer for reference.line_height",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.letter_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.word_spacing",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.word_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.x",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.y",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.blur",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.spread",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.color",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_shadow.inset",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_outline",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.text_outline",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_transform",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.text_transform",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_align",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.text_align",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.font_style",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.font_style",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.text_decoration",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.text_decoration",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.opacity",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.max_lines",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.max_lines",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.direction",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.direction",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.margin_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.margin_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.margin_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for reference.margin_bottom",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.margin_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.padding",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.padding_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.padding_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.padding_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.padding_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.reference.animation",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.reference.position",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for reference.position",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.visible",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.color",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.font_family",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.font_family",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.min_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.min_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.max_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.max_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.weight",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.line_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "partial",
+   "evidence": "display.js block renderer for title.line_height",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.letter_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.word_spacing",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.word_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.x",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.y",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.blur",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.spread",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.color",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_shadow.inset",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_outline",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.text_outline",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_transform",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.text_transform",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_align",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.text_align",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.font_style",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.font_style",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.text_decoration",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.text_decoration",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.opacity",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.max_lines",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.max_lines",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.direction",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.direction",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.margin_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.margin_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.margin_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for title.margin_bottom",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.margin_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.padding",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.padding_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.padding_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.padding_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.padding_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.title.animation",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.title.position",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for title.position",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.visible",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.color",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.font_family",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.font_family",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.min_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.min_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.max_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.max_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.weight",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.line_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.line_height",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.letter_spacing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.letter_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.word_spacing",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.word_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.x",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.y",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.blur",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.spread",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.color",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_shadow.inset",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_outline",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.text_outline",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_transform",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.text_transform",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_align",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.text_align",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.font_style",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.font_style",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.text_decoration",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.text_decoration",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.opacity",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.max_lines",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.max_lines",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.direction",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.direction",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.margin_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.margin_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.margin_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for translation.margin_bottom",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.margin_left",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.padding",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.padding_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.padding_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.padding_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.padding_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.translation.animation",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.translation.position",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for translation.position",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.visible",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for verse_num.visible",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for verse_num.color",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.font_family",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js block renderer for verse_num.font_family",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.size",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.min_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.min_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.max_size",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.max_size",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.weight",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.line_height",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.letter_spacing",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.letter_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.word_spacing",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.word_spacing",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.x",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.y",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.blur",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.spread",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.color",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_shadow.inset",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js:458-467 assigns the object to textShadow; only the string/none form works",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_outline",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.text_outline",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_transform",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.text_transform",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_align",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.text_align",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.font_style",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.font_style",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.text_decoration",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.text_decoration",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.max_lines",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.max_lines",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.direction",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.direction",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.margin_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.margin_right",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.margin_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js block renderer for verse_num.margin_bottom",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.margin_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.padding",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.padding_top",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.padding_right",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.padding_bottom",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.padding_left",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "display.js has no read for this block key",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.animation",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js animation phase lookup per block",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.mode",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "partial",
+   "evidence": "inline renders; mode:block still renders no number",
+   "verified_by": "harness"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.position",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": false,
+   "verdict": "ignored",
+   "evidence": "not read; Designer control hidden with the value preserved",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "containers.*.blocks.verse_num.vertical_align",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:780-812,1290-1300,3050-3060; themes.css:130-139 fallback",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.type",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.label",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "ignored",
+   "evidence": "definition label is editor metadata",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "animations.<animation-name>.duration_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.delay_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.easing",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.origin",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.[frame]",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.at",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.opacity",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.translate_x",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.translate_y",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.scale",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.rotate",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.keyframes.blur",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.reveal",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "harness"
+  },
+  {
+   "path": "animations.<animation-name>.cursor.char",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "animations.<animation-name>.cursor.color",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "animations.<animation-name>.cursor.blink_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "animations.<animation-name>.cursor.hide_after_ms",
+   "display_js": true,
+   "display_view": true,
+   "designer_control": true,
+   "verdict": "works",
+   "evidence": "display.js:1369-1900 animation engine",
+   "verified_by": "code reading"
+  },
+  {
+   "path": "slide.show_title",
+   "display_js": false,
+   "display_view": false,
+   "designer_control": true,
+   "verdict": "partial",
+   "evidence": "slides_tab.py:520-530 honours it; property_editor freeform toggle writes it; display.js does not read it",
+   "verified_by": "harness"
+  }
+ ]
+}

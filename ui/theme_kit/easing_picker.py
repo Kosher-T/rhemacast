@@ -444,6 +444,7 @@ class EasingPicker(QWidget):
         self._open_value = self._value
         popover.committed.connect(self._on_popover_committed)
         popover.cancelled.connect(self._on_popover_cancelled)
+        popover.closed.connect(self._on_popover_closed)
         popover.destroyed.connect(self._on_popover_destroyed)
         popover.show_below(self, width=286, max_height=470, align="left")
         self.opened.emit()
@@ -467,6 +468,14 @@ class EasingPicker(QWidget):
         self._value = self._open_value
         self.update()
         self.preview.emit(self.value())
+
+    def _on_popover_closed(self) -> None:
+        # Popups are not deleted on close; release and drop them so the next
+        # click opens a fresh one.
+        popover = self._popover
+        self._popover = None
+        if popover is not None:
+            popover.deleteLater()
 
     def _on_popover_destroyed(self, *_args) -> None:
         self._popover = None

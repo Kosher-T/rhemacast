@@ -1,0 +1,644 @@
+{
+ "schema_version": "(integer, 2 or lower; 1 is migrated on load, default 1; a future version is an error)",
+ "name": "(string, 1 to 64 chars starting with a letter or digit; letters, digits, space, underscore, dot, hyphen only; default: the theme folder name)",
+ "label": "(string, max 120 chars; default: name)",
+ "description": "(string, max 500 chars; default empty)",
+ "author": "(string, max 120 chars; default empty)",
+ "kind": "(one of: scripture | freeform; default scripture)",
+ "canvas": {
+  "width": "(integer, 320 to 7680, default 1920)",
+  "height": "(integer, 240 to 4320, default 1080)",
+  "background": "(paint, default transparent; paint: transparent | none | a color | a linear-gradient() or radial-gradient() string)",
+  "fit": "(one of: contain | none; default contain)"
+ },
+ "motion": {
+  "in_out": "(one of: sequential | overlap; default sequential)",
+  "transition": "(one of: sequential | overlap; default sequential)",
+  "sustain_when_cloaked": "(one of: pause | run; default pause)",
+  "deck_steps": "(one of: out_in | instant; default out_in)"
+ },
+ "containers": [
+  {
+   "id": "(string, lowercase first char, 1 to 32 chars a-z 0-9 _ -; default container<index>)",
+   "label": "(string, max 80 chars; default: id)",
+   "kind": "(one of: scripture | freeform | any; default theme kind)",
+   "layer": "(integer, 0 to 100, default: index * 10)",
+   "visible": "(true | false, default true)",
+   "position": {
+    "anchor": "(one of: top_left | top_right | bottom_left | bottom_right | center | left | right | top | bottom | fill; default center)",
+    "x": "(length, -10000 to 10000 px or %, default 0 when present)",
+    "y": "(length, -10000 to 10000 px or %, default 0 when present)",
+    "top_left": "(legacy boolean, true selects this corner only when anchor is absent, default false)",
+    "top_right": "(legacy boolean, default false)",
+    "bottom_left": "(legacy boolean, default false)",
+    "bottom_right": "(legacy boolean, default false)"
+   },
+   "width": "(auto | length 0 to 7680 px or %, default auto)",
+   "height": "(auto | length 0 to 4320 px or %, default auto)",
+   "min_width": "(length, 0 to 7680 px or %, default 0)",
+   "max_width": "(null | length 0 to 7680 px or %, default null)",
+   "min_height": "(length, 0 to 4320 px or %, default 0)",
+   "max_height": "(null | length 0 to 4320 px or %, default null)",
+   "background": "(paint, default transparent)",
+   "border": {
+    "width": "(number, 0 to 40 px; object form; omitted means no width; the whole border may instead be a CSS string such as \"1px solid #ffffff\", \"none\", or {\"shared\": \"name\"})",
+    "style": "(one of: none | solid | dashed | dotted | double | groove | ridge | inset | outset; default solid)",
+    "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default currentColor)",
+    "radius": "(length 0 to 400 px; default 0; legacy alias of container border_radius)",
+    "sides": {
+     "top": {
+      "width": "(number, 0 to 40 px)",
+      "style": "(one of: none | solid | dashed | dotted | double | groove | ridge | inset | outset; default solid)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default currentColor)",
+      "radius": "(length 0 to 400 px, default 0)"
+     },
+     "right": {
+      "width": "(number, 0 to 40 px)",
+      "style": "(one of: none | solid | dashed | dotted | double | groove | ridge | inset | outset; default solid)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default currentColor)",
+      "radius": "(length 0 to 400 px, default 0)"
+     },
+     "bottom": {
+      "width": "(number, 0 to 40 px)",
+      "style": "(one of: none | solid | dashed | dotted | double | groove | ridge | inset | outset; default solid)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default currentColor)",
+      "radius": "(length 0 to 400 px, default 0)"
+     },
+     "left": {
+      "width": "(number, 0 to 40 px)",
+      "style": "(one of: none | solid | dashed | dotted | double | groove | ridge | inset | outset; default solid)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default currentColor)",
+      "radius": "(length 0 to 400 px, default 0)"
+     }
+    }
+   },
+   "border_radius": "(null | length 0 to 400 px or %, default 0; preferred over border.radius)",
+   "box_shadow": {
+    "x": "(number, -500 to 500 px, default 0; the whole shadow may instead be \"none\", a CSS shadow string, or {\"shared\": \"name\"})",
+    "y": "(number, -500 to 500 px, default 0)",
+    "blur": "(number, 0 to 500 px, default 0)",
+    "spread": "(number, -500 to 500 px, default 0)",
+    "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+    "inset": "(true | false, default false)"
+   },
+   "backdrop_filter": "(none | CSS filter string; allowed functions and ranges: blur 0 to 60 px, brightness 0 to 4, contrast 0 to 4, saturate 0 to 8, grayscale 0 to 1, sepia 0 to 1, hue-rotate -1080 to 1080 deg, opacity 0 to 1; default none)",
+   "opacity": "(number, 0 to 1, default 1)",
+   "overflow": "(one of: hidden | visible; default hidden)",
+   "animation": {
+    "entry": {
+     "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+     "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+     "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+     "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+     "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+    },
+    "sustain": {
+     "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+     "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+     "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+     "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+     "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+    },
+    "out": {
+     "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+     "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+     "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+     "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+     "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+    },
+    "transition": {
+     "out": {
+      "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+      "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+      "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+      "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+      "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+     },
+     "in": {
+      "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+      "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+      "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+      "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+      "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+     }
+    },
+    "split": {
+     "by": "(one of: line | word; default line)",
+     "stagger_ms": "(integer, 0 to 2000 ms, step 50, default 70)",
+     "first": {
+      "entry": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "sustain": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "out": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "transition": {
+       "out": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       },
+       "in": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       }
+      }
+     },
+     "rest": {
+      "entry": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "sustain": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "out": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "transition": {
+       "out": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       },
+       "in": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       }
+      }
+     },
+     "look": {
+      "first": {
+       "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #ffffff)",
+       "weight": "(integer, 100 to 900, default 400)",
+       "font_style": "(one of: normal | italic; default normal)",
+       "text_decoration": "(one of: none | underline | line-through; default none)",
+       "opacity": "(number, 0 to 1, default 1)",
+       "letter_spacing": "(length, -20 to 40 em, default 0)"
+      },
+      "rest": {
+       "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #ffffff)",
+       "weight": "(integer, 100 to 900, default 400)",
+       "font_style": "(one of: normal | italic; default normal)",
+       "text_decoration": "(one of: none | underline | line-through; default none)",
+       "opacity": "(number, 0 to 1, default 1)",
+       "letter_spacing": "(length, -20 to 40 em, default 0)"
+      }
+     }
+    }
+   },
+   "blocks": {
+    "body": {
+     "visible": "(true | false, default true)",
+     "valign": "(one of: top | center | bottom; default center)",
+     "gap": "(length, 0 to 200 px or %, default 0)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": {
+      "entry": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "sustain": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "out": {
+       "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+       "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+       "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+       "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+       "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+      },
+      "transition": {
+       "out": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       },
+       "in": {
+        "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+        "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+        "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+        "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+        "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+       }
+      },
+      "split": {
+       "by": "(one of: line | word; default line)",
+       "stagger_ms": "(integer, 0 to 2000 ms, step 50, default 70)",
+       "first": {
+        "entry": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "sustain": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "out": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "transition": {
+         "out": {
+          "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+          "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+          "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+          "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+          "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+         },
+         "in": {
+          "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+          "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+          "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+          "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+          "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+         }
+        }
+       },
+       "rest": {
+        "entry": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "sustain": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "out": {
+         "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+         "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+         "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+         "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+         "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+        },
+        "transition": {
+         "out": {
+          "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+          "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+          "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+          "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+          "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+         },
+         "in": {
+          "use": "(string, animation name from the built-in registry, the theme's local animations library, or the shared animations library; mutually exclusive with the inline definition keys below)",
+          "duration_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 600)",
+          "delay_ms": "(integer, 0 to 5000 ms, step 50, slot override; default 0)",
+          "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; slot override; default ease-out)",
+          "type": "(one of the animation types listed under animations.<animation-name>; write an inline definition here instead of use, with label, origin, keyframes, reveal and cursor at this level)"
+         }
+        }
+       },
+       "look": {
+        "first": {
+         "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #ffffff)",
+         "weight": "(integer, 100 to 900, default 400)",
+         "font_style": "(one of: normal | italic; default normal)",
+         "text_decoration": "(one of: none | underline | line-through; default none)",
+         "opacity": "(number, 0 to 1, default 1)",
+         "letter_spacing": "(length, -20 to 40 em, default 0)"
+        },
+        "rest": {
+         "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #ffffff)",
+         "weight": "(integer, 100 to 900, default 400)",
+         "font_style": "(one of: normal | italic; default normal)",
+         "text_decoration": "(one of: none | underline | line-through; default none)",
+         "opacity": "(number, 0 to 1, default 1)",
+         "letter_spacing": "(length, -20 to 40 em, default 0)"
+        }
+       }
+      }
+     }
+    },
+    "text": {
+     "visible": "(true | false, default true)",
+     "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #f8fafc)",
+     "font_family": "(CSS font-family string using letters, digits, spaces, quotes, comma, dot, underscore, hyphen; or inherit; default \"'Nunito', sans-serif\")",
+     "size": "(length, 1 to 400 px or em, or inherit; default 40)",
+     "min_size": "(length, 1 to 400 px or %, default 4)",
+     "max_size": "(length, 1 to 400 px or %, default 300)",
+     "weight": "(integer, 100 to 900, default 700)",
+     "line_height": "(number, 0.5 to 3, default 1.2)",
+     "letter_spacing": "(length, -20 to 40 px or em, default -0.01em)",
+     "word_spacing": "(length, -20 to 40 px or em, default 0)",
+     "text_shadow": {
+      "x": "(number, -500 to 500 px, default 0; the whole value may instead be \"none\" or a CSS shadow string, or a shared reference; default \"0 4px 12px rgba(0,0,0,0.4)\" for text blocks)",
+      "y": "(number, -500 to 500 px, default 0)",
+      "blur": "(number, 0 to 500 px, default 0)",
+      "spread": "(number, -500 to 500 px, default 0)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+      "inset": "(true | false, default false)"
+     },
+     "text_outline": "(none | CSS outline string such as \"2px #000000\"; default none)",
+     "text_transform": "(one of: none | uppercase | lowercase | capitalize; default none)",
+     "text_align": "(one of: left | center | right | justify; default center)",
+     "font_style": "(one of: normal | italic; default normal)",
+     "text_decoration": "(one of: none | underline | line-through; default none)",
+     "opacity": "(number, 0 to 1, default 1)",
+     "max_lines": "(null | integer 1 to 20, default null)",
+     "direction": "(one of: ltr | rtl; default ltr)",
+     "margin_top": "(length, -400 to 400 px or em, default 0)",
+     "margin_right": "(length, -400 to 400 px or em, default 0)",
+     "margin_bottom": "(length, -400 to 400 px or em, default 24)",
+     "margin_left": "(length, -400 to 400 px or em, default 0)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": "(animation assignment object with the same shape as containers[0].animation; split is allowed on text, reference, title and translation only)",
+     "autosize": "(true | false, default true)"
+    },
+    "reference": {
+     "visible": "(true | false, default true)",
+     "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #94a3b8)",
+     "font_family": "(CSS font-family string or inherit; default \"'DM Sans', sans-serif\")",
+     "size": "(length, 1 to 400 px or em, or inherit; default 24)",
+     "min_size": "(length, 1 to 400 px or %, default 4)",
+     "max_size": "(length, 1 to 400 px or %, default 300)",
+     "weight": "(integer, 100 to 900, default 500)",
+     "line_height": "(number, 0.5 to 3, default 1.2)",
+     "letter_spacing": "(length, -20 to 40 px or em, default 0.1em)",
+     "word_spacing": "(length, -20 to 40 px or em, default 0)",
+     "text_shadow": {
+      "x": "(number, -500 to 500 px, default 0)",
+      "y": "(number, -500 to 500 px, default 0)",
+      "blur": "(number, 0 to 500 px, default 0)",
+      "spread": "(number, -500 to 500 px, default 0)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+      "inset": "(true | false, default false)"
+     },
+     "text_outline": "(none | CSS outline string such as \"2px #000000\"; default none)",
+     "text_transform": "(one of: none | uppercase | lowercase | capitalize; default uppercase)",
+     "text_align": "(one of: left | center | right | justify; default center)",
+     "font_style": "(one of: normal | italic; default normal)",
+     "text_decoration": "(one of: none | underline | line-through; default none)",
+     "opacity": "(number, 0 to 1, default 1)",
+     "max_lines": "(null | integer 1 to 20, default null)",
+     "direction": "(one of: ltr | rtl; default ltr)",
+     "margin_top": "(length, -400 to 400 px or em, default 0)",
+     "margin_right": "(length, -400 to 400 px or em, default 0)",
+     "margin_bottom": "(length, -400 to 400 px or em, default 0)",
+     "margin_left": "(length, -400 to 400 px or em, default 0)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": "(animation assignment object with the same shape as containers[0].animation; split is allowed on text, reference, title and translation only)",
+     "position": "(one of: above_verse | below_verse; default below_verse)"
+    },
+    "title": {
+     "visible": "(true | false, default true)",
+     "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #94a3b8)",
+     "font_family": "(CSS font-family string or inherit; default \"'DM Sans', sans-serif\")",
+     "size": "(length, 1 to 400 px or em, or inherit; default 24)",
+     "min_size": "(length, 1 to 400 px or %, default 4)",
+     "max_size": "(length, 1 to 400 px or %, default 300)",
+     "weight": "(integer, 100 to 900, default 500)",
+     "line_height": "(number, 0.5 to 3, default 1.2)",
+     "letter_spacing": "(length, -20 to 40 px or em, default 0.1em)",
+     "word_spacing": "(length, -20 to 40 px or em, default 0)",
+     "text_shadow": {
+      "x": "(number, -500 to 500 px, default 0)",
+      "y": "(number, -500 to 500 px, default 0)",
+      "blur": "(number, 0 to 500 px, default 0)",
+      "spread": "(number, -500 to 500 px, default 0)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+      "inset": "(true | false, default false)"
+     },
+     "text_outline": "(none | CSS outline string such as \"2px #000000\"; default none)",
+     "text_transform": "(one of: none | uppercase | lowercase | capitalize; default uppercase)",
+     "text_align": "(one of: left | center | right | justify; default center)",
+     "font_style": "(one of: normal | italic; default normal)",
+     "text_decoration": "(one of: none | underline | line-through; default none)",
+     "opacity": "(number, 0 to 1, default 1)",
+     "max_lines": "(null | integer 1 to 20, default null)",
+     "direction": "(one of: ltr | rtl; default ltr)",
+     "margin_top": "(length, -400 to 400 px or em, default 0)",
+     "margin_right": "(length, -400 to 400 px or em, default 0)",
+     "margin_bottom": "(length, -400 to 400 px or em, default 0)",
+     "margin_left": "(length, -400 to 400 px or em, default 0)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": "(animation assignment object with the same shape as containers[0].animation; split is allowed on text, reference, title and translation only)",
+     "position": "(one of: above_verse | below_verse; default below_verse)"
+    },
+    "translation": {
+     "visible": "(true | false, default true)",
+     "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default #64748b)",
+     "font_family": "(CSS font-family string using letters, digits, spaces, quotes, comma, dot, underscore, hyphen; or inherit; default \"'Nunito', sans-serif\")",
+     "size": "(length, 1 to 400 px or em, or inherit; default 40; em values resolve against the container)",
+     "min_size": "(length, 1 to 400 px or %, default 4)",
+     "max_size": "(length, 1 to 400 px or %, default 300)",
+     "weight": "(integer, 100 to 900, default 700)",
+     "line_height": "(number, 0.5 to 3, default 1.2)",
+     "letter_spacing": "(length, -20 to 40 px or em, default -0.01em)",
+     "word_spacing": "(length, -20 to 40 px or em, default 0)",
+     "text_shadow": {
+      "x": "(number, -500 to 500 px, default 0)",
+      "y": "(number, -500 to 500 px, default 0)",
+      "blur": "(number, 0 to 500 px, default 0)",
+      "spread": "(number, -500 to 500 px, default 0)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+      "inset": "(true | false, default false)"
+     },
+     "text_outline": "(none | CSS outline string such as \"2px #000000\"; default none)",
+     "text_transform": "(one of: none | uppercase | lowercase | capitalize; default none)",
+     "text_align": "(one of: left | center | right | justify; default center)",
+     "font_style": "(one of: normal | italic; default normal)",
+     "text_decoration": "(one of: none | underline | line-through; default none)",
+     "opacity": "(number, 0 to 1, default 1)",
+     "max_lines": "(null | integer 1 to 20, default null)",
+     "direction": "(one of: ltr | rtl; default ltr)",
+     "margin_top": "(length, -400 to 400 px or em, default 0)",
+     "margin_right": "(length, -400 to 400 px or em, default 0)",
+     "margin_bottom": "(length, -400 to 400 px or em, default 0)",
+     "margin_left": "(length, -400 to 400 px or em, default 8)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": "(animation assignment object with the same shape as containers[0].animation; split is allowed on text, reference, title and translation only)",
+     "position": "(one of: above_verse | below_verse | above_reference | below_reference | left_of_reference | right_of_reference; default right_of_reference)"
+    },
+    "verse_num": {
+     "visible": "(true | false, default true)",
+     "color": "(color or inherit, default inherit)",
+     "font_family": "(CSS font-family string or inherit; default inherit)",
+     "size": "(length, 1 to 400 px or em, or inherit; default 0.6em)",
+     "min_size": "(length, 1 to 400 px or %, default 4)",
+     "max_size": "(length, 1 to 400 px or %, default 300)",
+     "weight": "(integer, 100 to 900, default 700)",
+     "line_height": "(number, 0.5 to 3, default 1)",
+     "letter_spacing": "(length, -20 to 40 px or em, default -0.01em)",
+     "word_spacing": "(length, -20 to 40 px or em, default 0)",
+     "text_shadow": {
+      "x": "(number, -500 to 500 px, default 0)",
+      "y": "(number, -500 to 500 px, default 0)",
+      "blur": "(number, 0 to 500 px, default 0)",
+      "spread": "(number, -500 to 500 px, default 0)",
+      "color": "(color: hex #RGB, #RGBA, #RRGGBB or #RRGGBBAA, rgb()/rgba()/hsl()/hsla() string, or a named color such as white or transparent, default rgba(0,0,0,0.5))",
+      "inset": "(true | false, default false)"
+     },
+     "text_outline": "(none | CSS outline string such as \"2px #000000\"; default none)",
+     "text_transform": "(one of: none | uppercase | lowercase | capitalize; default none)",
+     "text_align": "(one of: left | center | right | justify; default center)",
+     "font_style": "(one of: normal | italic; default normal)",
+     "text_decoration": "(one of: none | underline | line-through; default none)",
+     "opacity": "(number, 0 to 1, default 0.7)",
+     "max_lines": "(null | integer 1 to 20, default null)",
+     "direction": "(one of: ltr | rtl; default ltr)",
+     "margin_top": "(length, -400 to 400 px or em, default 0)",
+     "margin_right": "(length, 0 to 40 px or em, default 0.15em)",
+     "margin_bottom": "(length, -400 to 400 px or em, default 0)",
+     "margin_left": "(length, -400 to 400 px or em, default 0)",
+     "padding": "(length, 0 to 400 px or %, default 0)",
+     "padding_top": "(length, 0 to 400 px or %, default padding)",
+     "padding_right": "(length, 0 to 400 px or %, default padding)",
+     "padding_bottom": "(length, 0 to 400 px or %, default padding)",
+     "padding_left": "(length, 0 to 400 px or %, default padding)",
+     "animation": "(animation assignment object with the same shape as containers[0].animation; split is allowed on text, reference, title and translation only)",
+     "mode": "(one of: inline | block; default inline)",
+     "position": "(one of: above_verse | below_verse; default above_verse)",
+     "vertical_align": "(one of: top | middle | baseline | bottom; default top)"
+    }
+   }
+  }
+ ],
+ "animations": {
+  "<animation-name>": {
+   "type": "(one of: fade_in | fade_out | fade_up | fade_down | scale_up | scale_down | slide_up | slide_down | typewriter | custom; required)",
+   "label": "(string, max 80 chars, default: \"animation name\")",
+   "duration_ms": "(integer, 0 to 5000 ms, step 50; required; default 600, 900 for typewriter)",
+   "delay_ms": "(integer, 0 to 5000 ms, step 50, default 0)",
+   "easing": "(one of: ease-out | ease-in | ease-in-out | linear | spring | smooth, or a cubic-bezier(x1,y1,x2,y2) string; default ease-out, linear for typewriter)",
+   "origin": "(one of: center | top | bottom | left | right | top left | top right | bottom left | bottom right; presets and custom only; rejected for typewriter; default center)",
+   "keyframes": {
+    "[frame]": "(array of 2 to 8 frames; custom only; each frame is an object; rejected for presets and typewriter)",
+    "at": "(number, 0 to 100, must strictly increase; first frame 0, last frame 100)",
+    "opacity": "(number 0 to 1, or the string \"base\" to keep the element value)",
+    "translate_x": "(number -2000 to 2000 px, or a percentage string like 50%)",
+    "translate_y": "(number -2000 to 2000 px, or a percentage string like 50%)",
+    "scale": "(number, 0.01 to 4, default 1)",
+    "rotate": "(number, -1080 to 1080 degrees, default 0)",
+    "blur": "(length 0 to 60 px, or the string \"base\" to keep the element value)"
+   },
+   "reveal": "(one of: char | word; typewriter only; default char)",
+   "cursor": {
+    "char": "(string, 1 to 2 characters, default \u258c)",
+    "color": "(color or currentColor, default currentColor)",
+    "blink_ms": "(integer, 0 to 2000 ms, step 50, default 500)",
+    "hide_after_ms": "(integer, 0 to 5000 ms, step 50, default 600)"
+   }
+  }
+ },
+ "slide": {
+  "show_title": "(true | false, default true; freeform/slides only; read by the slides tab, not the display renderer)"
+ },
+ "_meta": {
+  "generated": "2026-11-12",
+  "schema_version": 2,
+  "source_of_truth": "core/theme_schema.py",
+  "generator": "throwaway /tmp/gen_theme_atlas.py, not kept in the repo",
+  "also_checked": [
+   "core/animation_registry.py",
+   "core/motion_state.py",
+   "display/display.js",
+   "ui/widgets/theme_designer/property_editor.py",
+   "ui/widgets/theme_designer/param_form.py"
+  ],
+  "reading": "Every leaf value is a description in parentheses. A key shown as an object may also accept a CSS string or 'none' where its children say so. 'default' is the validator default after normalization, not necessarily what a new theme writes. Unknown keys survive round trips because validation keeps a note, not a rewrite, but they have no effect. The top-level animations object is the theme's local library; normalization replaces it in memory with the definitions actually referenced. Animation assignments are omitted by writing no phase, 'none', or no animation key; a slot may be an animation name string, {use, overrides}, or an inline definition, and a dict without 'use' is inline. cursor may also be the string 'none' or 'default'. Translation typography inherits from the reference block unless set explicitly.",
+  "counts": {
+   "atlas_leaves": 446,
+   "validator_resolved_paths": 240,
+   "missing_from_atlas": 0,
+   "not_accepted_by_validator": 0,
+   "atlas_paths_not_in_resolved_theme": 4,
+   "legacy_input_only_keys": 4
+  },
+  "verification": "Two kitchen-sink themes (inline animations and use references, scripture and freeform) were normalized; the resolved key paths were compared with the atlas. Animation paths were compared by key name across both forms. The four legacy corner booleans and the string/shared-reference alternatives are accepted input that normalizes to an anchor or a canonical object, so they appear in the atlas but not in a resolved theme."
+ },
+ "_discrepancies": [
+  "containers[].blocks.body.visible is validated and preserved but display.js never reads it; the Designer now hides the control and containers[].visible is the supported switch.",
+  "containers[].kind is validated and preserved as authoring metadata; the Designer now hides the control because display.js renders every visible container regardless of kind.",
+  "verse_num size, weight, opacity, line_height, vertical_align and margin_right are applied to the inline number span by both renderers; position remains unsupported with its Designer control hidden and the stored value preserved; mode:block still renders no number.",
+  "text_shadow accepts a shared reference in the schema, but a block text shadow shared reference is not expanded by resolve_shared; the panel withholds shared options and both renderers paint no shadow for it. Object, CSS string and none forms are supported.",
+  "slide.show_title is validated, honoured by the slides tab and exposed as a freeform toggle on the Designer Canvas page; display.js still does not read it.",
+  "Animation registry parameter cursor.enabled exists only as a ParamForm visibility gate; it is not a stored key. Disabling it writes cursor: \"none\", and a cursor object has no enabled field.",
+  "containers[].position corner booleans (top_left, top_right, bottom_left, bottom_right) are legacy input accepted only when anchor is absent; no panel writes them and the validator warns about them.",
+  "containers[].padding_* is rejected with a warning (not a v2 parameter) and therefore absent from this atlas, while block padding is supported."
+ ],
+ "_uncertain": [
+  "The renderer and the validator are mirrored by hand in display/display.js and ui/widgets/display_view.py; a key accepted by both may still be ignored in one path (for example the root theme path versus the v2 container path). Spot checks covered five leaves, not every combination.",
+  "Fonts are not a closed enum: font_family accepts any CSS family string that passes the safe-character regex, so the atlas lists the default families rather than a registry.",
+  "Shared references ({\"shared\": \"name\"}) resolve from theme family files; their available names are data, not schema, so they are not enumerated."
+ ]
+}

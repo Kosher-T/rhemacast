@@ -494,7 +494,7 @@ def test_an_inline_typewriter_slot():
     assert report.warnings == []
 
 
-def test_an_invalid_inline_definition_falls_back_per_phase():
+def test_an_invalid_inline_definition_disables_the_slot():
     resolved, report = _resolve({
         "schema_version": 2,
         "containers": [{"id": "main", "animation": {
@@ -502,27 +502,28 @@ def test_an_invalid_inline_definition_falls_back_per_phase():
             "out": {"type": "explode"},
         }}],
     })
-    animation = resolved["containers"][0]["animation"]
-    assert animation["entry"] == {"use": "fade_in"}
-    assert animation["out"] == {"use": "fade_out"}
+    animation = resolved["containers"][0].get("animation", {})
+    assert "entry" not in animation
+    assert "out" not in animation
     assert "unknown animation type" in "\n".join(report.warnings)
 
 
 @pytest.mark.parametrize("bad_name", ["has space", "1fade", "fade_in}", ""])
-def test_invalid_slot_names_fall_back_per_phase(bad_name):
+def test_invalid_slot_names_disable_the_slot(bad_name):
     resolved, report = _resolve({
         "schema_version": 2,
         "containers": [{"id": "main", "animation": {
             "entry": bad_name, "out": bad_name,
         }}],
     })
-    animation = resolved["containers"][0]["animation"]
-    assert animation["entry"] == {"use": "fade_in"}
-    assert animation["out"] == {"use": "fade_out"}
-    assert "invalid animation name" in "\n".join(report.warnings)
+    animation = resolved["containers"][0].get("animation", {})
+    assert "entry" not in animation
+    assert "out" not in animation
+    if bad_name:
+        assert "invalid animation name" in "\n".join(report.warnings)
 
 
-def test_unknown_names_fall_back_per_phase():
+def test_unknown_names_disable_the_slot():
     resolved, report = _resolve({
         "schema_version": 2,
         "containers": [{"id": "main", "animation": {
@@ -531,15 +532,23 @@ def test_unknown_names_fall_back_per_phase():
             "out": "does_not_exist",
         }}],
     })
-    animation = resolved["containers"][0]["animation"]
-    assert animation["entry"] == {"use": "fade_in"}
-    assert animation["transition"]["in"] == {"use": "fade_in"}
-    assert animation["transition"]["out"] == {"use": "fade_out"}
-    assert animation["out"] == {"use": "fade_out"}
+    animation = resolved["containers"][0].get("animation", {})
+    assert animation == {}
     assert "\n".join(report.warnings).count("unknown animation name") == 4
-    # The fallback definitions are embedded so the renderer never chases names.
-    assert resolved["animations"]["fade_in"] == BUILTIN_ANIMATIONS["fade_in"]
-    assert resolved["animations"]["fade_out"] == BUILTIN_ANIMATIONS["fade_out"]
+    assert "fade_in" not in resolved["animations"]
+    assert "fade_out" not in resolved["animations"]
+
+
+def test_empty_transition_object_disables_the_slot():
+    resolved, report = _resolve({
+        "schema_version": 2,
+        "containers": [{"id": "main", "blocks": {
+            "text": {"animation": {"transition": {}}},
+        }}],
+    })
+    animation = resolved["containers"][0]["blocks"]["text"].get("animation", {})
+    assert animation == {}
+    assert report.warnings == []
 
 
 def test_transition_shorthand_is_the_in_half():
@@ -579,16 +588,17 @@ def test_transition_out_only_needs_no_entrance():
     }
 
 
-def test_unknown_assignment_keys_are_notes_not_warnings():
+def test_unknown_assignment_keys_are_preserved_without_warnings():
     resolved, report = _resolve({
         "schema_version": 2,
         "containers": [{"id": "main", "animation": {
             "entry": "fade_in", "hover": "fade_out", "loop": True,
         }}],
     })
-    assert resolved["containers"][0]["animation"] == {"entry": {"use": "fade_in"}}
+    assert resolved["containers"][0]["animation"] == {
+        "entry": {"use": "fade_in"}, "hover": "fade_out", "loop": True}
     assert report.warnings == []
-    assert any("ignoring unknown animation keys" in note for note in report.notes)
+    assert any("unknown animation keys" in note for note in report.notes)
 
 
 def test_animation_is_legal_on_container_body_and_blocks():

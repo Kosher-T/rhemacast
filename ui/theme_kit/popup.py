@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer
+from PyQt6.QtCore import (
+    QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -25,6 +27,12 @@ _TEXT_ROLE = Qt.ItemDataRole.UserRole + 90
 
 class PopupSurface(QWidget):
     """Opaque rounded surface with a translucent gutter and 1 px edge."""
+
+    #: Emitted after the surface closes. Popups are not deleted on close
+    #: (``WA_DeleteOnClose`` is off), so an owning field that waits for
+    #: ``destroyed`` never hears about a close and keeps a stale reference —
+    #: the second click then only "closes" an already hidden popup.
+    closed = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None, *,
                  popup: bool = True, radius: int = tokens.RADIUS_MD):
@@ -159,7 +167,7 @@ class PopupSurface(QWidget):
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
-        # Subclasses that need a callback can override; default is silent.
+        self.closed.emit()
         super().closeEvent(event)
 
 

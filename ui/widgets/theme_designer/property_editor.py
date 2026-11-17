@@ -120,8 +120,8 @@ CANVAS_SPECS = [
 CONTAINER_SPECS = [
     {"path": ("id",), "label": "ID", "kind": "text", "read_only": True},
     {"path": ("label",), "label": "Label", "kind": "text"},
-    {"path": ("kind",), "label": "Kind", "kind": "enum",
-     "options": tuple(schema.KINDS) + ("any",)},
+    {"kind": "note",
+     "text": "Kind is authoring metadata. Rendering uses Visible, not Kind."},
     {"path": ("layer",), "label": "Layer", "kind": "int"},
     {"path": ("visible",), "label": "Visible", "kind": "bool"},
     {"path": ("min_width",), "label": "Min width", "kind": "length",
@@ -192,7 +192,9 @@ _COMMON_BLOCK = [
 def block_specs(block: str) -> list[dict]:
     if block == "body":
         return [
-            {"path": ("visible",), "label": "Visible", "kind": "bool"},
+            {"kind": "note",
+             "text": "The container Visible switch hides this panel. Body "
+                     "visible is preserved but not rendered."},
             {"path": ("valign",), "label": "Align", "kind": "enum",
              "options": schema.VALIGNS, "chips": True},
             {"path": ("gap",), "label": "Gap", "kind": "length",
@@ -228,8 +230,9 @@ def block_specs(block: str) -> list[dict]:
             {"path": ("visible",), "label": "Visible", "kind": "bool"},
             {"path": ("mode",), "label": "Mode", "kind": "enum",
              "options": schema.VERSE_MODES, "chips": True},
-            {"path": ("position",), "label": "Position", "kind": "enum",
-             "options": schema.REFERENCE_POSITIONS, "chips": True},
+            {"kind": "note",
+             "text": "Position is not supported by the renderer. The stored "
+                     "value is preserved."},
             {"path": ("vertical_align",), "label": "V align", "kind": "enum",
              "options": schema.VERTICAL_ALIGNS},
             {"path": ("margin_right",), "label": "Margin right",
@@ -260,6 +263,8 @@ class ThemePropertyEditor(QWidget):
     theme_changed = pyqtSignal(dict)
     #: Request only: the Designer tab owns the actual selected container.
     container_selected = pyqtSignal(str)
+    #: Request only: the Animations panel target follows this block.
+    block_selected = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -406,6 +411,22 @@ class ThemePropertyEditor(QWidget):
                     self._rebuild()
                 return
 
+    def selected_block(self) -> str:
+        return self._block
+
+    def set_selected_block(self, block: str) -> None:
+        """Follow the Animations panel target without emitting it back."""
+        allowed = list(schema.BLOCK_IDS.get(self._kind, ()))
+        if block not in allowed:
+            return
+        changed = block != self._block
+        self._block = block
+        on_blocks = self._page() == "blocks"
+        if not on_blocks:
+            self._pages.set_value("blocks")
+        if changed or not on_blocks:
+            self._rebuild()
+
     # ── document access ─────────────────────────────────────────────────────
     def _container_ids(self) -> list[str]:
         return [str(c.get("id", "")) for c in self._containers()
@@ -506,6 +527,7 @@ class ThemePropertyEditor(QWidget):
         page = self._page()
         if page == "canvas":
             self._add_specs(CANVAS_SPECS, ("canvas",))
+            self._add_slide_options()
         elif page == "container":
             self._add_container_picker()
             self._add_specs(CONTAINER_SPECS,
@@ -519,7 +541,26 @@ class ThemePropertyEditor(QWidget):
                 self._add_split_editor(prefix)
         self._layout.addStretch(1)
         self._layout.activate()
+        self._align_page_rows()
         self._note.setText("")
+
+    def _align_page_rows(self) -> None:
+        """Align the page's top-level rows to the widest label."""
+        rows = []
+        for index in range(self._layout.count()):
+            item = self._layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, PropertyRow) and not widget._full_width:
+                rows.append(widget)
+        if not rows:
+            return
+        width = max(row.required_label_width() for row in rows)
+        for row in rows:
+            row.set_label_column_width(width)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._align_page_rows()
 
     def _add_split_editor(self, prefix: tuple) -> None:
         block = self._get(prefix)
@@ -584,8 +625,43 @@ class ThemePropertyEditor(QWidget):
         self._layout.addWidget(bar)
 
     def _on_block(self, value: str) -> None:
+        value = str(value or "")
+        if value == self._block:
+            return
         self._block = value
         self._rebuild()
+        self.block_selected.emit(value)
+
+    def _add_slide_options(self) -> None:
+        """Show-title is the only slide switch, so it lives on the Canvas page."""
+        if self._kind != schema.FREEFORM:
+            return
+        slide = self._doc.get("slide")
+        current = True
+        if isinstance(slide, dict):
+            current = bool(slide.get("show_title", True))
+        switch = Switch(current)
+        switch.changed.connect(self._on_show_title_changed)
+        self._show_title_switch = switch
+        section = PropertySection("Freeform slide", expanded=True)
+        section.add_row(PropertyRow("Show title", switch, label_width=76))
+        note = QLabel("When off, the reference line is hidden on slide payloads.")
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"color: {tokens.TEXT_MUTED}; font-size: 11px; background: transparent;")
+        section.add_widget(note)
+        self._layout.addWidget(section)
+
+    def _on_show_title_changed(self, checked: bool) -> None:
+        if self._loading:
+            return
+        if self._document is not None:
+            self._document.set(("slide", "show_title"), bool(checked),
+                               source=self)
+            self._doc = self._document.snapshot()
+        else:
+            self._write(("slide", "show_title"), bool(checked))
+        self._after_edit("show_title")
 
     def _current_paths(self) -> list[tuple]:
         prefix = self._prefix()
@@ -597,6 +673,8 @@ class ThemePropertyEditor(QWidget):
             specs = block_specs(self._block)
         paths: list[tuple] = []
         for spec in specs:
+            if spec["kind"] == "note":
+                continue
             if spec["kind"] == "sides":
                 base = str(spec["base"])
                 template = str(spec.get("template", base + "_{side}"))
@@ -609,6 +687,14 @@ class ThemePropertyEditor(QWidget):
 
     def _add_specs(self, specs: list[dict], prefix: tuple) -> None:
         for spec in specs:
+            if spec["kind"] == "note":
+                note = QLabel(str(spec.get("text", "")))
+                note.setWordWrap(True)
+                note.setStyleSheet(
+                    f"color: {tokens.TEXT_MUTED}; font-size: 11px; "
+                    "background: transparent;")
+                self._layout.addWidget(note)
+                continue
             if spec["kind"] == "sides":
                 self._add_sides(spec, prefix)
                 continue

@@ -31,7 +31,7 @@ function connect() {
     socket.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
-            handlePayload(data);
+            handlePayload(data, !!(data && data.silent));
         } catch (e) {
             console.error("Failed to parse WebSocket message:", e);
         }
@@ -259,11 +259,11 @@ function applyCanvasFit(canvas) {
     if (!stg) return;
     const cw = (canvas && canvas.width) || 1920;
     const ch = (canvas && canvas.height) || 1080;
-    // The in-app preview always fits the panel: it is a viewport, not the
-    // OBS output surface, and v1 themes keep canvas.fit:"none" so OBS never
-    // rescales them. The preview sets window.__RC_PREVIEW before load.
-    const preview = typeof window !== "undefined" && window.__RC_PREVIEW === true;
-    const fit = preview ? "contain" : ((canvas && canvas.fit) || "contain");
+    // Honour the authored fit: "contain" scales the design canvas into the
+    // viewport, "none" leaves it at its authored size (so a viewport smaller
+    // than the canvas crops it). The Designer preview runs this same code, so
+    // switching Fit there shows exactly what OBS will do.
+    const fit = (canvas && canvas.fit) || "contain";
     const bg = (canvas && canvas.background) || "transparent";
     stg.style.width = cw + "px";
     stg.style.height = ch + "px";
@@ -455,7 +455,7 @@ function applyTheme(theme, slideFormat) {
     if (t.line_height != null) root.style.setProperty("--rc-text-line-height", String(t.line_height));
     const tOutline = _themeOutline(t);
     if (tOutline) root.style.setProperty("--rc-text-outline", tOutline);
-    const tShadowRaw = String(t.text_shadow || "").trim();
+    const tShadowRaw = _textShadowCss(t.text_shadow);
     const shadowIsOutline = !!tOutline
         && _themeOutline({ text_shadow: tShadowRaw }) === tOutline;
     if (!shadowIsOutline) {
@@ -773,7 +773,7 @@ function _positionContainer(el, pos, style, type) {
         inner.style.fontWeight = style.weight || 700;
         inner.style.lineHeight = style.line_height || "1.08";
         inner.style.letterSpacing = style.letter_spacing || "-0.02em";
-        inner.style.textShadow = style.text_shadow || "";
+        inner.style.textShadow = _textShadowCss(style.text_shadow);
         inner.style.padding = "20px";
     } else if (type === "reference") {
         inner.style.color = style.color || "#cccccc";
@@ -797,7 +797,7 @@ function _populateContainers(data) {
     const ctTextInner = document.querySelector("#ct-text > *");
     if (ctTextInner) {
         let html = renderInlineColors(data.text);
-        if (verseNum) html = '<span class="verse-num">' + verseNum + '</span> ' + html;
+        if (verseNum) html = '<span class="verse-num"' + _verseNumAttrs(_verseNumBlock()) + '>' + verseNum + '</span> ' + html;
         ctTextInner.innerHTML = html;
     }
 
@@ -1242,7 +1242,7 @@ function _renderMultiContainers(data) {
             let html = renderInlineColors(data.text);
             const vnNum = extractVerseNumber(refText);
             if (vnNum && vn && vn.visible !== false && (vn.mode || "inline") === "inline") {
-                html = '<span class="verse-num" style="color:' + (vn.color || "#cccccc") + '">' + vnNum + '</span> ' + html;
+                html = '<span class="verse-num"' + _verseNumAttrs(vn, "#cccccc") + '>' + vnNum + '</span> ' + html;
             }
             h1.innerHTML = html;
             if (t.color) h1.style.color = t.color;
@@ -1253,7 +1253,8 @@ function _renderMultiContainers(data) {
             if (t.letter_spacing != null) h1.style.letterSpacing = typeof t.letter_spacing === "number" ? (t.letter_spacing + "px") : t.letter_spacing;
             if (t.text_align) h1.style.textAlign = t.text_align;
             if (t.text_transform) h1.style.textTransform = t.text_transform;
-            if (t.text_shadow && t.text_shadow !== "none") h1.style.textShadow = t.text_shadow;
+            const tShadow = _textShadowCss(t.text_shadow);
+            if (tShadow && tShadow !== "none") h1.style.textShadow = tShadow;
             if (t.word_spacing != null) h1.style.wordSpacing = typeof t.word_spacing === "number" ? (t.word_spacing + "px") : t.word_spacing;
             if (t.font_style) h1.style.fontStyle = t.font_style;
             if (t.text_decoration && t.text_decoration !== "none") h1.style.textDecoration = t.text_decoration;
@@ -1435,6 +1436,7 @@ function _applyAnimation(el, type, durationMs, easing) {
 
 function _cancelAnimations(el) {
     if (!el) return;
+    _cancelPropertyAnimations(el);
     const anim = _activeAnims.get(el);
     if (anim) {
         try { anim.cancel(); } catch (e) {}
@@ -1444,11 +1446,14 @@ function _cancelAnimations(el) {
 }
 
 function _cancelAllAnimations() {
+    _stopSustain();
     if (_phaseTimer) {
         clearTimeout(_phaseTimer);
         _phaseTimer = null;
     }
     _phaseToken++;
+    _clearOverlapTimers();
+    _removeOverlapLayer();
     Array.from(_activeTypewriters).forEach(tw => {
         try { tw.cancel(); } catch (e) {}
     });
@@ -1487,19 +1492,20 @@ function _lengthValue(v, fallback) {
 }
 
 function _resolveSlotDef(slot, registry, phase) {
-    const fallback = phase === "out" ? "fade_out" : "fade_in";
     const preset = (name) => ({ type: name, duration_ms: RC_ANIM_DEFAULTS.duration_ms, easing: RC_ANIM_DEFAULTS.easing });
     if (!slot || slot === "none") return null;
     if (typeof slot === "string") {
         if (registry && registry[slot]) return registry[slot];
         if (ANIM_PRESET_TYPES.indexOf(slot) !== -1) return preset(slot);
-        return preset(fallback);
+        // Unknown names mean no animation. Never invent a phase fallback.
+        return null;
     }
     if (typeof slot === "object") {
         if (slot.use) {
             const base = (registry && registry[slot.use])
                 || (ANIM_PRESET_TYPES.indexOf(slot.use) !== -1
-                    ? preset(slot.use) : preset(fallback));
+                    ? preset(slot.use) : null);
+            if (!base) return null;
             const merged = Object.assign({}, base, slot);
             delete merged.use;
             return merged;
@@ -1702,11 +1708,7 @@ function _typewriterCursor(cfg) {
 function _playTypewriter(el, def) {
     if (!el || _reducedMotion()) return null;
     const split = _splitTypewriter(el, def.reveal === "word" ? "word" : "char");
-    if (!split) {
-        if (typeof el.animate !== "function") return null;
-        return _playElementAnimation(el, Object.assign({}, def, { type: "fade_in" }),
-            { kind: "text", phase: "in" });
-    }
+    if (!split) return null;
 
     const spans = split.spans;
     const cfg = def.cursor && def.cursor !== "none" ? def.cursor : null;
@@ -1838,16 +1840,13 @@ function _playElementAnimation(el, def, opts) {
 
     if (type === "typewriter") {
         // §4.9.5: legal only on text-bearing blocks, never as an exit, and
-        // never when the block's text has been rebuilt as outlined SVG.
-        if (phase === "out") {
-            type = "fade_out";
-        } else if (kind !== "text" && kind !== "reference" && kind !== "translation") {
-            type = "fade_in";
-        } else if (_outlineConflict(el)) {
-            type = "fade_in";
-        } else {
-            return _playTypewriter(el, def);
+        // never when the block's text has been rebuilt as outlined SVG. An
+        // invalid context means no animation, not a silent fade.
+        if (phase === "out" || (kind !== "text" && kind !== "reference"
+                && kind !== "translation") || _outlineConflict(el)) {
+            return null;
         }
+        return _playTypewriter(el, def);
     }
 
     const duration = def.duration_ms != null ? def.duration_ms : RC_ANIM_DEFAULTS.duration_ms;
@@ -1865,6 +1864,7 @@ function _playElementAnimation(el, def, opts) {
             delay: delay,
             easing: ANIM_EASINGS[def.easing] || def.easing || RC_ANIM_DEFAULTS.easing,
             fill: "forwards",
+            iterations: opts.iterations || 1,
         });
     } catch (e) {
         return null;
@@ -1875,8 +1875,317 @@ function _playElementAnimation(el, def, opts) {
 }
 
 function _phaseDuration(def) {
+    if (!def) return 0;
     return Math.max(0, def.delay_ms || 0)
         + Math.max(0, def.duration_ms != null ? def.duration_ms : RC_ANIM_DEFAULTS.duration_ms);
+}
+
+// ─── Property tracks ───────────────────────────────────────────────
+// A property track animates something the keyframe channels cannot reach.
+// Each animator owns its element overlay and cleanup; unknown track ids are
+// ignored so a newer theme still plays the tracks this renderer knows.
+const _SVG_NS = "http://www.w3.org/2000/svg";
+const _propertyCleanups = new WeakMap();
+
+function _addPropertyCleanup(el, cleanup) {
+    const list = _propertyCleanups.get(el);
+    if (list) list.push(cleanup);
+    else _propertyCleanups.set(el, [cleanup]);
+    _animatedEls.add(el);
+}
+
+function _removePropertyCleanup(el, cleanup) {
+    const list = _propertyCleanups.get(el);
+    if (!list) return;
+    const index = list.indexOf(cleanup);
+    if (index !== -1) list.splice(index, 1);
+    if (!list.length) {
+        _propertyCleanups.delete(el);
+        if (!_activeAnims.get(el)) _animatedEls.delete(el);
+    }
+}
+
+function _cancelPropertyAnimations(el) {
+    if (!el) return;
+    const list = _propertyCleanups.get(el);
+    if (!list) return;
+    _propertyCleanups.delete(el);
+    list.slice().forEach(cleanup => {
+        try { cleanup(); } catch (e) {}
+    });
+}
+
+function _clamp01(value, fallback) {
+    const number = Number(value);
+    if (!isFinite(number)) return fallback;
+    return Math.max(0, Math.min(1, number));
+}
+
+function _borderDirection(raw) {
+    let start = "top";
+    let clockwise = true;
+    if (raw && typeof raw === "object") {
+        const side = String(raw.start || "").toLowerCase();
+        if (["top", "right", "bottom", "left"].indexOf(side) !== -1) start = side;
+        if (String(raw.direction || "").toLowerCase().indexOf("counter") === 0) {
+            clockwise = false;
+        }
+        return { start: start, clockwise: clockwise };
+    }
+    const text = String(raw == null ? "clockwise" : raw).trim().toLowerCase();
+    if (text.indexOf("counter") === 0) {
+        return { start: "top", clockwise: false };
+    }
+    if (text.indexOf("start:") === 0) {
+        const parts = text.split(/\s+/);
+        const side = parts[0].slice(6);
+        if (["top", "right", "bottom", "left"].indexOf(side) !== -1) start = side;
+        if (parts.slice(1).some(part => part.indexOf("counter") === 0)) {
+            clockwise = false;
+        }
+    }
+    return { start: start, clockwise: clockwise };
+}
+
+// A rounded rectangle path in the four cardinal directions. Corner arcs use
+// sweep 1 (clockwise); counterclockwise is the same geometry mirrored.
+function _roundedRectPathData(w, h, radius, start) {
+    w = Math.max(1, w);
+    h = Math.max(1, h);
+    const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+    if (!r) {
+        if (start === "right") return "M " + w + " 0 V " + h + " H 0 V 0 H " + w + " Z";
+        if (start === "bottom") return "M " + w + " " + h + " H 0 V 0 H " + w + " V " + h + " Z";
+        if (start === "left") return "M 0 " + h + " V 0 H " + w + " V " + h + " H 0 Z";
+        return "M 0 0 H " + w + " V " + h + " H 0 Z";
+    }
+    const arc = " A " + r + " " + r + " 0 0 1 ";
+    if (start === "right") {
+        return "M " + w + " " + r + " V " + (h - r) + arc + (w - r) + " " + h
+            + " H " + r + arc + "0 " + (h - r) + " V " + r + arc + r + " 0"
+            + " H " + (w - r) + arc + w + " " + r + " Z";
+    }
+    if (start === "bottom") {
+        return "M " + (w - r) + " " + h + " H " + r + arc + "0 " + (h - r)
+            + " V " + r + arc + r + " 0 H " + (w - r) + arc + w + " " + r
+            + " V " + (h - r) + arc + (w - r) + " " + h + " Z";
+    }
+    if (start === "left") {
+        return "M 0 " + (h - r) + " V " + r + arc + r + " 0 H " + (w - r)
+            + arc + w + " " + r + " V " + (h - r) + arc + (w - r) + " " + h
+            + " H " + r + arc + "0 " + (h - r) + " Z";
+    }
+    return "M " + r + " 0 H " + (w - r) + arc + w + " " + r + " V " + (h - r)
+        + arc + (w - r) + " " + h + " H " + r + arc + "0 " + (h - r)
+        + " V " + r + arc + r + " 0 Z";
+}
+
+function _borderDrawMetrics(el) {
+    if (!el || typeof getComputedStyle !== "function") return null;
+    let cs;
+    try { cs = getComputedStyle(el); } catch (e) { return null; }
+    if (!cs) return null;
+    const widths = ["Top", "Right", "Bottom", "Left"].map(side => {
+        const value = parseFloat(cs["border" + side + "Width"]);
+        return isFinite(value) ? value : 0;
+    });
+    const border = Math.max.apply(null, widths);
+    if (!(border > 0)) return null;
+    const w = Math.max(0, el.clientWidth || 0);
+    const h = Math.max(0, el.clientHeight || 0);
+    if (!w || !h) return null;
+    const radius = Math.max(0, (parseFloat(cs.borderTopLeftRadius) || 0) - border);
+    // The container clips at its padding box, so the stroke sits inside it.
+    const inset = Math.min(w / 2, Math.max(0.5, border / 2));
+    const iw = Math.max(1, w - inset * 2);
+    const ih = Math.max(1, h - inset * 2);
+    const r = Math.min(radius, iw / 2, ih / 2);
+    const perimeter = 2 * (iw - 2 * r) + 2 * (ih - 2 * r) + 2 * Math.PI * r;
+    let colour = cs.borderTopColor || cs.borderRightColor || "#ffffff";
+    const transparent = value => !value || value === "transparent"
+        || /rgba\([^)]*,\s*0(?:\.0+)?\)$/.test(value);
+    const opaque = ["borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"]
+        .map(key => cs[key])
+        .find(value => !transparent(value));
+    if (opaque) colour = opaque;
+    return {
+        cs: cs, border: border, widths: widths, w: w, h: h,
+        inset: inset, iw: iw, ih: ih, radius: r,
+        perimeter: perimeter, colour: colour,
+    };
+}
+
+function _borderDrawTiming(el, track) {
+    const metrics = _borderDrawMetrics(el);
+    if (!metrics) return null;
+    const delay = Math.max(0, Number(track.delay_ms) || 0);
+    let duration = Number(track.duration_ms);
+    if (!isFinite(duration)) duration = 600;
+    const speed = Number(track.speed);
+    if (isFinite(speed) && speed > 0) {
+        duration = (metrics.perimeter / speed) * 1000;
+    }
+    duration = Math.max(0, Math.min(5000, duration));
+    return {
+        metrics: metrics,
+        delay: delay,
+        duration: duration,
+        from: _clamp01(track.from, 0),
+        to: _clamp01(track.to, 1),
+    };
+}
+
+function _playBorderDraw(el, track) {
+    const timing = _borderDrawTiming(el, track);
+    if (!timing) return 0;
+    const animate = timing.duration > 0 && timing.from !== timing.to;
+    // A full static border needs no overlay. A partial draw does, even when
+    // it has no duration: the final state is part of the border.
+    if (animate || timing.to < 1) {
+        _applyBorderDrawOverlay(el, track, timing, animate);
+    }
+    return timing.delay + timing.duration;
+}
+
+function _applyBorderDrawOverlay(el, track, timing, animate) {
+    if (typeof document.createElementNS !== "function") return 0;
+    const metrics = timing.metrics;
+    const direction = _borderDirection(track.direction);
+    const start = direction.clockwise ? direction.start
+        : ({ top: "top", bottom: "bottom", left: "right", right: "left" })[direction.start];
+    const d = _roundedRectPathData(metrics.iw, metrics.ih,
+                                   metrics.radius, start);
+    const svg = document.createElementNS(_SVG_NS, "svg");
+    svg.setAttribute("class", "rc-border-draw");
+    svg.setAttribute("data-rc-border-draw", "1");
+    svg.setAttribute("data-rc-direction", direction.start +
+        (direction.clockwise ? " clockwise" : " counterclockwise"));
+    svg.setAttribute("data-rc-perimeter", String(Math.round(metrics.perimeter)));
+    svg.setAttribute("viewBox", "0 0 " + metrics.w + " " + metrics.h);
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.position = "absolute";
+    svg.style.inset = "0";
+    svg.style.width = "100%";
+    svg.style.height = "100%";
+    svg.style.overflow = "visible";
+    svg.style.pointerEvents = "none";
+    svg.style.zIndex = "4";
+    const group = document.createElementNS(_SVG_NS, "g");
+    group.setAttribute("transform", "translate(" + metrics.inset + " "
+        + metrics.inset + ")");
+    const path = document.createElementNS(_SVG_NS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", metrics.colour);
+    path.setAttribute("stroke-width", String(metrics.border));
+    path.setAttribute("stroke-linecap", metrics.cs.borderTopStyle === "dotted"
+        ? "round" : "butt");
+    path.setAttribute("pathLength", "1");
+    path.setAttribute("stroke-dasharray", "1 1");
+    path.setAttribute("stroke-dashoffset", String(1 - timing.from));
+    if (!direction.clockwise) {
+        path.setAttribute("transform", "translate(" + metrics.iw + ",0) scale(-1,1)");
+    }
+    group.appendChild(path);
+    svg.appendChild(group);
+
+    // Hide the static border while the overlay owns the ring. The width and
+    // style stay, so hiding never reflows the container.
+    const savedColor = el.style.borderColor;
+    const savedPosition = el.style.position;
+    if (metrics.cs.position === "static") el.style.position = "relative";
+    el.style.borderColor = "transparent";
+    el.appendChild(svg);
+
+    let anim = null;
+    if (animate) {
+        try {
+            anim = path.animate([
+                { strokeDashoffset: 1 - timing.from },
+                { strokeDashoffset: 1 - timing.to },
+            ], {
+                duration: timing.duration,
+                delay: timing.delay,
+                easing: ANIM_EASINGS[track.easing] || track.easing || "ease-out",
+                fill: "forwards",
+            });
+            svg.setAttribute("data-rc-duration-ms", String(Math.round(timing.duration)));
+        } catch (e) { anim = null; }
+    }
+
+    let cleaned = false;
+    const cleanup = function () {
+        if (cleaned) return;
+        cleaned = true;
+        if (anim) { try { anim.cancel(); } catch (e) {} }
+        if (svg.parentNode) svg.parentNode.removeChild(svg);
+        el.style.borderColor = savedColor;
+        el.style.position = savedPosition;
+        _removePropertyCleanup(el, cleanup);
+    };
+    _addPropertyCleanup(el, cleanup);
+    if (!anim && animate) {
+        cleanup();
+        return;
+    }
+    if (anim) {
+        const finish = function () {
+            if (timing.to >= 1) cleanup();
+        };
+        try {
+            if (anim.finished && typeof anim.finished.then === "function") {
+                anim.finished.then(finish, cleanup);
+            } else {
+                setTimeout(finish, timing.delay + timing.duration);
+            }
+        } catch (e) { finish(); }
+    }
+}
+
+function _borderDrawDuration(el, track) {
+    const timing = _borderDrawTiming(el, track);
+    return timing ? timing.delay + timing.duration : 0;
+}
+
+const PROPERTY_ANIMATORS = {
+    "border.draw": { domain: "geometry", play: _playBorderDraw,
+                     duration: _borderDrawDuration },
+};
+
+function _hasPropertyTracks(anim, phase) {
+    if (!anim || !anim.properties) return false;
+    return Object.keys(anim.properties).some(trackId => {
+        const track = anim.properties[trackId];
+        return !!track && track.phase === phase
+            && !!PROPERTY_ANIMATORS[trackId];
+    });
+}
+
+function _playPropertyTracks(el, anim, phase) {
+    if (!el || !anim || !anim.properties || _reducedMotion()) return 0;
+    let total = 0;
+    Object.keys(anim.properties).forEach(trackId => {
+        const track = anim.properties[trackId];
+        if (!track || track.phase !== phase) return;
+        const animator = PROPERTY_ANIMATORS[trackId];
+        if (!animator) return;
+        total = Math.max(total, animator.play(el, track) || 0);
+    });
+    return total;
+}
+
+function _propertyPhaseDuration(el, anim, phase) {
+    if (!el || !anim || !anim.properties) return 0;
+    let total = 0;
+    Object.keys(anim.properties).forEach(trackId => {
+        const track = anim.properties[trackId];
+        if (!track || track.phase !== phase) return;
+        const animator = PROPERTY_ANIMATORS[trackId];
+        if (!animator) return;
+        total = Math.max(total, animator.duration(el, track) || 0);
+    });
+    return total;
 }
 
 function _containerElement(c) {
@@ -1948,13 +2257,18 @@ function _collectTransitionOut(theme, changed) {
     if (!theme || !changed || !changed.any) return plan;
     const anims = theme.animations || {};
     _animationTargets(theme).forEach(t => {
-        const trans = t.anim && t.anim.transition;
-        if (!trans || !trans.out) return;
+        if (!t.anim) return;
+        const trans = t.anim.transition;
+        const tracks = _hasPropertyTracks(t.anim, "transition_out");
+        if ((!trans || !trans.out) && !tracks) return;
         const relevant = (t.kind === "container" || t.kind === "body")
             ? changed.any : !!changed[t.kind];
         if (!relevant) return;
-        const def = _resolveSlotDef(trans.out, anims, "out");
-        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+        const def = (trans && trans.out)
+            ? _resolveSlotDef(trans.out, anims, "out") : null;
+        if (def || tracks) {
+            plan.push({ el: t.el, def: def, kind: t.kind, anim: t.anim });
+        }
     });
     return plan;
 }
@@ -1969,17 +2283,21 @@ function _collectExit(theme) {
         return plan;
     }
     _animationTargets(theme).forEach(t => {
-        if (!t.anim || !t.anim.out) return;
-        const def = _resolveSlotDef(t.anim.out, anims, "out");
-        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+        if (!t.anim) return;
+        const tracks = _hasPropertyTracks(t.anim, "out");
+        if (!t.anim.out && !tracks) return;
+        const def = t.anim.out ? _resolveSlotDef(t.anim.out, anims, "out") : null;
+        if (def || tracks) {
+            plan.push({ el: t.el, def: def, kind: t.kind, anim: t.anim });
+        }
     });
     return plan;
 }
 
 function _runAnimation(phase, changed) {
-    if (_reducedMotion()) return;
+    if (_reducedMotion()) return 0;
     const theme = _currentTheme;
-    if (!theme) return;
+    if (!theme) return 0;
     const anims = theme.animations || {};
 
     // Raw v1 payload that bypassed Python: keep the legacy phase names.
@@ -1993,9 +2311,11 @@ function _runAnimation(phase, changed) {
             _applyAnimation(container, anims.between_slides.in_type,
                 anims.between_slides.duration_ms, anims.between_slides.easing);
         }
-        return;
+        return 0;
     }
 
+    const trackPhase = phase === "entry" ? "entry" : "transition_in";
+    let total = 0;
     _animationTargets(theme).forEach(t => {
         let slot = null;
         if (phase === "entry") {
@@ -2006,12 +2326,229 @@ function _runAnimation(phase, changed) {
             if (!relevant) return;
             slot = t.anim.transition && t.anim.transition.in;
         }
+        // Property tracks run even when the slot is empty or split owns the
+        // text: they are independent of the keyframe channels.
+        total = Math.max(total, _playPropertyTracks(t.el, t.anim, trackPhase));
         if (!slot) return;
         if (phase !== "out" && _splitConfig(t.anim)
             && _runSplitAnimation(t.el, t.anim, phase, anims)) return;
         const def = _resolveSlotDef(slot, anims, "in");
-        if (def) _playElementAnimation(t.el, def, { kind: t.kind, phase: phase });
+        if (def) {
+            _playElementAnimation(t.el, def, { kind: t.kind, phase: phase });
+            total = Math.max(total, _phaseDuration(def));
+        }
     });
+    return total;
+}
+
+// ─── Overlap pair ───────────────────────────────────────────────────
+// `motion.transition` / `motion.in_out` may select `overlap`: the outgoing
+// content keeps playing while the incoming content starts an offset later,
+// stacked above it. The incoming theme supplies
+// motion.overlap_in_offset_ms; the generated constant is the fallback for a
+// theme that does not set it.
+let _overlapLayer = null;
+let _overlapTimers = [];
+let _overlapInfo = null;
+
+function _overlapOffset(theme) {
+    const fallback = (typeof RC_ANIM_DEFAULTS !== "undefined")
+        ? RC_ANIM_DEFAULTS.overlap_in_offset_ms : 0;
+    const motion = theme && theme.motion;
+    const raw = (motion && motion.overlap_in_offset_ms != null)
+        ? motion.overlap_in_offset_ms : fallback;
+    const value = Number(raw);
+    return isFinite(value) && value > 0 ? value : 0;
+}
+
+function _overlapSupported(theme) {
+    // v2 themes render into container elements this clone can freeze; a v1
+    // theme keeps the sequential path.
+    return !!(theme && theme.schema_version === 2
+        && Array.isArray(theme.containers));
+}
+
+function _snapshotRootThemeVars() {
+    // Theme custom properties live on :root. The clone inherits whatever the
+    // new theme writes there, so the old values ride on the clone itself.
+    const out = {};
+    if (typeof document === "undefined" || !document.documentElement) {
+        return out;
+    }
+    const style = document.documentElement.style;
+    if (!style || typeof style.item !== "function") return out;
+    for (let i = 0; i < style.length; i++) {
+        const prop = style.item(i);
+        if (prop && prop.indexOf("--rc-") === 0) {
+            out[prop] = style.getPropertyValue(prop);
+        }
+    }
+    return out;
+}
+
+function _captureOverlapLayer(plan, phase) {
+    // Mark the outgoing targets in the live DOM, clone #stage once, then strip
+    // the markers from the live DOM. The clone stays detached: the incoming
+    // render must run first or resetTheme() would drop it.
+    if (!plan || !plan.length || !stage
+        || typeof stage.cloneNode !== "function") return null;
+    const marks = [];
+    plan.forEach(function (p, index) {
+        if (!p.el || typeof p.el.setAttribute !== "function") return;
+        const attr = "data-rc-overlap-" + index;
+        try { p.el.setAttribute(attr, String(index)); } catch (e) { return; }
+        marks.push({ el: p.el, attr: attr, def: p.def, kind: p.kind,
+                     anim: p.anim });
+    });
+    let clone = null;
+    try { clone = stage.cloneNode(true); } catch (e) { clone = null; }
+    marks.forEach(function (m) {
+        try { m.el.removeAttribute(m.attr); } catch (e) {}
+    });
+    if (!clone) return null;
+    // The clone is positioned by CSS (.rc-overlap-layer), and it must not
+    // shadow the live #stage for getElementById. Appending it last keeps the
+    // duplicated inner ids from winning document-order lookups.
+    clone.removeAttribute("id");
+    clone.removeAttribute("aria-live");
+    const targets = [];
+    marks.forEach(function (m) {
+        const el = (typeof clone.querySelector === "function")
+            ? clone.querySelector("[" + m.attr + "]") : null;
+        if (!el) return;
+        el.removeAttribute(m.attr);
+        targets.push({ el: el, def: m.def, kind: m.kind, anim: m.anim });
+    });
+    if (!targets.length) return null;
+    return { el: clone, targets: targets, phase: phase };
+}
+
+function _attachOverlapLayer(layer, vars) {
+    if (!layer || !layer.el || !stage) return false;
+    const el = layer.el;
+    Object.keys(vars || {}).forEach(function (prop) {
+        try { el.style.setProperty(prop, vars[prop]); } catch (e) {}
+    });
+    // The cloned inline width/height/background stay. The live stage's fit
+    // transform is already applied by the ancestor, so it must not repeat.
+    el.style.transform = "none";
+    el.style.transformOrigin = "0 0";
+    el.style.position = "absolute";
+    el.style.left = "0";
+    el.style.top = "0";
+    el.style.pointerEvents = "none";
+    el.style.zIndex = "-1";
+    el.classList.add("rc-overlap-layer");
+    stage.appendChild(el);
+    _overlapLayer = layer;
+    return true;
+}
+
+function _removeOverlapLayer() {
+    const active = !!_overlapLayer;
+    if (_overlapLayer) {
+        (_overlapLayer.targets || []).forEach(function (t) {
+            if (t && t.el) _cancelAnimations(t.el);
+        });
+        if (_overlapLayer.el && _overlapLayer.el.parentNode) {
+            _overlapLayer.el.parentNode.removeChild(_overlapLayer.el);
+        }
+        _overlapLayer = null;
+    }
+    _overlapInfo = null;
+    // The incoming content is hidden while it waits for its offset. Any exit
+    // from the overlap path (finish, interrupt, cloak, clear, out) restores
+    // it before the caller sets its own visibility.
+    if (active) _setContainersHidden(false);
+}
+
+function _clearOverlapTimers() {
+    _overlapTimers.forEach(function (id) { clearTimeout(id); });
+    _overlapTimers = [];
+}
+
+function _playOutPlan(plan) {
+    let total = 0;
+    (plan || []).forEach(function (p) {
+        if (p.def) {
+            _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+            total = Math.max(total, _phaseDuration(p.def));
+        }
+        total = Math.max(total,
+            _playPropertyTracks(p.el, p.anim, "transition_out"));
+    });
+    return total;
+}
+
+function _runIncomingOverlap(phase, changed) {
+    // The offset timer starts this, so the authored phase duration is measured
+    // from that moment. A later variable offset only changes the timer.
+    return _runAnimation(phase, changed);
+}
+
+function _runOverlapPair(data, changed, phases, outPlan, offset, kind,
+                         preview) {
+    const vars = _snapshotRootThemeVars();
+    const layer = _captureOverlapLayer(outPlan, phases[0]);
+    // Render the incoming content now but silently: sustain and the shown
+    // state must wait for the whole pair, and _renderDisplay's cancel must
+    // not touch a layer that is not attached yet.
+    _renderDisplay(data, true, changed, null);
+    if (!preview) {
+        _prevPayload = data;
+        _currentKind = kind;
+        _motionState = "transitioning";
+    }
+
+    let outTotal = 0;
+    const incomingPhase = phases[1] === "transition_in" ? "in" : "entry";
+    if (layer && _attachOverlapLayer(layer, vars)) {
+        // The outgoing plan targets the clone, never the live DOM: the live
+        // nodes now hold the incoming content.
+        outTotal = _playOutPlan(layer.targets);
+        _setContainersHidden(true);
+        _overlapInfo = { offset_ms: offset, outgoing: layer.targets.length,
+                         incoming: 0 };
+    } else {
+        // No outgoing DOM to freeze: incoming starts at 0 so the stage never
+        // goes blank. No fallback animation is invented.
+        offset = 0;
+    }
+    const token = _phaseToken;
+    let inTotal = 0;
+
+    const finish = function () {
+        if (token !== _phaseToken) return;
+        _removeOverlapLayer();
+        if (!preview) {
+            _motionState = "shown";
+            _currentKind = kind;
+            _publishMotion();
+            _scheduleSustain(0);
+        }
+    };
+
+    const startIncoming = function () {
+        if (token !== _phaseToken) return;
+        _setContainersHidden(false);
+        const before = _animatedEls.size;
+        inTotal = _runIncomingOverlap(incomingPhase, changed);
+        if (_overlapInfo) {
+            _overlapInfo.incoming = _animatedEls.size - before;
+            if (!preview) _publishMotion();
+        }
+        const total = Math.max(outTotal, offset + inTotal);
+        _overlapTimers.push(setTimeout(function () {
+            finish();
+        }, Math.max(0, total - offset)));
+    };
+
+    if (offset > 0) {
+        _overlapTimers.push(setTimeout(startIncoming, offset));
+    } else {
+        startIncoming();
+    }
+    if (!preview) _publishMotion();
 }
 
 function _runExitAnimation(callback) {
@@ -2029,8 +2566,11 @@ function _runExitAnimation(callback) {
     }
     let total = 0;
     plan.forEach(p => {
-        _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
-        total = Math.max(total, _phaseDuration(p.def));
+        if (p.def) {
+            _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+            total = Math.max(total, _phaseDuration(p.def));
+        }
+        total = Math.max(total, _playPropertyTracks(p.el, p.anim, "out"));
     });
     if (total <= 0) {
         callback();
@@ -2621,6 +3161,57 @@ function _shadowIsNone(value) {
     return nums.length > 0 && nums.every(n => parseFloat(n) === 0);
 }
 
+// Convert a text_shadow value to CSS. Structured shadows omit `spread`:
+// the text-shadow grammar has no spread component, and a fourth length
+// would invalidate the whole declaration. A shared reference is left for
+// core.theme_shared; block text shadows are not expanded there today, so
+// it paints nothing rather than the literal "[object Object]".
+function _textShadowCss(value) {
+    if (value == null) return "";
+    if (typeof value === "string") {
+        const text = value.trim();
+        return text ? (_shadowIsNone(text) ? "none" : text) : "";
+    }
+    if (typeof value === "object") {
+        if ("shared" in value) return "";
+        const length = (v) => {
+            if (v == null || v === "") return "0px";
+            return typeof v === "number" ? (v + "px") : String(v);
+        };
+        const inset = value.inset ? "inset " : "";
+        return inset + length(value.x) + " " + length(value.y) + " "
+            + length(value.blur) + " "
+            + (value.color || "rgba(0,0,0,0.5)");
+    }
+    return "";
+}
+
+// Inline style for the verse number span. Authored values win over the
+// stylesheet defaults in themes.css; absent values leave CSS in charge.
+function _verseNumAttrs(vn, fallbackColor) {
+    vn = vn || {};
+    const parts = [];
+    const add = (prop, value, unit) => {
+        if (value == null || value === "") return;
+        parts.push(prop + ":" + (typeof value === "number" ? value + unit : String(value)));
+    };
+    const color = vn.color || fallbackColor;
+    if (color) parts.push("color:" + color);
+    add("font-size", vn.size, "px");
+    add("font-weight", vn.weight, "");
+    add("opacity", vn.opacity, "");
+    add("line-height", vn.line_height, "");
+    add("vertical-align", vn.vertical_align, "");
+    add("margin-right", vn.margin_right, "px");
+    return parts.length ? ' style="' + parts.join(";") + '"' : "";
+}
+
+function _verseNumBlock(theme) {
+    theme = theme || _currentTheme || {};
+    return _authoredBlock(themeContainer(theme), "verse_num")
+        || theme.verse_num || {};
+}
+
 // "8px 40% 3px #000000" -> {size, opacity, distance, color} | null
 function _parseShadow(value) {
     const v = String(value == null ? "" : value).trim();
@@ -2996,7 +3587,7 @@ function _renderDisplay(data, silent, changed, phase) {
             : null);
         const verseNum = extractVerseNumber(refText);
         if (verseNum) {
-            verseTextContent = '<span class="verse-num">' + verseNum + '</span> ' + verseTextContent;
+            verseTextContent = '<span class="verse-num"' + _verseNumAttrs(_verseNumBlock(data.theme_data)) + '>' + verseNum + '</span> ' + verseTextContent;
         }
         verseText.innerHTML = verseTextContent;
         delete verseText.dataset.rcOcSrc;
@@ -3053,14 +3644,269 @@ function _renderDisplay(data, silent, changed, phase) {
     _layoutSplitUnits(_currentTheme);
 
     if (!silent) {
-        if (phase) _runAnimation(phase, changed);
+        const total = phase ? _runAnimation(phase, changed) : 0;
         _prevPayload = data;
+        _motionState = "shown";
+        _currentKind = data.kind || "other";
+        _publishMotion();
+        _scheduleSustain(total);
     }
 }
 
+// ─── Motion state ─────────────────────────────────────────────────
+// Mirrors core/motion_state.py. The renderer only executes actions; the
+// ordering/coverage policy comes from the Python state machine and the
+// theme's `motion` object.
+let _motionState = "empty";
+let _motionCovered = "empty";
+let _sustainTimer = null;
+let _sustainToken = 0;
+let _currentKind = "other";
+let _lastPlan = null;
+// A display payload that arrives without a content kind is treated as
+// "other" (the OUT/IN path, never a silent scripture transition). The flag
+// survives until the next labelled payload or a clear so the warning is not
+// lost while that content is on screen.
+let _kindUnlabelled = false;
+
+// Page-side observable state (tests + the optional ?debug=1 readout).
+window.__rcMotionState = {
+    state: "empty", covered: "empty", kind: "other",
+    unlabelled: false, plan: null
+};
+
+function _publishMotion() {
+    if (typeof window === "undefined") return;
+    window.__rcMotionState = {
+        state: _motionState,
+        covered: _motionCovered,
+        kind: _currentKind,
+        unlabelled: _kindUnlabelled,
+        plan: _lastPlan ? {
+            old: _lastPlan.old, new: _lastPlan.new,
+            phases: _lastPlan.phases.slice(),
+            order: _lastPlan.order || "sequential",
+            offset_ms: _lastPlan.offset_ms || 0
+        } : null
+    };
+    _updateDebug();
+}
+
+// ?debug=1 readout: last plan, kinds compared, phases and the overlap layers.
+// Absent by default, so OBS and normal browser tabs are untouched.
+let _debugEl = null;
+
+function _debugEnabled() {
+    try {
+        return typeof location !== "undefined"
+            && /(?:^|[?&])debug=1(?:&|$)/.test(location.search || "");
+    } catch (e) {
+        return false;
+    }
+}
+
+function _updateDebug() {
+    if (!_debugEnabled() || typeof document === "undefined"
+        || !document.createElement || !document.body) return;
+    if (!_debugEl) {
+        _debugEl = document.createElement("div");
+        _debugEl.id = "rc-motion-debug";
+        _debugEl.style.cssText = "position:fixed;left:8px;bottom:8px;"
+            + "z-index:2147483647;padding:4px 6px;background:rgba(0,0,0,.65);"
+            + "color:#fff;font:11px/1.4 monospace;white-space:pre;"
+            + "pointer-events:none;";
+        document.body.appendChild(_debugEl);
+    }
+    const plan = _lastPlan;
+    let text = "state " + _motionState + " | kind " + _currentKind
+        + (_kindUnlabelled ? " | UNLABELLED" : "");
+    if (plan) {
+        text += "\n" + plan.old + " -> " + plan.new
+            + "\n" + plan.phases.join(" -> ");
+        if (plan.order === "overlap") {
+            text += "\noverlap offset " + (plan.offset_ms || 0) + "ms";
+        }
+    }
+    if (_overlapInfo) {
+        text += "\noutgoing clone (" + _overlapInfo.outgoing
+            + ") | incoming live (" + _overlapInfo.incoming + ")";
+    }
+    _debugEl.textContent = text;
+}
+
+// Cloak must blank the canvas background too, not just its containers.
+function _setPageHidden(hidden) {
+    if (typeof stage !== "undefined" && stage && stage.style) {
+        stage.style.visibility = hidden ? "hidden" : "";
+    }
+}
+
+function _themeMotion(theme) {
+    const m = theme && theme.motion;
+    return {
+        in_out: (m && m.in_out) || "sequential",
+        transition: (m && m.transition) || "sequential",
+        sustain_when_cloaked: (m && m.sustain_when_cloaked) || "pause",
+        deck_steps: (m && m.deck_steps) || "out_in"
+    };
+}
+
+function _setContainersHidden(hidden) {
+    if (typeof container !== "undefined" && container) {
+        container.classList.toggle("hidden", !!hidden);
+    }
+    if (typeof document !== "undefined" && document.querySelectorAll) {
+        document.querySelectorAll(".rc-dynamic-container").forEach(function (el) {
+            // The frozen outgoing layer keeps its own copy visible.
+            if (el.closest && el.closest(".rc-overlap-layer")) return;
+            el.classList.toggle("hidden", !!hidden);
+        });
+    }
+}
+
+function _sustainTargets(theme) {
+    const plan = [];
+    if (!theme || theme.schema_version !== 2) return plan;
+    _animationTargets(theme).forEach(function (t) {
+        if (!t.anim) return;
+        const tracks = _hasPropertyTracks(t.anim, "sustain");
+        if (!t.anim.sustain && !tracks) return;
+        const def = t.anim.sustain
+            ? _resolveSlotDef(t.anim.sustain, theme.animations || {}, "in") : null;
+        if (def || tracks) {
+            plan.push({ el: t.el, def: def, kind: t.kind, anim: t.anim });
+        }
+    });
+    return plan;
+}
+
+function _stopSustain() {
+    _sustainToken++;
+    if (_sustainTimer) {
+        clearTimeout(_sustainTimer);
+        _sustainTimer = null;
+    }
+}
+
+function _sustainAllowed(theme) {
+    if (_motionState === "shown") return true;
+    return _motionState === "cloaked"
+        && _motionCovered === "shown"
+        && _themeMotion(theme).sustain_when_cloaked === "run";
+}
+
+function _startSustain(theme) {
+    _stopSustain();
+    theme = theme || _currentTheme;
+    if (_reducedMotion() || !_sustainAllowed(theme)) return;
+    const plan = _sustainTargets(theme);
+    if (!plan.length) return;
+    // One infinite animation per target: no timer loop, no frame gap
+    // between iterations. _cancelAllAnimations() ends them.
+    plan.forEach(function (p) {
+        if (p.def) {
+            _playElementAnimation(p.el, p.def, {
+                kind: p.kind, phase: "sustain", iterations: Infinity
+            });
+        }
+        _playPropertyTracks(p.el, p.anim, "sustain");
+    });
+}
+
+function _scheduleSustain(delay) {
+    _stopSustain();
+    if (delay > 0) {
+        const token = _sustainToken;
+        _sustainTimer = setTimeout(function () {
+            _sustainTimer = null;
+            if (token !== _sustainToken) return;
+            _startSustain(_currentTheme);
+        }, delay);
+        return;
+    }
+    _startSustain(_currentTheme);
+}
+
+function _motionAllChanged() {
+    return { any: true, text: true, reference: true,
+             translation: true, title: true };
+}
+
 function handlePayload(data, silent) {
+    if (data.action === "cloak") {
+        _cancelAllAnimations();
+        _stopSustain();
+        _motionCovered = _motionState === "out" ? "out"
+            : (_motionState === "empty" ? "empty" : "shown");
+        _motionState = "cloaked";
+        _setContainersHidden(true);
+        _setPageHidden(true);
+        _publishMotion();
+        // `run` keeps sustain alive behind the cloak; the default `pause`
+        // leaves it stopped until uncloak.
+        if (_motionCovered === "shown"
+            && _themeMotion(_currentTheme).sustain_when_cloaked === "run") {
+            _startSustain(_currentTheme);
+        }
+        return;
+    }
+
+    if (data.action === "uncloak") {
+        if (_motionState !== "cloaked") return;
+        const reveal = data.reveal !== false;
+        if (reveal) {
+            _motionState = "shown";
+            _setContainersHidden(false);
+            _setPageHidden(false);
+            _scheduleSustain(0);
+        } else {
+            _motionState = _motionCovered === "out" ? "out" : "empty";
+            _setContainersHidden(true);
+            _setPageHidden(true);
+        }
+        _publishMotion();
+        return;
+    }
+
+    if (data.action === "out") {
+        if (_motionState === "cloaked" || _motionState === "out"
+            || _motionState === "empty" || !_prevPayload) return;
+        _cancelAllAnimations();
+        _stopSustain();
+        const theme = _currentTheme || _prevPayload.theme_data;
+        const plan = _collectExit(theme);
+        plan.forEach(function (p) {
+            if (p.def) {
+                _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+            }
+            _playPropertyTracks(p.el, p.anim, "out");
+        });
+        _motionState = "out";
+        if (!plan.length) _setContainersHidden(true);
+        _publishMotion();
+        return;
+    }
+
+    if (data.action === "in") {
+        if (_motionState !== "out") return;
+        _cancelAllAnimations();
+        _setContainersHidden(false);
+        _motionState = "entering";
+        const total = _runAnimation("entry", _motionAllChanged());
+        _motionState = "shown";
+        _scheduleSustain(total);
+        _publishMotion();
+        return;
+    }
+
     if (data.action === "clear") {
         _cancelAllAnimations();
+        _stopSustain();
+        _motionState = "empty";
+        _motionCovered = "empty";
+        _currentKind = "other";
+        _kindUnlabelled = false;
+        _publishMotion();
         if (silent) {
             container.classList.add("hidden");
             container.style.animation = "";
@@ -3084,38 +3930,118 @@ function handlePayload(data, silent) {
 
     if (data.action !== "display") return;
 
-    const previous = _prevPayload;
-    const changed = _changedSources(previous, data);
-    // entry: first content (or after a clear). in: content actually changed.
-    // Same content re-broadcast (theme restyle, queue refresh) is silent.
-    let phase = "entry";
-    if (previous && previous.action === "display") {
-        phase = changed.any ? "in" : null;
+    const previousKind = _currentKind;
+    // Pairing rule: an unlabelled payload is "other", so it plays OUT/IN
+    // instead of borrowing the scripture transition path. The warning makes
+    // a sender that forgot to label visible in the console.
+    const declaredKind = typeof data.kind === "string" ? data.kind.trim() : "";
+    _kindUnlabelled = !declaredKind || !!data.kind_missing;
+    if (_kindUnlabelled) {
+        console.warn("RhemaCast display payload has no kind; "
+            + "treating it as other (OUT/IN):", data.ref || data.reference || "");
+    }
+    _currentKind = declaredKind || "other";
+
+    if (_motionState === "cloaked") {
+        // Content staged behind the cloak: update the DOM silently so the
+        // eventual uncloak reveals it with no entry.
+        _renderDisplay(data, true, _changedSources(_prevPayload, data), null);
+        _prevPayload = data;
+        _motionCovered = "shown";
+        // _renderDisplay always shows the container; the cloak must win.
+        _setContainersHidden(true);
+        _setPageHidden(true);
+        _publishMotion();
+        return;
     }
 
-    if (!silent) {
+    const previous = _prevPayload;
+    const changed = _changedSources(previous, data);
+    const kind = _currentKind;
+    const oldKind = previous ? (previous.kind || previousKind || "other")
+                             : previousKind;
+
+    // A theme can make Prev/Next inside one deck instant. Only the OUT/IN
+    // pair is affected; scripture pairs and cross-deck jumps keep the rule.
+    const motion = _themeMotion(data.theme_data || _currentTheme);
+    const sameDeck = !!(previous && previous.action === "display"
+        && previous.deck_id != null && data.deck_id != null
+        && String(previous.deck_id) === String(data.deck_id));
+    const deckInstant = sameDeck && oldKind !== "scripture"
+        && kind !== "scripture" && motion.deck_steps === "instant";
+    if (deckInstant) {
         _cancelAllAnimations();
-        if (phase === "in") {
-            // §4.9.3: play the old content out first, then swap and re-fit.
-            const plan = _collectTransitionOut(_currentTheme, changed);
-            if (plan.length) {
-                let total = 0;
-                plan.forEach(p => {
-                    _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
-                    total = Math.max(total, _phaseDuration(p.def));
-                });
-                if (total > 0) {
-                    const token = _phaseToken;
-                    _phaseTimer = setTimeout(() => {
-                        _phaseTimer = null;
-                        if (token === _phaseToken) {
-                            _renderDisplay(data, silent, changed, phase);
-                        }
-                    }, total);
-                    return;
-                }
-            }
+        _lastPlan = { old: oldKind, new: kind, phases: [] };
+        _publishMotion();
+    }
+
+    // Pairing rule: scripture -> scripture plays transition out/in; every
+    // other pairing plays OUT then IN. No fallback between the two.
+    if (!silent && previous && previous.action === "display" && changed.any
+        && _motionState !== "out" && !deckInstant) {
+        _cancelAllAnimations();
+        const oldTheme = _currentTheme || previous.theme_data;
+        const scripturePair = oldKind === "scripture" && kind === "scripture";
+        const phases = scripturePair
+            ? ["transition_out", "transition_in"]
+            : ["out", "in"];
+        const pairMode = scripturePair ? motion.transition : motion.in_out;
+        const overlap = pairMode === "overlap" && !_reducedMotion()
+            && _overlapSupported(data.theme_data || _currentTheme)
+            && _overlapSupported(oldTheme);
+        const offset = overlap
+            ? _overlapOffset(data.theme_data || _currentTheme) : 0;
+        _lastPlan = { old: oldKind, new: kind, phases: phases.slice(),
+                      order: overlap ? "overlap" : "sequential",
+                      offset_ms: offset };
+        _publishMotion();
+        // Reduced motion skips the wait entirely: swap now and suppress
+        // the incoming phase. Normal playback keeps the authored timing.
+        const outPlan = _reducedMotion() ? [] : (phases[0] === "transition_out"
+            ? _collectTransitionOut(oldTheme, changed)
+            : _collectExit(oldTheme));
+        if (overlap && outPlan.length) {
+            _runOverlapPair(data, changed, phases, outPlan, offset, kind);
+            return;
         }
+        let total = 0;
+        outPlan.forEach(function (p) {
+            if (p.def) {
+                _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+                total = Math.max(total, _phaseDuration(p.def));
+            }
+            total = Math.max(total, _playPropertyTracks(p.el, p.anim,
+                phases[0] === "transition_out" ? "transition_out" : "out"));
+        });
+        const token = _phaseToken;
+        const finish = function () {
+            _renderDisplay(data, false, changed, null);
+            _stopSustain();
+            const inTotal = phases[1] === "transition_in"
+                ? _runAnimation("in", _motionAllChanged())
+                : _runAnimation("entry", _motionAllChanged());
+            _motionState = "shown";
+            _currentKind = kind;
+            _publishMotion();
+            _scheduleSustain(inTotal);
+        };
+        if (total > 0) {
+            _phaseTimer = setTimeout(function () {
+                _phaseTimer = null;
+                if (token === _phaseToken) finish();
+            }, total);
+        } else {
+            finish();
+        }
+        return;
+    }
+
+    // First content, a re-broadcast of the same content, or resync.
+    let phase = "entry";
+    if (_motionState === "out") {
+        phase = "entry";
+    } else if (previous && previous.action === "display") {
+        phase = null;
     }
     _renderDisplay(data, silent, changed, phase);
 }
@@ -3151,11 +4077,25 @@ function previewState() {
     return Object.assign({}, _rcPreviewState);
 }
 
-function _previewPlan(plan) {
+function _previewPlan(plan, trackPhase) {
     let total = 0;
-    plan.forEach(p => {
-        _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+    (plan || []).forEach(p => {
+        if (p.def) {
+            _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "out" });
+            total = Math.max(total, _phaseDuration(p.def));
+        }
+        total = Math.max(total,
+            _playPropertyTracks(p.el, p.anim, trackPhase || "out"));
+    });
+    return total;
+}
+
+function _previewDuration(plan, trackPhase) {
+    let total = 0;
+    (plan || []).forEach(p => {
         total = Math.max(total, _phaseDuration(p.def));
+        total = Math.max(total,
+            _propertyPhaseDuration(p.el, p.anim, trackPhase || "out"));
     });
     return total;
 }
@@ -3189,13 +4129,18 @@ function _collectTransitionIn(theme, changed) {
     if (_reducedMotion() || !theme || !changed || !changed.any) return plan;
     const anims = theme.animations || {};
     _animationTargets(theme).forEach(t => {
-        const trans = t.anim && t.anim.transition;
-        if (!trans || !trans.in) return;
+        if (!t.anim) return;
+        const trans = t.anim.transition;
+        const tracks = _hasPropertyTracks(t.anim, "transition_in");
+        if ((!trans || !trans.in) && !tracks) return;
         const relevant = (t.kind === "container" || t.kind === "body")
             ? changed.any : !!changed[t.kind];
         if (!relevant) return;
-        const def = _resolveSlotDef(trans.in, anims, "in");
-        if (def) plan.push({ el: t.el, def: def, kind: t.kind });
+        const def = (trans && trans.in)
+            ? _resolveSlotDef(trans.in, anims, "in") : null;
+        if (def || tracks) {
+            plan.push({ el: t.el, def: def, kind: t.kind, anim: t.anim });
+        }
     });
     return plan;
 }
@@ -3204,16 +4149,25 @@ function previewReplay(phase, current, alternate) {
     if (!current || !current.theme_data) return previewState();
     const theme = current.theme_data;
     const all = { any: true, text: true, reference: true, translation: true, title: true };
+    const alternateTheme = (alternate && alternate.theme_data) || theme;
+    const canOverlap = (theme.motion && theme.motion.transition === "overlap")
+        && !_reducedMotion() && _overlapSupported(theme)
+        && _overlapSupported(alternateTheme);
 
     if (phase === "entry") {
         _renderDisplay(current, true, all, null);
-        const plan = _animationTargets(theme).filter(t => t.anim && t.anim.entry);
+        const plan = _animationTargets(theme).filter(t => t.anim
+            && (t.anim.entry || _hasPropertyTracks(t.anim, "entry")));
         const token = _previewStart("entry", plan);
         _runAnimation("entry", all);
         let total = 0;
         plan.forEach(p => {
-            const def = _resolveSlotDef(p.anim.entry, theme.animations || {}, "in");
-            if (def) total = Math.max(total, _phaseDuration(def));
+            if (p.anim.entry) {
+                const def = _resolveSlotDef(p.anim.entry, theme.animations || {}, "in");
+                total = Math.max(total, _phaseDuration(def));
+            }
+            total = Math.max(total,
+                _propertyPhaseDuration(p.el, p.anim, "entry"));
         });
         _previewDoneAfter(token, total);
         return previewState();
@@ -3221,21 +4175,59 @@ function previewReplay(phase, current, alternate) {
 
     if (phase === "transition_in") {
         _renderDisplay(alternate, true, all, null);
+        if (canOverlap) {
+            const outPlan = _collectTransitionOut(alternateTheme, all);
+            if (outPlan.length) {
+                const offset = _overlapOffset(theme);
+                const token = _previewStart("transition_in", outPlan);
+                _runOverlapPair(
+                    current, all, ["transition_out", "transition_in"],
+                    outPlan, offset, current.kind || "scripture", true);
+                const inPlan = _collectTransitionIn(theme, all);
+                _rcPreviewState.animations = outPlan.length + inPlan.length;
+                _rcPreviewState.targets = _rcPreviewState.animations;
+                const total = Math.max(
+                    _previewDuration(outPlan, "transition_out"),
+                    offset + _previewDuration(inPlan, "transition_in"));
+                _previewDoneAfter(token, total);
+                return previewState();
+            }
+        }
         _renderDisplay(current, true, all, null);
         const plan = _collectTransitionIn(theme, all);
         const token = _previewStart("transition_in", plan);
         _runAnimation("in", all);
-        let total = 0;
-        plan.forEach(p => { total = Math.max(total, _phaseDuration(p.def)); });
-        _previewDoneAfter(token, total);
+        _previewDoneAfter(token, _previewDuration(plan, "transition_in"));
         return previewState();
     }
 
     if (phase === "transition_out") {
         _renderDisplay(current, true, all, null);
+        const outPlan = _collectTransitionOut(theme, all);
+        if (canOverlap && outPlan.length) {
+            const offset = _overlapOffset(alternateTheme);
+            const token = _previewStart("transition_out", outPlan);
+            _runOverlapPair(
+                alternate, all, ["transition_out", "transition_in"],
+                outPlan, offset, alternate.kind || "scripture", true);
+            const inPlan = _collectTransitionIn(alternateTheme, all);
+            _rcPreviewState.animations = outPlan.length + inPlan.length;
+            _rcPreviewState.targets = _rcPreviewState.animations;
+            const total = Math.max(
+                _previewDuration(outPlan, "transition_out"),
+                offset + _previewDuration(inPlan, "transition_in"));
+            setTimeout(function() {
+                // The pair render advances _phaseToken; the preview token is
+                // the stable guard for this replay.
+                if (token !== _rcPreviewState.token) return;
+                _previewFinish(token);
+                _renderDisplay(current, true, all, null);
+            }, Math.max(0, total));
+            return previewState();
+        }
         const plan = _collectTransitionOut(theme, all);
         const token = _previewStart("transition_out", plan);
-        const total = _previewPlan(plan);
+        const total = _previewPlan(plan, "transition_out");
         setTimeout(function() {
             if (token !== _phaseToken) return;
             _previewFinish(token);
@@ -3245,11 +4237,28 @@ function previewReplay(phase, current, alternate) {
         return previewState();
     }
 
+    if (phase === "sustain") {
+        _renderDisplay(current, true, all, null);
+        const plan = _sustainTargets(theme);
+        const token = _previewStart("sustain", plan);
+        let total = 0;
+        plan.forEach(p => {
+            if (p.def) {
+                _playElementAnimation(p.el, p.def, { kind: p.kind, phase: "sustain" });
+                total = Math.max(total, _phaseDuration(p.def));
+            }
+            total = Math.max(total,
+                _playPropertyTracks(p.el, p.anim, "sustain"));
+        });
+        _previewDoneAfter(token, total);
+        return previewState();
+    }
+
     if (phase === "out") {
         _renderDisplay(current, true, all, null);
         const plan = _collectExit(theme);
         const token = _previewStart("out", plan);
-        const total = _previewPlan(plan);
+        const total = _previewPlan(plan, "out");
         setTimeout(function() {
             if (token !== _phaseToken) return;
             _previewFinish(token);

@@ -43,6 +43,9 @@ class SegmentedToggle(QWidget):
         self._min_segment = int(min_segment)
         self._hover_index = -1
         self._pressed_index = -1
+        #: Focus ring is for keyboard users only: a click selects a segment and
+        #: is already obvious, so it must not outline the whole row.
+        self._keyboard_focus = True
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
@@ -154,6 +157,7 @@ class SegmentedToggle(QWidget):
             return
         index = self._index_at(event.position().x())
         self._pressed_index = index
+        self._keyboard_focus = False
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         event.accept()
 
@@ -178,9 +182,25 @@ class SegmentedToggle(QWidget):
         self.update()
         super().leaveEvent(event)
 
+    def focusInEvent(self, event) -> None:
+        # Every focus reason except a click keeps the ring: pointer users have
+        # the selected segment as their cue, keyboard users have nothing else.
+        if event.reason() != Qt.FocusReason.MouseFocusReason:
+            self._keyboard_focus = True
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self._keyboard_focus = True
+        self.update()
+        super().focusOutEvent(event)
+
     def keyPressEvent(self, event) -> None:
         key = event.key()
         current = self._index_for(self._value)
+        # Reaching the widget by keyboard, then using it, keeps the ring on.
+        self._keyboard_focus = True
+        self.update()
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
             self._step(-1)
             event.accept()
@@ -244,35 +264,33 @@ class SegmentedToggle(QWidget):
             else:
                 color = tokens.TEXT_SECONDARY
 
-            content_w = 0
             has_icon = paints_icon(option.icon)
-            if has_icon:
-                content_w += 16
-            if option.text:
-                metrics = QFontMetrics(font(tokens.TYPE_CAPTION))
-                content_w += metrics.horizontalAdvance(option.text)
-                if has_icon:
-                    content_w += 5
+            label_font = font(tokens.TYPE_CAPTION,
+                              tokens.WEIGHT_SEMIBOLD
+                              if index == selected_index
+                              else tokens.WEIGHT_MEDIUM)
+            metrics = QFontMetrics(label_font)
+            text_w = metrics.horizontalAdvance(option.text) if option.text else 0
+            icon_w = 16 if has_icon else 0
+            gap = 5 if (has_icon and option.text) else 0
+            # Centre the whole icon+label group once. Centring the label a
+            # second time inside the remaining rect drifted it to the right.
+            content_w = icon_w + gap + text_w
             start = rect.center().x() - content_w / 2
             if has_icon:
                 pixmap = icon_pixmap(option.icon, 14).pixmap(14, 14)
                 painter.drawPixmap(int(start), int(rect.center().y() - 7),
                                    pixmap)
-                start += 16 + (5 if option.text else 0)
+                start += icon_w + gap
             if option.text:
-                label_font = font(tokens.TYPE_CAPTION,
-                                  tokens.WEIGHT_SEMIBOLD
-                                  if index == selected_index
-                                  else tokens.WEIGHT_MEDIUM)
                 painter.setFont(label_font)
                 painter.setPen(QColor(color))
-                metrics = QFontMetrics(label_font)
                 text_rect = QRectF(start, rect.top(),
-                                   max(0.0, rect.right() - start - 4),
-                                   rect.height())
+                                   max(0.0, text_w), rect.height())
                 painter.drawText(
                     text_rect,
-                    int(Qt.AlignmentFlag.AlignCenter),
+                    int(Qt.AlignmentFlag.AlignLeft
+                        | Qt.AlignmentFlag.AlignVCenter),
                     metrics.elidedText(option.text,
                                        Qt.TextElideMode.ElideRight,
                                        int(text_rect.width())))
@@ -283,8 +301,12 @@ class SegmentedToggle(QWidget):
                 painter.drawRoundedRect(
                     QRectF(rect.center().x() - 6, y, 12, 2), 1, 1)
 
-        if self.hasFocus():
-            paint_focus_ring(painter, QRectF(self.rect()), tokens.RADIUS_SM)
+        if self.hasFocus() and self._keyboard_focus:
+            # Ring the current segment, not the whole row: the row-wide ring
+            # read as "this entire switch is selected".
+            ring = self._segment_rect(
+                selected_index if selected_index >= 0 else 0)
+            paint_focus_ring(painter, ring.adjusted(0.5, 0.5, -0.5, -0.5), 4)
         painter.end()
 
 

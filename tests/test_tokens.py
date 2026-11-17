@@ -123,7 +123,8 @@ def test_scrollbar_qss_is_flat_and_arrowless():
     assert f"min-width: {tokens.SCROLLBAR_MIN_HANDLE}px" in qss
     assert (f"border-radius: {tokens.SCROLLBAR_HANDLE_RADIUS}px" in qss)
     assert tokens.BG_CARD_HOVER in qss
-    assert tokens.TEXT_MUTED in qss, "hover step"
+    assert tokens.ACCENT_BORDER in qss, "hover step"
+    assert tokens.ACCENT in qss, "drag step"
     assert "background: transparent;\n            width:" in qss, \
         "the track itself must stay transparent"
 
