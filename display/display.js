@@ -267,16 +267,15 @@ function resolveBackground(value) {
     return text;
 }
 
-function applyCanvasFit(canvas) {
+// Sizes and paints the canvas, then scales the whole canvas uniformly into
+// the surface it is shown on. `canvas.fit` no longer exists: the canvas always
+// behaves the way "contain" used to (and the way the Designer preview always
+// did) — centred with letter/pillarbox bars, never cropped.
+function applyCanvas(canvas) {
     const stg = document.getElementById("stage");
     if (!stg) return;
     const cw = (canvas && canvas.width) || 1920;
     const ch = (canvas && canvas.height) || 1080;
-    // `fit` is the OBS contract: "contain" scales the design canvas into the
-    // browser source, "none" leaves it at its authored size (a smaller source
-    // crops it). The canvas size is the target display's real resolution, so
-    // container geometry is never hard-coded to 1920.
-    const fit = (canvas && canvas.fit) || "contain";
     stg.style.width = cw + "px";
     stg.style.height = ch + "px";
     stg.style.background = resolveBackground(canvas && canvas.background);
@@ -285,33 +284,24 @@ function applyCanvasFit(canvas) {
 
     let boxW = window.innerWidth;
     let boxH = window.innerHeight;
-    let contain = fit === "contain";
     if (window.__RC_PREVIEW) {
-        // The Designer preview is always a 16:9 stage: the whole canvas is
-        // contained inside a centred 16:9 box and letterboxed/pillarboxed
-        // around it — never cropped, never reshaped. `fit` still drives the
-        // real OBS output.
+        // The Designer preview is always a fixed 16:9 stage: the whole canvas
+        // is contained inside a centred 16:9 box and letterboxed/pillarboxed
+        // around it — never cropped, never reshaped.
         boxW = Math.min(window.innerWidth, window.innerHeight * 16 / 9);
         boxH = boxW * 9 / 16;
-        contain = true;
     }
-    if (contain) {
-        const scale = Math.min(boxW / cw, boxH / ch);
-        const left = (window.innerWidth - cw * scale) / 2;
-        const top = (window.innerHeight - ch * scale) / 2;
-        stg.style.transformOrigin = "0 0";
-        stg.style.transform = "translate(" + left + "px, " + top + "px) scale(" + scale + ")";
-    } else {
-        stg.style.transform = "";
-        stg.style.left = "0";
-        stg.style.top = "0";
-    }
+    const scale = Math.min(boxW / cw, boxH / ch);
+    const left = (window.innerWidth - cw * scale) / 2;
+    const top = (window.innerHeight - ch * scale) / 2;
+    stg.style.transformOrigin = "0 0";
+    stg.style.transform = "translate(" + left + "px, " + top + "px) scale(" + scale + ")";
 }
 
 if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("resize", function () {
         if (_currentTheme && _currentTheme.canvas) {
-            applyCanvasFit(_currentTheme.canvas);
+            applyCanvas(_currentTheme.canvas);
         }
     });
 }
@@ -325,7 +315,7 @@ function applyTheme(theme, slideFormat) {
     const root = document.documentElement;
 
     if (theme.canvas) {
-        applyCanvasFit(theme.canvas);
+        applyCanvas(theme.canvas);
     }
 
     let containers = [];
@@ -709,14 +699,138 @@ function autoFitText() {
     applyOutlineLayers();
 }
 
-function applyThemeInPlace(theme) {
-    // Style/geometry-only Designer edits.  The single-container path is
-    // already handled by applyTheme(); multi-panel themes also need their
-    // geometry rebuilt from the payload already on screen.
-    applyTheme(theme);
-    if (_prevPayload && _currentContainers && _currentContainers.length > 1) {
+// ─── Designer preview paint scheduler ──────────────────────────────────────
+// Only the in-app preview (window.__RC_PREVIEW) runs through this; OBS still
+// applies every payload synchronously. A left-panel edit hands the newest
+// theme here: the scheduler paints it on the next animation frame, keeps a
+// 60 Hz cadence while edits keep arriving and for a short grace window after
+// the last one, then drops to a 1 Hz heartbeat that repaints the latest value
+// as a safety net. The dirty flag is the coalescing point — there is no
+// debounce, so the newest value always wins and is always painted.
+const RC_PREVIEW_GRACE_MS = 500;
+const RC_PREVIEW_IDLE_MS = 1000;
+const RC_PREVIEW_FRAME_MS = 1000 / 60;
+
+let _rcLiveTheme = null;
+let _rcLiveFormat = undefined;
+let _rcDirty = false;
+let _rcRefreshContainers = false;
+let _rcLastChange = 0;
+let _rcLastPaint = -Infinity;
+let _rcFrame = 0;
+let _rcHeartbeat = 0;
+let _rcActivePaints = 0;
+let _rcIdlePaints = 0;
+let _rcIdleTicks = 0;
+
+function _rcPreviewActive() {
+    return typeof window !== "undefined" && !!window.__RC_PREVIEW;
+}
+
+function _rcClock() {
+    return (typeof performance !== "undefined" && performance
+        && performance.now) ? performance.now() : Date.now();
+}
+
+function _rcPaint() {
+    if (_rcLiveTheme === null) return;
+    _rcDirty = false;
+    _rcLastPaint = _rcClock();
+    applyTheme(_rcLiveTheme, _rcLiveFormat);
+    if (_rcRefreshContainers && _prevPayload && _currentContainers
+            && _currentContainers.length > 1) {
         _renderMultiContainers(_prevPayload);
     }
+    _rcRefreshContainers = false;
+}
+
+function _rcHeartbeatTick() {
+    _rcIdleTicks++;
+    if (!_rcPreviewActive()) {
+        if (_rcHeartbeat) clearInterval(_rcHeartbeat);
+        _rcHeartbeat = 0;
+        return;
+    }
+    // Safety net only: a value whose frame never ran (rAF paused, a dropped
+    // tick) is dirty. An unchanged frame is left alone — a redundant
+    // applyTheme rebuilds outline layers and would disturb a running
+    // right-panel animation.
+    if (!_rcDirty) return;
+    _rcPaint();
+    _rcIdlePaints++;
+}
+
+function _rcStartHeartbeat() {
+    if (_rcHeartbeat) return;
+    _rcHeartbeat = setInterval(_rcHeartbeatTick, RC_PREVIEW_IDLE_MS);
+}
+
+function _rcTick() {
+    _rcFrame = 0;
+    const now = _rcClock();
+    // rAF can run at 120 Hz; one paint per 16.7 ms is the ceiling.
+    if (_rcDirty && now - _rcLastPaint >= RC_PREVIEW_FRAME_MS - 0.5) {
+        _rcPaint();
+        _rcActivePaints++;
+    }
+    if (now - _rcLastChange < RC_PREVIEW_GRACE_MS) {
+        _rcFrame = requestAnimationFrame(_rcTick);
+        return;
+    }
+    _rcStartHeartbeat();
+}
+
+function _rcWake() {
+    _rcLastChange = _rcClock();
+    if (_rcHeartbeat) {
+        clearInterval(_rcHeartbeat);
+        _rcHeartbeat = 0;
+    }
+    if (!_rcFrame) _rcFrame = requestAnimationFrame(_rcTick);
+}
+
+function scheduleThemeApply(theme, slideFormat) {
+    if (!theme) return;
+    _rcLiveTheme = theme;
+    _rcLiveFormat = slideFormat;
+    _rcDirty = true;
+    if (!_rcPreviewActive()) { _rcPaint(); return; }
+    _rcWake();
+}
+
+function applyThemeNow(theme, slideFormat) {
+    if (!theme) return;
+    _rcLiveTheme = theme;
+    _rcLiveFormat = slideFormat;
+    _rcDirty = false;
+    _rcRefreshContainers = true;
+    _rcLastChange = _rcClock();
+    _rcPaint();
+    if (_rcPreviewActive() && !_rcFrame) {
+        _rcFrame = requestAnimationFrame(_rcTick);
+    }
+}
+
+function previewRenderStats() {
+    return {
+        mode: _rcFrame ? "active" : "idle",
+        activePaints: _rcActivePaints,
+        idlePaints: _rcIdlePaints,
+        idleTicks: _rcIdleTicks,
+        dirty: _rcDirty,
+        frameMs: Math.round(RC_PREVIEW_FRAME_MS),
+        graceMs: RC_PREVIEW_GRACE_MS,
+        idleMs: RC_PREVIEW_IDLE_MS,
+    };
+}
+
+function applyThemeInPlace(theme) {
+    // Style/geometry-only Designer edits. The single-container path is
+    // already handled by applyTheme(); multi-panel themes also need their
+    // geometry rebuilt from the payload already on screen. When that paint
+    // lands is the scheduler's decision: next frame, or now for a release.
+    _rcRefreshContainers = true;
+    scheduleThemeApply(theme);
 }
 
 let _activeContainers = null;

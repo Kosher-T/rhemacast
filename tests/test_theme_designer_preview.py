@@ -45,8 +45,8 @@ class FakePreview:
     def apply_theme(self, theme, *, sample_id=None):
         self.calls.append(("load", sample_id))
 
-    def apply_theme_in_place(self, theme):
-        self.calls.append(("in-place",))
+    def apply_theme_in_place(self, theme, *, flush=False):
+        self.calls.append(("in-place", flush))
 
     def show_sample(self, sample_id, theme):
         self.calls.append(("sample", sample_id))
@@ -134,7 +134,7 @@ def test_style_edit_updates_in_place_without_replay(manager):
     manager.update_theme(_theme(), (
         ("containers", 0, "blocks", "text", "font_family"),))
     QTest.qWait(40)
-    assert ("in-place",) in preview.calls
+    assert ("in-place", False) in preview.calls
     assert _replays(preview) == []
 
 
@@ -202,6 +202,34 @@ def test_sample_swap_stops_replay_loop(manager):
     before = len(_replays(preview))
     QTest.qWait(80)
     assert len(_replays(preview)) == before
+
+
+def test_left_panel_style_edit_does_not_stop_a_right_panel_loop(manager):
+    """Canvas/style edits paint without touching the manager's replay loop.
+
+    The manager owns replays that start from right-panel animation edits; a
+    left-panel paint must not pause, gate or re-time them.
+    """
+    manager, preview = manager
+    manager._set_focus_inside(True)
+    manager.update_theme(_theme(), (
+        ("containers", 0, "animation", "entry"),))
+    QTest.qWait(60)
+    assert _replays(preview), "the right-panel loop must be running"
+
+    manager.update_theme(_theme(), (("canvas", "background"),))
+    painted = [call for call in preview.calls if call[0] == "in-place"]
+    assert painted and painted[-1] == ("in-place", False)
+    before = len(_replays(preview))
+    QTest.qWait(120)
+    assert len(_replays(preview)) > before, (
+        "a canvas edit must not stop the right panel's loop")
+
+
+def test_flush_is_forwarded_to_the_preview(manager):
+    manager, preview = manager
+    manager.update_theme(_theme(), (("canvas", "background"),), flush=True)
+    assert ("in-place", True) in preview.calls
 
 
 def test_shutdown_stops_every_timer(manager):

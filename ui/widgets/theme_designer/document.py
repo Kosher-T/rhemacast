@@ -34,6 +34,7 @@ class ThemeDocument(QObject):
     """
 
     changed = pyqtSignal(object, object)
+    previewed = pyqtSignal(object, object)
     replaced = pyqtSignal(object)
 
     def __init__(self, theme: Optional[dict] = None, parent=None):
@@ -102,6 +103,23 @@ class ThemeDocument(QObject):
             self._revision += 1
             self.changed.emit(tuple(changed), source)
         return tuple(changed)
+
+    def preview(self, path: Path, value: Any, *, source=None) -> bool:
+        """Write an in-flight control value (drag step, keystroke).
+
+        The theme dict is the single source of truth for what the preview
+        paints, so the live value lands here immediately and ``previewed``
+        asks the Designer to publish it. ``changed`` stays for committed
+        edits: validation, the JSON pane, structure rebuilds and the tab's
+        immediate paint. No caller ever sees a partial object — ``value`` is
+        the whole new paint string.
+        """
+        path = tuple(path)
+        if not path or not self._set(path, value):
+            return False
+        self._revision += 1
+        self.previewed.emit((path,), source)
+        return True
 
     def replace(self, theme: dict, *, source=None) -> None:
         """Replace the whole document (load, import, JSON apply)."""

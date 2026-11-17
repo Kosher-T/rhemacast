@@ -265,6 +265,33 @@ def test_own_save_is_not_reported_as_an_external_change(themes_tree):
     assert catalog.get("default").label == "Saved Label"
 
 
+def test_a_stray_legacy_fit_key_is_not_a_meaningful_change(themes_tree):
+    path = _write(themes_tree, "default", _theme("default", "Standard"))
+    catalog = _catalog(themes_tree)
+
+    # Someone re-adds the retired canvas.fit key on disk; nothing else changed.
+    stray = _theme("default", "Standard")
+    stray["canvas"]["fit"] = "none"
+    path.write_text(json.dumps(stray), encoding="utf-8")
+    os.utime(path, (1, 1))
+
+    assert catalog.sync_from_disk(theme_loader.iter_theme_files()) == []
+    assert "fit" not in theme_loader.get_theme("default")["canvas"]
+
+
+def test_reading_and_saving_a_theme_drops_the_retired_fit_key(themes_tree):
+    legacy = _theme("default", "Standard")
+    legacy["canvas"]["fit"] = "none"
+    path = _write(themes_tree, "default", legacy)
+    _catalog(themes_tree)                       # loads the tree for this test
+
+    theme = theme_loader.get_theme("default")
+    assert "fit" not in theme["canvas"]          # ignored on read
+
+    theme_loader.save_theme("default", theme)
+    assert "fit" not in json.loads(path.read_text(encoding="utf-8"))["canvas"]
+
+
 def test_sort_key_puts_explicit_orders_first():
     ordered = build_entry("b", "b", Path("b.json"), "scripture",
                           _theme("b", "Bravo", sort_order=2))

@@ -166,16 +166,19 @@ class ThemePreview(QWidget):
         self._theme_data = theme_data
         self._view.display_verse(self._payload(self._verse_key))
 
-    def apply_theme_in_place(self, theme_data: dict):
+    def apply_theme_in_place(self, theme_data: dict, *, flush: bool = False):
         """Restyle the current payload without running entry or exit.
 
         The page's ``applyTheme`` updates CSS variables and container
         geometry from the payload already on screen. Unknown document keys
         never reach this path: the caller passes a resolved display theme and
         the Designer document remains the sole owner of raw data.
+
+        ``flush`` paints immediately (a pointer release) instead of handing
+        the value to the page's frame scheduler.
         """
         self._theme_data = theme_data
-        self._view.apply_theme(self._resolved_theme(theme_data))
+        self._view.apply_theme(self._resolved_theme(theme_data), flush=flush)
 
     def show_sample(self, verse_key: str, theme_data: dict | None = None):
         """Swap the preview sample through the normal content-change path."""

@@ -320,7 +320,15 @@ class ThemeCatalog:
                     entry.id, path, "invalid", str(exc)))
                 continue
 
-            existed = self.by_path(path) is not None
+            theme_loader.strip_obsolete_keys(theme)
+            previous = self.by_path(path)
+            existed = previous is not None
+            # A file that only lost/gained retired keys (canvas.fit) renders
+            # identically, so it is not a meaningful change. A stale entry is
+            # always a change: its file just recovered from bad JSON.
+            if (existed and not previous.stale and theme_loader.get_theme(
+                    theme_loader.theme_name_for(theme, path)) == theme):
+                continue
             name = theme_loader.update_theme_from_disk(path, theme)
             entry = build_entry(
                 path.stem, name, path, theme_loader.theme_kind_for(path), theme)

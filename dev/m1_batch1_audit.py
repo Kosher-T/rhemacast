@@ -216,7 +216,7 @@ def control_prefixes(theme):
     """Leaf-level control paths the Full Designer exposes for this document."""
     paths: set[str] = set()
     # Canvas page.
-    for key in ("width", "height", "background", "fit"):
+    for key in ("width", "height", "background"):
         paths.add(f"canvas.{key}")
     # Container page + workspace + split editors.
     for index, container in enumerate(theme.get("containers") or []):

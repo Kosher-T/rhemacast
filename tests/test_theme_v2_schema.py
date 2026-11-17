@@ -34,7 +34,7 @@ def test_minimal_theme_fills_documented_defaults():
     assert resolved["kind"] == "scripture"
     assert resolved["canvas"] == {
         "width": 1920, "height": 1080,
-        "background": "transparent", "fit": "contain",
+        "background": "transparent",
     }
 
     container = resolved["containers"][0]
@@ -141,13 +141,13 @@ def test_out_of_range_numbers_clamp_before_falling_back():
 
     assert resolved["canvas"]["width"] == 7680   # clamped, not defaulted
     assert resolved["canvas"]["height"] == 240
-    assert resolved["canvas"]["fit"] == "contain"
+    assert "fit" not in resolved["canvas"]
     assert container["layer"] == 100
     assert container["opacity"] == 1
     assert container["overflow"] == "hidden"
     assert container["position"]["anchor"] == "center"
     paths = {entry.split(" path=")[1].split(" ")[0] for entry in report.warnings}
-    assert {"canvas.width", "canvas.height", "canvas.fit",
+    assert {"canvas.width", "canvas.height",
             "containers[0].layer", "containers[0].opacity",
             "containers[0].overflow",
             "containers[0].position.anchor"} <= paths

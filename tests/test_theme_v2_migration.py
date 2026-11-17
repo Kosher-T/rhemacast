@@ -29,12 +29,12 @@ def _resolve(raw, kind="scripture", name="probe"):
     return normalize_theme(copy.deepcopy(raw), kind=kind, name=name)
 
 
-def test_absent_schema_version_becomes_2_with_a_none_fit_canvas():
+def test_absent_schema_version_becomes_2_with_a_default_canvas():
     migrated = _migrate({"containers": {"main": {"x": 10, "y": 20, "text": {}}}})
     assert migrated["schema_version"] == SCHEMA_VERSION == 2
     assert migrated["canvas"] == {
         "width": 1920, "height": 1080,
-        "background": "transparent", "fit": "none",
+        "background": "transparent",
     }
 
 
@@ -357,8 +357,10 @@ def test_v2_documents_are_not_migrated_again():
     assert report.warnings == []
     assert resolved["canvas"] == {
         "width": 1280, "height": 720,
-        "background": "transparent", "fit": "contain",
+        "background": "transparent",
     }
+    # The retired `fit` key is ignored, not carried into the model.
+    assert "fit" not in resolved["canvas"]
     # Pure pass-through: no v1 defaults (60%/80%/bottom position) appear.
     assert resolved["containers"][0]["width"] == "auto"
     assert resolved["containers"][0]["min_width"] == 0

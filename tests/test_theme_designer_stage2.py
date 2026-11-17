@@ -247,7 +247,7 @@ def test_page_switch_leaves_no_old_rows_visible(qapp):
     editor._pages.set_value("canvas", emit=True)
     rows = [w for w in editor._host.findChildren(PropertyRow)
             if w.parent() is editor._host and not w.isHidden()]
-    assert len(rows) == 4  # width, height, background, fit
+    assert len(rows) == 3  # width, height, background
 
 
 def test_background_reset_restores_the_default_through_the_document(qapp):
@@ -286,3 +286,39 @@ def test_untouched_document_normalizes_cleanly(qapp):
     # document itself must not introduce schema errors of its own.
     assert resolved["canvas"]["width"] == 1920
     assert resolved["containers"][0]["blocks"]["text"]["size"] == 40
+
+
+def test_live_paint_value_is_written_without_being_a_commit(qapp):
+    """Drag values land in the document (the preview's only source) but do
+    not fire the commit signal the save path and JSON pane hang off."""
+    from ui.theme_kit.paint_field import PaintField
+    from ui.theme_kit.property_row import PropertyRow
+    from ui.widgets.theme_designer import ThemePropertyEditor
+    from ui.widgets.theme_designer.document import ThemeDocument
+
+    document = ThemeDocument(_theme())
+    changed, previewed = [], []
+    document.changed.connect(lambda paths, src: changed.append(paths))
+    document.previewed.connect(lambda paths, src: previewed.append(paths))
+
+    editor = ThemePropertyEditor()
+    _EDITORS.append(editor)
+    editor.bind_document(document)
+    row = next(r for r in editor._host.findChildren(PropertyRow)
+               if r.label() == "Background")
+    field = row.control()
+    assert isinstance(field, PaintField)
+
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.preview.emit("#112233")
+        assert document.get(("canvas", "background")) == "#112233"
+        assert previewed == [(("canvas", "background"),)]
+        assert changed == []
+
+        popover.editor.committed.emit("#112233")
+        assert field.committed_value() == "#112233"
+        assert document.get(("canvas", "background")) == "#112233"
+    finally:
+        popover.close()

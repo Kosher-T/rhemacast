@@ -225,3 +225,40 @@ def test_gradient_stop_edits_reach_the_stored_value(app):
         assert spec is not None and len(spec.stops) == 3
     finally:
         popover.close()
+
+
+# ── live-update regression: a release after a matching preview commits ─────
+
+def test_release_commits_even_when_the_last_preview_matched(app):
+    """The preview path advances the field's live value, so the commit dedupe
+    must compare against the *store* value. It used to compare with the live
+    value and drop every commit — the preview only caught up after a mode
+    switch wrote a different string."""
+    field = PaintField("transparent")
+    commits = []
+    previews = []
+    field.changed.connect(commits.append)
+    field.preview.connect(previews.append)
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.preview.emit("#abcdef")
+        assert previews == ["#abcdef"]
+        assert commits == []
+        # The release carries the same text the drag ended on.
+        popover.editor.committed.emit("#abcdef")
+        assert commits == ["#abcdef"]
+        assert field.committed_value() == "#abcdef"
+    finally:
+        popover.close()
+
+
+def test_close_flushes_a_drag_that_never_released(app):
+    field = PaintField("transparent")
+    commits = []
+    field.changed.connect(commits.append)
+    field._open_popover()
+    popover = field._popover
+    popover.editor.preview.emit("#00ff00")
+    popover.close()          # released outside the plane, or clicked away
+    assert commits == ["#00ff00"]

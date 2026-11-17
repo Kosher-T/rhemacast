@@ -46,7 +46,6 @@ from core.animation_registry import (
 SCHEMA_VERSION = 2
 
 KINDS = ("scripture", "freeform")
-FIT_MODES = ("contain", "none")
 OVERFLOWS = ("hidden", "visible")
 VALIGNS = ("top", "center", "bottom")
 TEXT_ALIGNS = ("left", "center", "right", "justify")
@@ -1294,8 +1293,6 @@ def _validate_canvas(raw: Any, *, report: ThemeReport) -> dict:
         "background": _coerce_paint(raw.get("background", "transparent"),
                                     "transparent", path=f"{path}.background",
                                     report=report),
-        "fit": coerce_enum(raw.get("fit", "contain"), FIT_MODES,
-                           "contain", path=f"{path}.fit", report=report),
     }
 
 
@@ -2042,7 +2039,7 @@ def _safe_theme() -> dict:
         "author": "RhemaCast",
         "kind": "scripture",
         "canvas": {"width": 1920, "height": 1080,
-                   "background": "transparent", "fit": "contain"},
+                   "background": "transparent"},
         "motion": {"in_out": "sequential", "transition": "sequential",
                    "overlap_in_offset_ms": 200,
                    "sustain_when_cloaked": "pause"},

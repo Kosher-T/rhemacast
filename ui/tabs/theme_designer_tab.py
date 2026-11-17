@@ -35,6 +35,7 @@ from core.constants import (
     DESIGNER_RIGHT_DEFAULT_WIDTH,
     DESIGNER_RIGHT_MAX_WIDTH,
     DESIGNER_RIGHT_MIN_WIDTH,
+    THEME_PREVIEW_FRAME_MS,
 )
 from core.theme_catalog import (
     ThemeCatalog, build_entry, clean_description, clean_label, prettify_id,
@@ -288,6 +289,7 @@ class ThemeDesignerTab(QWidget):
         # Single document owner: every panel is a view over this object.
         self._document = ThemeDocument({}, self)
         self._document.changed.connect(self._on_document_changed)
+        self._document.previewed.connect(self._on_document_previewed)
         self._document.replaced.connect(self._on_document_replaced)
         self._preview_pending: dict | None = None
         self._preview_paths: tuple = ()
@@ -443,6 +445,9 @@ class ThemeDesignerTab(QWidget):
         self._properties_panel.bind_document(self._document)
         self._animations_panel.bind_document(self._document)
         self._workspace.bind_document(self._document)
+        # A committed left-panel edit paints now, not on the next frame.
+        self._properties_panel.theme_changed.connect(
+            self._on_property_committed)
 
         # One preview, one replay policy.  The manager never writes the
         # document; it only decides which page-side phase to ask for.
@@ -945,6 +950,18 @@ class ThemeDesignerTab(QWidget):
         self._apply_to_previews()
         self._update_json_display()
 
+    def _on_document_previewed(self, _paths, _source):
+        """A live left-panel value landed in the document: publish it now."""
+        self._preview_pending = None
+        self._preview_paths = ()
+        self._apply_to_previews()
+
+    def _on_property_committed(self, _theme=None) -> None:
+        """Pointer release / commit: refresh the panes and paint at once."""
+        self._update_json_display()
+        self._preview_pending = None
+        self._flush_preview(flush=True)
+
     def _on_workspace_preview(self, theme_dict: dict):
         """Canvas drag preview only; the document changes on release."""
         if not isinstance(theme_dict, dict):
@@ -1142,6 +1159,8 @@ class ThemeDesignerTab(QWidget):
             return
         if not isinstance(theme, dict):
             return
+        # Retired keys (canvas.fit) are tolerated on import but never stored.
+        core.theme_loader.strip_obsolete_keys(theme)
         # Preserve our current name/label
         theme["name"] = self._theme_name
         if "label" not in theme:
@@ -1156,22 +1175,33 @@ class ThemeDesignerTab(QWidget):
     # ─── Internal helpers ─────────────────────────────────────────────────────
 
     def _apply_to_previews(self):
-        """Push the working theme into the single preview (debounced)."""
+        """Arm one frame for the newest theme — never a debounce.
+
+        The timer is started by the first change and is not restarted by
+        later ones, so a burst of drag events costs one publish and always
+        publishes the latest value. `_flush_preview(flush=True)` paints a
+        commit synchronously instead of waiting for the frame.
+        """
         if not hasattr(self, "_preview_timer"):
             self._preview_timer = QTimer(self)
             self._preview_timer.setSingleShot(True)
-            self._preview_timer.setInterval(80)
+            self._preview_timer.setInterval(THEME_PREVIEW_FRAME_MS)
             self._preview_timer.timeout.connect(self._flush_preview)
-        self._preview_timer.start()
+        if not self._preview_timer.isActive():
+            self._preview_timer.start()
 
-    def _flush_preview(self):
+    def _flush_preview(self, flush: bool = False):
+        timer = getattr(self, "_preview_timer", None)
+        if timer is not None:
+            timer.stop()
         theme = (self._preview_pending if self._preview_pending is not None
                  else self._working_theme)
         self._preview_pending = None
         if self._preview_reload:
             self._preview_manager.load_theme(theme, self._samples.current())
         else:
-            self._preview_manager.update_theme(theme, self._preview_paths)
+            self._preview_manager.update_theme(theme, self._preview_paths,
+                                               flush=flush)
         self._preview_reload = False
         self._preview_paths = ()
 
@@ -1238,6 +1268,9 @@ class ThemeDesignerTab(QWidget):
             return
         if not isinstance(parsed, dict):
             return
+        # Retired keys (canvas.fit) are tolerated in pasted JSON but never
+        # stored, so the next save cannot write them back.
+        core.theme_loader.strip_obsolete_keys(parsed)
         self._selected_container_id = ""
         self._preview_pending = None
         self._document.replace(parsed, source=self)

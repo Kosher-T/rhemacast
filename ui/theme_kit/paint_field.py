@@ -1078,8 +1078,9 @@ class _PaintPopover(PopupSurface):
     def closeEvent(self, event) -> None:
         if self._cancelled:
             self.cancelled.emit()
-        elif self._current_text != self._field._value:
-            # Closing unchanged writes nothing.
+        elif self._current_text != self._field.committed_value():
+            # A drag still in flight is flushed; an unchanged popover writes
+            # nothing.
             self.committed.emit(self._current_text)
         super().closeEvent(event)
 
@@ -1118,6 +1119,9 @@ class PaintField(QWidget):
         self._hover = False
         self._warning = ""
         self._remember(self._value)
+        #: The value the store holds. ``_value`` also carries the in-flight
+        #: drag value, so it cannot answer "did this commit change anything?".
+        self._committed_value = self._value
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFixedHeight(tokens.CONTROL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -1161,13 +1165,17 @@ class PaintField(QWidget):
 
     def set_value(self, value: Any, *, emit: bool = False) -> None:
         text = "" if value is None else str(value)
-        if text == self._value:
-            return
+        changed = text != self._committed_value
         self._value = text
+        self._committed_value = text
         self._remember(text)
         self.update()
-        if emit:
+        if emit and changed:
             self.changed.emit(self.value())
+
+    def committed_value(self) -> str:
+        """The value the store holds, ignoring an un-released drag value."""
+        return self._committed_value
 
     def set_palette(self, palette: Iterable[tuple[str, str]]) -> None:
         self._palette = list(palette)
@@ -1207,12 +1215,20 @@ class PaintField(QWidget):
         self.preview.emit(self.value())
 
     def _on_popover_committed(self, text: Any) -> None:
+        """Commit a finished edit (release, click, hex field, mode switch).
+
+        The dedupe compares against what the *store* holds, not ``_value``:
+        the preview path advances ``_value`` continuously while dragging, so
+        comparing with it swallowed every commit and the preview only caught
+        up when a mode switch wrote a different string.
+        """
         text = "" if text is None else str(text)
-        if text == self._value:
-            return
         self._value = text
         self._remember(text)
         self.update()
+        if text == self._committed_value:
+            return
+        self._committed_value = text
         self.changed.emit(self.value())
 
     def _on_popover_cancelled(self) -> None:
@@ -1220,9 +1236,10 @@ class PaintField(QWidget):
         previous = self._value
         self._value = self._open_value
         self.update()
-        if self._value != previous:
+        if self._committed_value != self._open_value:
+            self._committed_value = self._open_value
             self.changed.emit(self.value())
-        else:
+        elif self._value != previous:
             self.preview.emit(self.value())
 
     def _on_popover_closed(self) -> None:

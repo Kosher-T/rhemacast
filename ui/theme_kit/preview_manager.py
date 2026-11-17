@@ -174,20 +174,27 @@ class PreviewManager(QObject):
             if self._sample_id and hasattr(self._preview, "set_verse"):
                 self._preview.set_verse(self._sample_id)
 
-    def update_theme(self, theme: dict, paths: Iterable[Any] = ()) -> None:
-        """Apply an edited theme, scheduling a phase only for animation paths."""
+    def update_theme(self, theme: dict, paths: Iterable[Any] = (), *,
+                     flush: bool = False) -> None:
+        """Apply an edited theme, scheduling a phase only for animation paths.
+
+        Left-panel style/paint edits (`phase is None`) are handed to the
+        preview and nothing else: the manager must not stop, start or re-time
+        a replay the right panel owns. Replay timers are only touched by
+        animation paths, exactly as before.
+
+        ``flush`` paints the newest value synchronously (pointer release)
+        instead of letting the page coalesce it into the next frame.
+        """
         if not self._running:
             return
         self._theme = theme if isinstance(theme, dict) else {}
         phase = phase_for_paths(paths, self._theme)
         if hasattr(self._preview, "apply_theme_in_place"):
-            self._preview.apply_theme_in_place(self._theme)
+            self._preview.apply_theme_in_place(self._theme, flush=flush)
         else:
             self._preview.apply_theme(self._theme)
         if phase is None:
-            self._pending_phase = None
-            self._last_phase = None
-            self._stop_timers()
             return
         self._pending_phase = phase
         self._loop.stop()

@@ -113,8 +113,6 @@ CANVAS_SPECS = [
     {"path": ("height",), "label": "Height", "kind": "int", "step": 10},
     {"path": ("background",), "label": "Background", "kind": "paint",
      "full": True},
-    {"path": ("fit",), "label": "Fit", "kind": "enum",
-     "options": schema.FIT_MODES, "chips": True},
 ]
 
 CONTAINER_SPECS = [
@@ -830,6 +828,24 @@ class ThemePropertyEditor(QWidget):
             self._after_edit(str(path[-1]))
 
         _connect(widget, changed)
+
+        # Live values (plane/hue/alpha drags, typing, sliders) land in the
+        # document immediately so the preview follows the pointer. Committed
+        # edits still go through `changed` for validation and the save path.
+        live = getattr(widget, "preview", None)
+        if live is not None and hasattr(live, "connect"):
+            live.connect(lambda *_a: self._preview_value(path, spec, widget))
+
+    def _preview_value(self, path: tuple, spec: dict,
+                       widget: QWidget) -> None:
+        """Publish an in-flight value without the commit-side work."""
+        if self._loading:
+            return
+        value = self._doc_value(spec, widget)
+        if self._document is not None:
+            self._document.preview(path, value, source=self)
+        else:
+            self._write(path, value)
 
     def _doc_value(self, spec: dict, widget: QWidget) -> Any:
         kind = spec["kind"]

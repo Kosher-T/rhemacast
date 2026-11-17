@@ -39,7 +39,7 @@ resolved dictionary populated and validated by Python before broadcast:
 
 - **`schema_version`**: integer `2`.
 - **`kind`**: `"scripture"` or `"freeform"`.
-- **`canvas`**: `{ "width": 1920, "height": 1080, "background": "...", "fit": "none"|"contain" }`.
+- **`canvas`**: `{ "width": 1920, "height": 1080, "background": "..." }`. A legacy `fit` key may appear in older files and is ignored.
 - **`containers`**: Array of ordered container objects. Each container defines:
   - `id`: unique string identifier (e.g., `"main"`, `"verse"`, `"citation"`).
   - `layer`: integer z-index order (higher draws on top).

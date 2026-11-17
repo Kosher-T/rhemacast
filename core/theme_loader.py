@@ -118,6 +118,26 @@ def _theme_name(theme: dict, path: Path) -> str:
     return path.stem
 
 
+#: Canvas keys older theme files still carry but the model no longer has.
+OBSOLETE_CANVAS_KEYS = ("fit",)
+
+
+def strip_obsolete_keys(theme: Optional[dict]) -> dict:
+    """Drop retired keys from a raw theme dict, in place.
+
+    ``canvas.fit`` was removed from the model; files written before that still
+    carry it. Reading strips it so nothing downstream — the designer document,
+    dirty tracking and the file watcher's comparisons — ever sees it, and the
+    next save writes the cleaned theme.
+    """
+    if isinstance(theme, dict):
+        canvas = theme.get("canvas")
+        if isinstance(canvas, dict):
+            for key in OBSOLETE_CANVAS_KEYS:
+                canvas.pop(key, None)
+    return theme
+
+
 def _store(name: str, theme: dict, path: Path, mtime: float) -> None:
     _cache[name] = theme
     _paths[name] = path
@@ -141,7 +161,7 @@ def _load_all():
             continue
         try:
             with open(path, "r", encoding="utf-8") as f:
-                theme = json.load(f)
+                theme = strip_obsolete_keys(json.load(f))
             if not isinstance(theme, dict):
                 logger.error(f"Ignoring theme {path.name}: root is not an object")
                 continue
@@ -183,7 +203,7 @@ def _check_for_changes():
             if key in _file_mtimes and mtime > _file_mtimes[key]:
                 # File changed — reload it
                 with open(path, "r", encoding="utf-8") as f:
-                    theme = json.load(f)
+                    theme = strip_obsolete_keys(json.load(f))
                 if not isinstance(theme, dict):
                     logger.error(f"Ignoring theme {path.name}: root is not an object")
                     continue
@@ -466,6 +486,7 @@ def update_theme_from_disk(path: Path, theme: dict) -> str:
     reconciles the cache. Returns the loader key the theme now lives under.
     """
     _load_all()
+    theme = strip_obsolete_keys(theme)
     name = _theme_name(theme, path)
     for previous, previous_path in list(_paths.items()):
         if previous_path == path and previous != name:
@@ -692,6 +713,7 @@ def save_theme(name: str, theme_dict: dict, subdir: Optional[str] = None) -> Pat
     label edit never renames or moves the file. Returns the file written.
     """
     _load_all()
+    theme_dict = strip_obsolete_keys(theme_dict)
     if name in _paths:
         path = _paths[name]
     else:

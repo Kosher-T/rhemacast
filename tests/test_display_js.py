@@ -121,39 +121,40 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_canvas_fit_is_honoured_in_the_output_and_preview_is_always_contained(
-        renderer):
-    """``canvas.fit`` is the OBS contract; the Designer preview is always a
-    contained 16:9 stage, so Fit must never reshape or crop the preview."""
+def test_canvas_always_scales_into_its_surface_and_ignores_legacy_fit(renderer):
+    """There is no ``canvas.fit`` any more: the canvas always behaves the way
+    "contain" used to in the output (and the way the preview always did). A
+    legacy theme file that still carries ``fit: "none"`` must render
+    identically to one without the key."""
     body = """
-window.__RC_PREVIEW = false;
-applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "contain"});
-var stg = document.getElementById("stage");
-var contain = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
-               bg: stg.style.background};
-applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "none"});
-var none = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
+function probe(preview, extra) {
+    window.__RC_PREVIEW = preview;
+    var canvas = {width: 960, height: 540, background: "#102030"};
+    if (extra) canvas.fit = extra;
+    applyCanvas(canvas);
+    var stg = document.getElementById("stage");
+    return {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
             bg: stg.style.background};
-window.__RC_PREVIEW = true;
-applyCanvasFit({width: 960, height: 540, background: "transparent", fit: "none"});
-var preview = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
-               bg: stg.style.background};
-console.log(JSON.stringify({contain: contain, none: none, preview: preview}));
+}
+console.log(JSON.stringify({
+    plain: probe(false, null),
+    legacy_none: probe(false, "none"),
+    preview: probe(true, "none"),
+}));
 """
     out = run(renderer, body)
     # 1920x1080 viewport, 960x540 canvas -> exactly 2x, no letterbox offset.
-    assert out["contain"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
-    assert out["contain"]["w"] == "960px", (renderer, out)
-    assert out["contain"]["bg"] == "#102030", (renderer, out)
-    # In OBS, "none" keeps the authored size and lets the source crop it.
-    assert out["none"]["tf"] == "", (renderer, out)
-    assert out["none"]["w"] == "960px", (renderer, out)
-    assert out["none"]["h"] == "540px", (renderer, out)
-    # The preview contains the whole canvas whatever Fit says...
+    assert out["plain"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
+    assert out["plain"]["w"] == "960px", (renderer, out)
+    assert out["plain"]["h"] == "540px", (renderer, out)
+    assert out["plain"]["bg"] == "#102030", (renderer, out)
+    # A stray legacy key changes nothing in the output.
+    assert out["legacy_none"] == out["plain"], (renderer, out)
+    # The preview contains the whole canvas too...
     assert out["preview"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
     assert out["preview"]["w"] == "960px", (renderer, out)
     # ...and a transparent canvas paints nothing, not the word "transparent".
-    assert out["preview"]["bg"] == "transparent", (renderer, out)
+    assert out["preview"]["bg"] == "#102030", (renderer, out)
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -163,7 +164,7 @@ def test_preview_fits_any_canvas_into_the_fixed_16_9_stage(renderer):
     reshaped or cropped, and the background fills the whole canvas."""
     body = """
 function probe(w, h, bg) {
-    applyCanvasFit({width: w, height: h, background: bg, fit: "contain"});
+    applyCanvas({width: w, height: h, background: bg});
     const stg = document.getElementById("stage");
     const m = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([\\d.]+)\\)/
         .exec(stg.style.transform);
@@ -1371,28 +1372,27 @@ console.log(JSON.stringify({ cloaked, after: _motionState }));
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_v2_canvas_fit_scaling(renderer):
-    """canvas.fit='contain' applies transform scaling and centering to stage."""
+def test_v2_canvas_scaling_is_always_contained(renderer):
+    """The canvas scales into its surface and is centred, with or without a
+    legacy ``fit`` key on the theme."""
     body = """
-const theme = {
-  schema_version: 2,
-  canvas: { width: 1920, height: 1080, fit: "contain" },
-  containers: [{ id: "main" }]
-};
-window.innerWidth = 960;
-window.innerHeight = 540;
-applyTheme(theme);
-const stg = document.getElementById("stage");
-console.log(JSON.stringify({
-  transform: stg.style.transform,
-  width: stg.style.width,
-  height: stg.style.height
-}));
+function probe(extra) {
+    const canvas = { width: 1920, height: 1080 };
+    if (extra) canvas.fit = extra;
+    window.innerWidth = 960;
+    window.innerHeight = 540;
+    applyTheme({ schema_version: 2, canvas: canvas, containers: [{ id: "main" }] });
+    const stg = document.getElementById("stage");
+    return { transform: stg.style.transform, width: stg.style.width,
+             height: stg.style.height };
+}
+console.log(JSON.stringify({ plain: probe(null), legacy: probe("none") }));
 """
     res = run(renderer, body)
-    assert "scale(0.5)" in res["transform"]
-    assert res["width"] == "1920px"
-    assert res["height"] == "1080px"
+    assert "scale(0.5)" in res["plain"]["transform"]
+    assert res["plain"]["width"] == "1920px"
+    assert res["plain"]["height"] == "1080px"
+    assert res["legacy"] == res["plain"]
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -1698,3 +1698,123 @@ console.log(JSON.stringify({
 """
     res = run(renderer, body)
     assert res["shadow"] == "1px 2px 3px #445566", (renderer, res)
+
+
+# ── Designer preview paint scheduler (left-panel live updates) ─────────────
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_preview_coalesces_edits_into_the_next_frame(renderer):
+    """Left-panel edits must not need a mode switch to appear: the first
+    change is painted on the next animation frame and later changes inside
+    that frame collapse into the newest value."""
+    body = """
+(async () => {
+  window.__RC_PREVIEW = true;
+  const stg = document.getElementById("stage");
+  const theme = (bg) => ({canvas: {width: 1920, height: 1080,
+                                   background: bg, fit: "contain"},
+                          containers: [{id: "main"}]});
+  stg.style.background = "#000000";
+  applyThemeInPlace(theme("#ff0000"));
+  const sync = stg.style.background;
+  applyThemeInPlace(theme("#00ff00"));
+  applyThemeInPlace(theme("#123456"));
+  await new Promise((r) => setTimeout(r, 60));
+  console.log(JSON.stringify({sync: sync, after: stg.style.background,
+                              stats: previewRenderStats()}));
+})();
+"""
+    out = run(renderer, body)
+    # Deferred, not synchronous...
+    assert out["sync"] == "#000000", (renderer, out)
+    # ...and the newest value wins.
+    assert out["after"] == "#123456", (renderer, out)
+    assert out["stats"]["activePaints"] >= 1, (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_release_paints_immediately(renderer):
+    """A pointer release flushes the value on the same call, not the frame."""
+    body = """
+window.__RC_PREVIEW = true;
+const stg = document.getElementById("stage");
+stg.style.background = "#000000";
+applyThemeNow({canvas: {width: 960, height: 540, background: "#123456",
+                        fit: "contain"}, containers: [{id: "main"}]});
+console.log(JSON.stringify({bg: stg.style.background, w: stg.style.width,
+                            stats: previewRenderStats()}));
+"""
+    out = run(renderer, body)
+    assert out["bg"] == "#123456", (renderer, out)
+    assert out["w"] == "960px", (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_preview_runs_at_60hz_while_editing_then_idles(renderer):
+    """Edits keep the 60 Hz run alive; after the 500 ms grace window the
+    scheduler drops to the 1 Hz heartbeat, and the next change wakes it."""
+    body = """
+(async () => {
+  window.__RC_PREVIEW = true;
+  const theme = (i) => ({canvas: {width: 1920, height: 1080,
+      background: i % 2 ? "#ff0000" : "#0000ff", fit: "contain"},
+      containers: [{id: "main"}]});
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 30; i++) { applyThemeInPlace(theme(i)); await sleep(5); }
+  const during = previewRenderStats();
+  await sleep(900);
+  const after = previewRenderStats();
+  applyThemeInPlace(theme(1));
+  const resumed = previewRenderStats();
+  await sleep(20);
+  console.log(JSON.stringify({during: during, after: after,
+                              resumed: resumed}));
+})();
+"""
+    out = run(renderer, body)
+    # ~150 ms of edits, capped at 60 Hz (16.7 ms/frame), never per event.
+    assert 3 <= out["during"]["activePaints"] <= 16, (renderer, out)
+    assert out["after"]["mode"] == "idle", (renderer, out)
+    assert out["resumed"]["mode"] == "active", (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_idle_heartbeat_paints_a_value_whose_frame_never_ran(renderer):
+    """The 1 Hz heartbeat is the safety net: an update whose rAF never ran
+    (paused/hidden page, dropped tick) is still painted by the heartbeat."""
+    body = """
+window.__RC_PREVIEW = true;
+const stg = document.getElementById("stage");
+stg.style.background = "#000000";
+globalThis.requestAnimationFrame = () => 0;   // frames never arrive
+applyThemeInPlace({canvas: {width: 1920, height: 1080,
+                            background: "#abcdef", fit: "contain"},
+                   containers: [{id: "main"}]});
+const before = stg.style.background;
+_rcHeartbeatTick();
+console.log(JSON.stringify({before: before, after: stg.style.background,
+                            stats: previewRenderStats()}));
+"""
+    out = run(renderer, body)
+    assert out["before"] == "#000000", (renderer, out)
+    assert out["after"] == "#abcdef", (renderer, out)
+    assert out["stats"]["idleTicks"] >= 1, (renderer, out)
+    assert out["stats"]["idlePaints"] == 1, (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_idle_heartbeat_leaves_a_clean_frame_alone(renderer):
+    """A tick with nothing missed paints nothing, so the heartbeat cannot
+    disturb a running right-panel animation."""
+    body = """
+window.__RC_PREVIEW = true;
+applyThemeNow({canvas: {width: 1920, height: 1080,
+                        background: "#abcdef", fit: "contain"},
+               containers: [{id: "main"}]});
+_rcHeartbeatTick();
+console.log(JSON.stringify(previewRenderStats()));
+"""
+    out = run(renderer, body)
+    assert out["idlePaints"] == 0, (renderer, out)
+    assert out["idleTicks"] >= 1, (renderer, out)
+    assert out["dirty"] is False, (renderer, out)

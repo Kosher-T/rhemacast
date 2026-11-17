@@ -8,8 +8,7 @@
  "canvas": {
   "width": "(integer, 320 to 7680, default 1920)",
   "height": "(integer, 240 to 4320, default 1080)",
-  "background": "(paint, default transparent; paint: transparent | none | a color | a linear-gradient() or radial-gradient() string)",
-  "fit": "(one of: contain | none; default contain)"
+  "background": "(paint, default transparent; paint: transparent | none | a color | a linear-gradient() or radial-gradient() string)"
  },
  "motion": {
   "in_out": "(one of: sequential | overlap; default sequential)",

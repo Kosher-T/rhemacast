@@ -29,13 +29,12 @@
     "needs": "paint interpolation or a background-color keyframe track"
    },
    {
-    "property": "canvas.width/height/fit",
+    "property": "canvas.width/height",
     "atlas_paths": [
      "canvas.width",
-     "canvas.height",
-     "canvas.fit"
+     "canvas.height"
     ],
-    "needs": "canvas transform track; fit is layout policy, not animatable"
+    "needs": "canvas transform track; canvas size is layout policy, not animatable"
    },
    {
     "property": "container background",
@@ -247,15 +246,6 @@
    "designer_control": true,
    "verdict": "works",
    "evidence": "display.js:267-270 stage background",
-   "verified_by": "harness"
-  },
-  {
-   "path": "canvas.fit",
-   "display_js": true,
-   "display_view": true,
-   "designer_control": true,
-   "verdict": "works",
-   "evidence": "display.js:266-282 contain scaling",
    "verified_by": "harness"
   },
   {

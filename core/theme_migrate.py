@@ -563,7 +563,6 @@ def migrate_v1_to_v2(raw: Any, *, kind: str = SCRIPTURE,
         "width": 1920,
         "height": 1080,
         "background": "transparent",
-        "fit": "none",  # v1 had no canvas: keep raw 1:1 pixel behavior
     })
 
     animation = _build_v1_animation(_take_v1_animations(data))

@@ -28,7 +28,6 @@ Implementation: `ui/widgets/theme_designer/property_editor.py`
 | `canvas.width` | integer 320–7680 | `coerce_number` | `NumberField(integer)` | |
 | `canvas.height` | integer 240–4320 | `coerce_number` | `NumberField(integer)` | |
 | `canvas.background` | paint | `_coerce_paint` | `PaintField` | `@palette` stays literal (`@name`), expanded only by the validator |
-| `canvas.fit` | `contain`/`none` | `FIT_MODES` | `SegmentedToggle` | |
 
 ## 2. Container (except `position`, `width`, `height`)
 

@@ -162,12 +162,12 @@ The display layout operates on a fixed 1920×1080 design canvas inside a root st
 
 #### Canvas Fit & Scaling
 - `#stage` is the canvas: `applyCanvasFit()` sizes it to `canvas.width × canvas.height` (the target display's real resolution, e.g. `4270 × 1080` for a wide LED wall) and paints `canvas.background` through `resolveBackground()`.
-- In `canvas.fit: "contain"` mode, `applyCanvasFit()` scales `#stage` to fit the browser source:
+- `applyCanvas()` always scales `#stage` to fit the browser source (the retired `canvas.fit` key is ignored):
   $$\text{scale} = \min\left(\frac{\text{window.innerWidth}}{\text{canvas.width}}, \frac{\text{window.innerHeight}}{\text{canvas.height}}\right)$$
   The stage is centered with automatic letterboxing or pillarboxing:
   `transform: translate(dx, dy) scale(scale)`
-- In `canvas.fit: "none"` mode (standard for OBS browser sources), `#stage` stays unscaled at 1:1 pixel parity.
-- The Designer preview (`window.__RC_PREVIEW`) is always a fixed 16:9 stage: the whole canvas is contained inside a centred 16:9 box and letterboxed/pillarboxed around it, so `canvas.fit` only changes the OBS output, never the preview's shape.
+- With a browser source that matches the canvas size (the standard OBS setup) the scale factor is 1, so the output is 1:1 pixel parity.
+- The Designer preview (`window.__RC_PREVIEW`) is always a fixed 16:9 stage: the whole canvas is contained inside a centred 16:9 box and letterboxed/pillarboxed around it,   independent of the output scaling.
 
 ### Single-Container vs. Multi-Container Execution
 

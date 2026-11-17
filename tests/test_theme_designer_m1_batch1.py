@@ -121,7 +121,6 @@ def _edit_one_field_per_group(tab, raw):
     """Touch every Designer property group through real widget APIs."""
     props = tab._properties_panel
     props.set_field("canvas.background", "#123456")
-    props.set_field("canvas.fit", "contain")
     props.set_field("containers.0.opacity", 0.9)
     props.set_field("containers.0.border_radius", 9)
     if isinstance(raw.get("slide"), dict):
@@ -264,6 +263,9 @@ def test_every_shipped_theme_survives_designer_edit_save_reload(
     source_keys = set(_leaves(raw))
 
     designer.set_theme(name)
+    # A legacy canvas.fit key on disk is ignored on read, so it is not an
+    # unsaved change and never blocks an unload.
+    assert not designer.is_dirty(), f"{name} is dirty right after load"
     _edit_one_field_per_group(designer, raw)
 
     working = copy.deepcopy(designer._working_theme)
@@ -281,6 +283,8 @@ def test_every_shipped_theme_survives_designer_edit_save_reload(
     # The edits itself must have landed, not merely preserved the source.
     saved_leaves = _leaves(saved)
     assert saved_leaves["canvas.background"] == "#123456"
+    # The retired canvas.fit key is gone from the file after Save.
+    assert "canvas.fit" not in saved_leaves
     assert saved_leaves["containers[0].position.x"] == 37
     assert any(key.startswith("containers[") and key.endswith(".animation.split.by")
                and value == "word" for key, value in saved_leaves.items())
