@@ -11,7 +11,9 @@ Three bugs reported against the running Theme Designer are pinned here:
 """
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from ui.theme_kit.color_field import (
@@ -262,3 +264,71 @@ def test_close_flushes_a_drag_that_never_released(app):
     popover.editor.preview.emit("#00ff00")
     popover.close()          # released outside the plane, or clicked away
     assert commits == ["#00ff00"]
+
+
+def test_a_commit_is_not_repeated_when_the_popover_then_closes(app):
+    """The click that follows a release closes the popover without a second
+    commit: the close compares against the stored value, which the release
+    just wrote."""
+    field = PaintField("#112233")
+    commits = []
+    field.changed.connect(commits.append)
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.preview.emit("#abcdef")
+        popover.editor.committed.emit("#abcdef")
+        assert commits == ["#abcdef"]
+        popover.close()
+    finally:
+        popover.close()
+    assert commits == ["#abcdef"]
+    assert field.committed_value() == "#abcdef"
+
+
+def test_escape_rewinds_the_preview_without_committing(app):
+    """Escape during a drag puts the preview back on the stored value. The
+    store never moved (a drag only previews), so this is a repaint, and the
+    abandoned text is never committed."""
+    field = PaintField("#112233")
+    commits, previews = [], []
+    field.changed.connect(commits.append)
+    field.preview.connect(previews.append)
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.preview.emit("#ff0000")
+        QTest.keyClick(popover, Qt.Key.Key_Escape)
+        popover.close()
+    finally:
+        popover.close()
+    assert field.value() == "#112233"
+    assert previews == ["#ff0000", "#112233"]
+    assert commits == []
+    assert field.committed_value() == "#112233"
+
+
+def test_pushing_the_stored_value_back_into_a_dragging_field_is_not_a_commit(app):
+    """Re-syncing a field mid-drag must not look like a new edit.
+
+    ``set_value(emit=True)`` is how the editor pushes the document back into
+    a control. Comparing it with the in-flight drag value used to emit a
+    spurious ``changed`` for a value the store already held.
+    """
+    field = PaintField("#112233")
+    commits = []
+    field.changed.connect(commits.append)
+
+    field._on_popover_preview("#445566")       # the drag path the popover calls
+    assert field.value() == "#445566"
+
+    field.set_value("#112233", emit=True)      # the document echo
+    assert commits == []
+    assert field.value() == "#112233"
+
+    field.set_value("#abcdef", emit=True)      # a real change does emit
+    assert commits == ["#abcdef"]
+    assert field.committed_value() == "#abcdef"
+    # A release carrying the same text is already stored: no second commit.
+    field._on_popover_committed("#abcdef")
+    assert commits == ["#abcdef"]

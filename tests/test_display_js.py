@@ -1818,3 +1818,53 @@ console.log(JSON.stringify(previewRenderStats()));
     assert out["idlePaints"] == 0, (renderer, out)
     assert out["idleTicks"] >= 1, (renderer, out)
     assert out["dirty"] is False, (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_the_obs_output_still_paints_synchronously(renderer):
+    """The paint scheduler is Designer-preview only. Without ``__RC_PREVIEW``
+    an in-place edit paints on the call — OBS cannot wait for a frame the page
+    never schedules, and every payload there is already a complete theme."""
+    body = """
+window.__RC_PREVIEW = false;
+const stg = document.getElementById("stage");
+stg.style.background = "#000000";
+applyThemeInPlace({canvas: {width: 960, height: 540, background: "#654321"},
+                   containers: [{id: "main"}]});
+console.log(JSON.stringify({bg: stg.style.background, w: stg.style.width,
+                            stats: previewRenderStats()}));
+"""
+    out = run(renderer, body)
+    assert out["bg"] == "#654321", (renderer, out)
+    assert out["w"] == "960px", (renderer, out)
+    assert out["stats"]["mode"] == "idle", (renderer, out)
+    assert out["stats"]["activePaints"] == 0, (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_a_canvas_larger_than_the_output_is_scaled_down_not_cropped(renderer):
+    """The OBS output used to depend on ``canvas.fit``: ``none`` left a 4K
+    canvas at 3840px and the source cropped it. It now always scales to fit,
+    and an off-shape canvas is pillarboxed rather than cut."""
+    body = """
+function probe(w, h, vw, vh) {
+    window.__RC_PREVIEW = false;
+    window.innerWidth = vw;
+    window.innerHeight = vh;
+    applyCanvas({width: w, height: h, background: "#000000"});
+    const m = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([\\d.]+)\\)/
+        .exec(document.getElementById("stage").style.transform);
+    return {x: +m[1], y: +m[2], scale: +m[3]};
+}
+console.log(JSON.stringify({
+    exact: probe(3840, 2160, 1920, 1080),
+    pillarbox: probe(960, 2000, 1920, 1080),
+}));
+"""
+    out = run(renderer, body)
+    # Exactly half size, no offset: the whole canvas, nothing cropped.
+    assert out["exact"] == {"x": 0, "y": 0, "scale": 0.5}, (renderer, out)
+    # A tall canvas: 1080/2000 tall, centred horizontally, never cut.
+    tall = out["pillarbox"]
+    assert abs(tall["scale"] - 0.54) < 1e-9, (renderer, out)
+    assert tall["x"] > 0 and tall["y"] == 0, (renderer, out)

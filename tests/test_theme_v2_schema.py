@@ -153,6 +153,27 @@ def test_out_of_range_numbers_clamp_before_falling_back():
             "containers[0].position.anchor"} <= paths
 
 
+def test_a_legacy_canvas_fit_key_is_ignored_without_a_warning():
+    """Files written before Fit was removed still carry ``canvas.fit``.
+
+    It is dead data now: the resolved canvas must not have it, and loading an
+    old file must stay silent — a warning (or a repair note) would report a
+    perfectly good theme as broken on every start-up.
+    """
+    resolved, report = normalize_theme({
+        "schema_version": 2,
+        "canvas": {"width": 1280, "height": 720,
+                   "background": "#000000", "fit": "none"},
+        "containers": [{"id": "main"}],
+    }, name="probe")
+
+    assert "fit" not in resolved["canvas"]
+    assert resolved["canvas"]["background"] == "#000000"
+    assert report.warnings == []
+    assert report.errors == []
+    assert not any("fit" in note for note in report.notes)
+
+
 def test_numeric_strings_are_accepted_for_lengths_and_numbers():
     resolved, report = normalize_theme({
         "schema_version": 2,

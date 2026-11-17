@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -308,3 +309,51 @@ def test_build_entry_survives_non_dict_theme():
     assert entry.label == "X"
     assert entry.description == ""
     assert entry.sort_order is None
+
+
+# ── retired keys at the disk boundary ───────────────────────────────────────
+
+@pytest.mark.parametrize("value", [
+    None, 42, "a theme name", [],
+    {"containers": []}, {"canvas": None}, {"canvas": "nope"},
+    {"canvas": {"width": 1920}},
+])
+def test_strip_obsolete_keys_survives_anything_a_file_may_hold(value):
+    """A hand-edited theme can put anything at the root or under `canvas`;
+    the stripping boundary must never raise on the way to the designer."""
+    assert theme_loader.strip_obsolete_keys(value) == value
+
+
+def test_the_mtime_reload_path_also_strips_a_retired_key(themes_tree):
+    """`_check_for_changes` re-reads a file that changed on disk; that second
+    read must strip the retired key too, or a stale `fit` reappears in the
+    designer after any external edit."""
+    path = _write(themes_tree, "default", _theme("default", "Standard"))
+    _catalog(themes_tree)
+
+    # The label is the positive marker: it proves the new bytes were read,
+    # so a loader that simply skipped the reload cannot pass this test.
+    stray = _theme("default", "Reloaded")
+    stray["canvas"]["fit"] = "none"
+    path.write_text(json.dumps(stray), encoding="utf-8")
+    stamp = time.time() + 30          # past the mtime the loader recorded
+    os.utime(path, (stamp, stamp))
+
+    theme = theme_loader.get_theme("default")
+    assert theme["label"] == "Reloaded", "the file was not re-read"
+    assert "fit" not in theme["canvas"]
+    _, resolved = theme_loader.resolve_theme("default")
+    assert "fit" not in resolved["canvas"]
+
+
+def test_cloning_a_legacy_theme_does_not_copy_a_retired_key(themes_tree):
+    legacy = _theme("default", "Standard")
+    legacy["canvas"]["fit"] = "none"
+    _write(themes_tree, "default", legacy)
+    _catalog(themes_tree)
+
+    clone = theme_loader.create_theme("clone", "Clone")
+    assert "fit" not in clone["canvas"]
+    written = themes_tree / "scripture" / "clone.json"
+    saved = json.loads(written.read_text(encoding="utf-8"))
+    assert "fit" not in saved["canvas"], "the clone wrote the retired key"

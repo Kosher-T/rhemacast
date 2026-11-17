@@ -54,6 +54,29 @@ def _guard_unstubbed_dialogs():
         patch.undo()
 
 
+@pytest.fixture(autouse=True)
+def _revive_a_deleted_kit_tooltip_manager():
+    """Recreate the kit's TooltipManager singleton if Qt deleted its C++ side.
+
+    ``ui.theme_kit.popup`` keeps one application-wide QObject. A test that
+    tears down the popups (or the tooltipped widgets) it created can take that
+    object with it, and the next test in the same process then attaches a new
+    widget to a dead wrapper: ``RuntimeError: wrapped C/C++ object of type
+    TooltipManager has been deleted``. The app has one manager for its whole
+    life, so this is a test-isolation repair, not a behaviour change.
+    """
+    try:
+        from PyQt6 import sip
+        from ui.theme_kit import popup
+    except ImportError:               # no Qt, or no kit, in this environment
+        yield
+        return
+    manager = popup.TooltipManager._instance
+    if manager is not None and sip.isdeleted(manager):
+        popup.TooltipManager._instance = None
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _isolated_app_db():
     """Point core.database at a throwaway DB for the entire session."""
