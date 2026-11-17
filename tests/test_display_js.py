@@ -121,13 +121,12 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_canvas_fit_is_honoured_including_in_the_preview(renderer):
-    """``canvas.fit`` must reach the picture, in the OBS renderer and in the
-    Designer preview (which loads the embedded copy). The preview used to
-    force "contain" whenever ``__RC_PREVIEW`` was set, so switching Fit to
-    "none" changed the theme file and nothing on screen."""
+def test_canvas_fit_is_honoured_in_the_output_and_preview_is_always_contained(
+        renderer):
+    """``canvas.fit`` is the OBS contract; the Designer preview is always a
+    contained 16:9 stage, so Fit must never reshape or crop the preview."""
     body = """
-window.__RC_PREVIEW = true;
+window.__RC_PREVIEW = false;
 applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "contain"});
 var stg = document.getElementById("stage");
 var contain = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
@@ -135,17 +134,94 @@ var contain = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
 applyCanvasFit({width: 960, height: 540, background: "#102030", fit: "none"});
 var none = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
             bg: stg.style.background};
-console.log(JSON.stringify({contain: contain, none: none}));
+window.__RC_PREVIEW = true;
+applyCanvasFit({width: 960, height: 540, background: "transparent", fit: "none"});
+var preview = {tf: stg.style.transform, w: stg.style.width, h: stg.style.height,
+               bg: stg.style.background};
+console.log(JSON.stringify({contain: contain, none: none, preview: preview}));
 """
     out = run(renderer, body)
     # 1920x1080 viewport, 960x540 canvas -> exactly 2x, no letterbox offset.
     assert out["contain"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
     assert out["contain"]["w"] == "960px", (renderer, out)
     assert out["contain"]["bg"] == "#102030", (renderer, out)
-    # "none" keeps the authored size: no scale transform, still 960x540.
+    # In OBS, "none" keeps the authored size and lets the source crop it.
     assert out["none"]["tf"] == "", (renderer, out)
     assert out["none"]["w"] == "960px", (renderer, out)
     assert out["none"]["h"] == "540px", (renderer, out)
+    # The preview contains the whole canvas whatever Fit says...
+    assert out["preview"]["tf"] == "translate(0px, 0px) scale(2)", (renderer, out)
+    assert out["preview"]["w"] == "960px", (renderer, out)
+    # ...and a transparent canvas paints nothing, not the word "transparent".
+    assert out["preview"]["bg"] == "transparent", (renderer, out)
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_preview_fits_any_canvas_into_the_fixed_16_9_stage(renderer):
+    """A wide LED wall and a portrait canvas are letter/pillarboxed in the
+    preview: the whole canvas is scaled into a centred 16:9 box, never
+    reshaped or cropped, and the background fills the whole canvas."""
+    body = """
+function probe(w, h, bg) {
+    applyCanvasFit({width: w, height: h, background: bg, fit: "contain"});
+    const stg = document.getElementById("stage");
+    const m = /translate\\(([-\\d.]+)px, ([-\\d.]+)px\\) scale\\(([\\d.]+)\\)/
+        .exec(stg.style.transform);
+    return {scale: +m[3], left: +m[1], top: +m[2],
+            w: stg.style.width, h: stg.style.height,
+            bg: stg.style.background};
+}
+window.__RC_PREVIEW = true;
+console.log(JSON.stringify({
+    wide: probe(4270, 1080, "#204060"),
+    hd: probe(1920, 1080, "#204060"),
+    portrait: probe(1080, 1920, "#204060"),
+}));
+"""
+    out = run(renderer, body)
+    # 1920x1080 stage: a 4270x1080 wall is letterboxed top and bottom.
+    wide = out["wide"]
+    assert abs(wide["scale"] - 1920 / 4270) < 1e-6, (renderer, out)
+    assert abs(wide["top"] - (1080 - 1080 * wide["scale"]) / 2) < 1e-6
+    assert wide["left"] == 0
+    assert wide["w"] == "4270px" and wide["h"] == "1080px"
+    assert wide["bg"] == "#204060"
+    # A matching 16:9 canvas fills the stage exactly.
+    assert out["hd"]["scale"] == 1 and out["hd"]["left"] == 0
+    assert out["hd"]["top"] == 0
+    # 1080x1920 is pillarboxed left and right.
+    portrait = out["portrait"]
+    assert abs(portrait["scale"] - 1080 / 1920) < 1e-6, (renderer, out)
+    assert abs(portrait["left"] - (1920 - 1080 * portrait["scale"]) / 2) < 1e-6
+    assert portrait["top"] == 0
+    assert portrait["w"] == "1080px" and portrait["h"] == "1920px"
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_legacy_containers_use_the_canvas_not_a_1920_box(renderer):
+    """Positions are canvas pixels. A fixed 1920x1080 wrapper pushed every
+    verse into the left edge of a 4270x1080 wall and clipped the rest."""
+    body = """
+const theme = {
+    canvas: {width: 4270, height: 1080, background: "transparent", fit: "contain"},
+    containers: {
+        text: {x: 2135, y: 540, width: 3600, height: 600},
+        reference: {x: 2135, y: 900, width: 1200, height: 90},
+        translation: {x: 2135, y: 1000, width: 400, height: 40}
+    }
+};
+_applyContainers(theme);
+const c = document.getElementById("container");
+const t = document.getElementById("ct-text");
+console.log(JSON.stringify({w: c.style.width, h: c.style.height,
+                            left: t.style.left, top: t.style.top}));
+"""
+    out = run(renderer, body)
+    assert out["w"] == "4270px", (renderer, out)
+    assert out["h"] == "1080px", (renderer, out)
+    # Centred on the canvas: x - width / 2, not clamped to a 1920 frame.
+    assert out["left"] == "335px", (renderer, out)
+    assert out["top"] == "240px", (renderer, out)
 
 
 def _inline_render_cases():

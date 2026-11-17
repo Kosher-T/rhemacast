@@ -161,12 +161,13 @@ The display layout operates on a fixed 1920×1080 design canvas inside a root st
 ```
 
 #### Canvas Fit & Scaling
-- `#stage` is dimensioned to `1920px × 1080px` with `transform-origin: 0 0`.
-- In `canvas.fit: "contain"` mode, `applyCanvasFit()` scales `#stage` to fit any browser window or preview viewport:
-  $$\text{scale} = \min\left(\frac{\text{window.innerWidth}}{1920}, \frac{\text{window.innerHeight}}{1080}\right)$$
+- `#stage` is the canvas: `applyCanvasFit()` sizes it to `canvas.width × canvas.height` (the target display's real resolution, e.g. `4270 × 1080` for a wide LED wall) and paints `canvas.background` through `resolveBackground()`.
+- In `canvas.fit: "contain"` mode, `applyCanvasFit()` scales `#stage` to fit the browser source:
+  $$\text{scale} = \min\left(\frac{\text{window.innerWidth}}{\text{canvas.width}}, \frac{\text{window.innerHeight}}{\text{canvas.height}}\right)$$
   The stage is centered with automatic letterboxing or pillarboxing:
   `transform: translate(dx, dy) scale(scale)`
-- In `canvas.fit: "none"` mode (standard for OBS browser sources at 1920×1080), `#stage` stays unscaled at 1:1 pixel parity.
+- In `canvas.fit: "none"` mode (standard for OBS browser sources), `#stage` stays unscaled at 1:1 pixel parity.
+- The Designer preview (`window.__RC_PREVIEW`) is always a fixed 16:9 stage: the whole canvas is contained inside a centred 16:9 box and letterboxed/pillarboxed around it, so `canvas.fit` only changes the OBS output, never the preview's shape.
 
 ### Single-Container vs. Multi-Container Execution
 
@@ -181,6 +182,7 @@ The renderer supports two operational paths based on the theme definition:
 2. **Multi-Container Path (v2 themes with $\ge 2$ visible containers)**:
    - `#container` is hidden.
    - Dedicated container divs (`<div id="rc-cont-{id}" class="rc-dynamic-container">`) are created as direct children of `#stage`.
+   - The legacy absolute-position wrapper (`#container` holding `#ct-text`/`#ct-reference`/`#ct-translation`) is the canvas size (`canvas.width × canvas.height`), never a fixed 1920×1080 box, because its positions are authored in canvas pixels.
    - Each container is assigned its own `layer` (z-index), independent position, form styling, and content block stack.
    - A container can render any subset of blocks (e.g. verse text in container 1, citation line in container 2).
 

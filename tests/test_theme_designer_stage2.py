@@ -250,6 +250,33 @@ def test_page_switch_leaves_no_old_rows_visible(qapp):
     assert len(rows) == 4  # width, height, background, fit
 
 
+def test_background_reset_restores_the_default_through_the_document(qapp):
+    """The reset glyph beside Background is a document write, so the preview
+    (which reads the document) follows it immediately.
+
+    Regression: the row owned a reset glyph but nothing was connected, and a
+    paint edit that stayed inside the popover never reached the document
+    because the preview path had already written the field's value.
+    """
+    from ui.theme_kit.property_row import PropertyRow
+    from ui.theme_kit.paint_field import PaintField
+
+    editor = _editor(_theme())
+    row = next(r for r in editor._host.findChildren(PropertyRow)
+               if r.label() == "Background")
+    field = row.control()
+    assert isinstance(field, PaintField)
+    assert field.value() == "@accent"
+
+    field.set_value("#123456", emit=True)
+    assert editor.get_theme()["canvas"]["background"] == "#123456"
+
+    row.reset_requested.emit()
+    assert editor.get_theme()["canvas"]["background"] == "transparent"
+    assert field.value() == "transparent"
+    assert field.paint_mode() == "none"
+
+
 def test_untouched_document_normalizes_cleanly(qapp):
     theme = _theme()
     editor = _editor(theme)

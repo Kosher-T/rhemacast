@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 from ui import tokens
 from ui.theme_kit.base import (
-    checkerboard, draw_chevron, elide, font, format_number,
+    ChoiceOption, checkerboard, draw_chevron, elide, font, format_number,
     paint_focus_ring, parse_number_text,
 )
 from ui.theme_kit.color_field import (
@@ -254,22 +254,44 @@ def paint_value(painter: QPainter, rect: QRectF, value: Any,
         painter.fillRect(rect, color)
 
 
-def _describe(value: Any, palette: Optional[dict[str, str]] = None) -> str:
-    if value is None or str(value).strip() == "":
-        return "Not set"
+def paint_mode(value: Any) -> str:
+    """Derive the editor mode from a stored paint value.
+
+    The mode is never stored: none/empty/fully transparent is ``"none"``, a
+    gradient is ``"gradient"`` and anything else that paints is ``"solid"``.
+    """
+    if value is None:
+        return "none"
     text = str(value).strip()
-    spec = parse_gradient(text)
-    if spec is not None:
-        return ("Linear gradient" if spec.kind == "linear"
-                else "Radial gradient")
+    if not text:
+        return "none"
+    if text.casefold() in ("none", "transparent"):
+        return "none"
+    if parse_gradient(text) is not None:
+        return "gradient"
+    color = parse_css_color(text)
+    if color is not None and color.alpha() == 0:
+        return "none"
+    return "solid"
+
+
+def _describe(value: Any, palette: Optional[dict[str, str]] = None) -> str:
+    """Collapsed-field text: hex for solids, ``Gradient``, ``None``.
+
+    ``#rrggbbaa`` is only ever shown as eight digits when the colour is
+    actually translucent; a transparent value is "None", never a hex string.
+    """
+    if paint_mode(value) == "none":
+        return "None"
+    text = str(value).strip()
+    if parse_gradient(text) is not None:
+        return "Gradient"
     # Show the colour, not a symbolic name: theme files may store ``@gold``
-    # or ``transparent``, but the field paints hex.
+    # but the field paints hex.
     color = resolve_paint_color(text, palette)
-    if color is not None and (
-            text.startswith("@")
-            or text.casefold() in ("transparent", "none")):
-        return css_color(color, force_alpha=color.alpha() < 255)
-    return text
+    if color is None:
+        return text
+    return css_color(color, force_alpha=color.alpha() < 255)
 
 
 # ─── Painted pieces ─────────────────────────────────────────────────────────
@@ -300,103 +322,227 @@ class _PaintSwatch(QWidget):
         painter.end()
 
 
-class _GradientPreview(QWidget):
+def _mix_color(left: QColor, right: QColor, ratio: float) -> QColor:
+    ratio = max(0.0, min(1.0, float(ratio)))
+    return QColor(
+        round(left.red() + (right.red() - left.red()) * ratio),
+        round(left.green() + (right.green() - left.green()) * ratio),
+        round(left.blue() + (right.blue() - left.blue()) * ratio),
+        round(left.alpha() + (right.alpha() - left.alpha()) * ratio))
+
+
+def sample_gradient(spec: GradientSpec, position: float,
+                    palette: Optional[dict[str, str]] = None) -> str:
+    """Colour of *spec* at *position* (0–100), as a CSS colour string."""
+    positions = _resolved_positions(spec.stops)
+    colors = [resolve_paint_color(stop.color, palette) or QColor(0, 0, 0, 0)
+              for stop in spec.stops]
+    if not colors:
+        return "#ffffff"
+    at = max(0.0, min(100.0, float(position)))
+    if at <= positions[0]:
+        return css_color(colors[0])
+    if at >= positions[-1]:
+        return css_color(colors[-1])
+    for index in range(len(positions) - 1):
+        left, right = positions[index], positions[index + 1]
+        if left <= at <= right:
+            span = right - left
+            ratio = 0.0 if span <= 0 else (at - left) / span
+            return css_color(_mix_color(colors[index], colors[index + 1], ratio))
+    return css_color(colors[-1])
+
+
+class _GradientBar(QWidget):
+    """The gradient ramp: the gradient plus one draggable handle per stop.
+
+    Clicking the ramp adds a stop at that position, dragging a handle moves it
+    and right-click (or Delete) removes one above the minimum. Structural
+    edits are the owner's job — this widget reports them — while a drag
+    mutates the shared :class:`GradientSpec` in place, so the ramp and the
+    preview follow the cursor without rebuilding the editor.
+    """
+
+    preview = pyqtSignal()
+    changed = pyqtSignal()
+    add_requested = pyqtSignal(float)
+    remove_requested = pyqtSignal(int)
+    selected_changed = pyqtSignal(int)
+
+    _RAMP_TOP = 2.0
+    _RAMP_HEIGHT = 17.0
+    _SIDE = 7.0
+    _HANDLE = 9.0
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._spec = GradientSpec(stops=[
             GradientStop(0.0, "#ffffff"), GradientStop(100.0, "#000000")])
         self._palette: dict[str, str] = {}
-        self.setFixedHeight(28)
+        self._selected = 0
+        self._drag: Optional[int] = None
+        self.setFixedHeight(34)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Fixed)
+        self.setAccessibleName("Gradient ramp")
+        attach_tooltip(self, "Click the ramp to add a stop, drag a handle to "
+                            "move it, right-click to remove")
 
+    # ── public ──────────────────────────────────────────────────────────────
     def set_spec(self, spec: GradientSpec,
                  palette: Optional[dict[str, str]] = None) -> None:
         self._spec = spec
         if palette is not None:
             self._palette = palette
+        self._selected = max(0, min(self._selected, len(spec.stops) - 1))
         self.update()
 
+    def selected(self) -> int:
+        return self._selected
+
+    def set_selected(self, index: int, *, emit: bool = False) -> None:
+        count = len(self._spec.stops)
+        if not count:
+            return
+        index = max(0, min(int(index), count - 1))
+        changed = index != self._selected
+        self._selected = index
+        self.update()
+        if changed and emit:
+            self.selected_changed.emit(index)
+
+    # ── geometry ────────────────────────────────────────────────────────────
+    def _ramp(self) -> QRectF:
+        return QRectF(self._SIDE, self._RAMP_TOP,
+                      max(1.0, self.width() - self._SIDE * 2),
+                      self._RAMP_HEIGHT)
+
+    def _x_for(self, position: float) -> float:
+        ramp = self._ramp()
+        return ramp.left() + ramp.width() * max(0.0, min(100.0, position)) / 100.0
+
+    def _position_at(self, x: float) -> float:
+        ramp = self._ramp()
+        if ramp.width() <= 0:
+            return 0.0
+        return max(0.0, min(100.0, (x - ramp.left()) / ramp.width() * 100.0))
+
+    def _stop_at(self, x: float) -> Optional[int]:
+        best: Optional[int] = None
+        best_gap = self._HANDLE + 3
+        for index, position in enumerate(_resolved_positions(self._spec.stops)):
+            gap = abs(self._x_for(position) - x)
+            if gap <= best_gap:
+                best_gap = gap
+                best = index
+        return best
+
+    def _handle_rect(self, index: int) -> QRectF:
+        positions = _resolved_positions(self._spec.stops)
+        at = positions[index] if index < len(positions) else 0.0
+        centre_y = self._RAMP_TOP + self._RAMP_HEIGHT + 6
+        size = self._HANDLE
+        return QRectF(self._x_for(at) - size / 2, centre_y - size / 2,
+                      size, size)
+
+    # ── painting ────────────────────────────────────────────────────────────
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        checkerboard(painter, rect, 4)
-        paint_gradient(painter, rect, self._spec, self._palette)
+        ramp = self._ramp()
+        checkerboard(painter, ramp, 4)
+        paint_gradient(painter, ramp, self._spec, self._palette)
         painter.setPen(QPen(QColor(tokens.BORDER_POPOVER), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(rect, 4, 4)
+        painter.drawRoundedRect(ramp, 4, 4)
+        for index, stop in enumerate(self._spec.stops):
+            rect = self._handle_rect(index)
+            color = resolve_paint_color(stop.color, self._palette)
+            painter.setBrush(color or QColor(255, 255, 255, 255))
+            selected = index == self._selected
+            painter.setPen(QPen(
+                QColor(tokens.ACCENT if selected else tokens.BORDER_POPOVER),
+                2 if selected else 1))
+            painter.drawEllipse(rect)
         painter.end()
 
+    # ── interaction ─────────────────────────────────────────────────────────
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.RightButton:
+            index = self._stop_at(event.position().x())
+            if index is not None:
+                self.remove_requested.emit(index)
+            event.accept()
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        x = event.position().x()
+        index = self._stop_at(x)
+        if index is None:
+            self.add_requested.emit(self._position_at(x))
+            event.accept()
+            return
+        self.set_selected(index, emit=True)
+        self._drag = index
+        event.accept()
 
-class _GradientStopRow(QWidget):
-    preview = pyqtSignal()
-    edited = pyqtSignal()
-    removed = pyqtSignal(object)
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag is None or self._drag >= len(self._spec.stops):
+            super().mouseMoveEvent(event)
+            return
+        position = self._position_at(event.position().x())
+        self._spec.stops[self._drag].at = position
+        self.update()
+        self.preview.emit()
+        event.accept()
 
-    def __init__(self, stop: GradientStop, *,
-                 palette: Iterable[tuple[str, str]] = (),
-                 can_remove: bool = True, parent=None):
-        super().__init__(parent)
-        self._updating = False
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(tokens.SPACE_4)
+    def mouseReleaseEvent(self, event) -> None:
+        if self._drag is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = None
+            self.changed.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
-        self.position = NumberField(
-            stop.at, minimum=0, maximum=100, step=1, nullable=True,
-            placeholder="auto", suffix="%", label="Stop position")
-        self.position.setFixedWidth(62)
-        layout.addWidget(self.position, 0)
-
-        from ui.theme_kit.color_field import ColorField
-        self.color = ColorField(
-            stop.color, palette=palette, alpha=True, nullable=False)
-        layout.addWidget(self.color, 1)
-
-        self.remove = IconButton(glyph="minus", tooltip="Remove stop",
-                                 variant="ghost", parent=self)
-        self.remove.setEnabled(can_remove)
-        self.remove.clicked.connect(lambda: self.removed.emit(self))
-        layout.addWidget(self.remove, 0)
-        self.setFixedHeight(tokens.CONTROL_HEIGHT)
-
-        self.position.preview.connect(self._on_preview)
-        self.position.changed.connect(self._on_changed)
-        self.color.preview.connect(self._on_preview)
-        self.color.changed.connect(self._on_changed)
-
-    def stop(self) -> GradientStop:
-        value = self.position.value()
-        if isinstance(value, str):
-            stripped = value.rstrip("%")
-            value = parse_number_text(stripped)
-        at = None if value is None else float(value)
-        return GradientStop(at, str(self.color.value() or ""))
-
-    def set_stop(self, stop: GradientStop) -> None:
-        self._updating = True
-        try:
-            self.position.set_value(stop.at)
-            self.color.set_value(stop.color)
-        finally:
-            self._updating = False
-
-    def _on_preview(self, *_args) -> None:
-        if not self._updating:
+    def keyPressEvent(self, event) -> None:
+        count = len(self._spec.stops)
+        if not count:
+            super().keyPressEvent(event)
+            return
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self.remove_requested.emit(self._selected)
+            event.accept()
+            return
+        step = 5.0 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
+        if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            stop = self._spec.stops[self._selected]
+            current = stop.at
+            if current is None:
+                current = _resolved_positions(self._spec.stops)[self._selected]
+            delta = -step if event.key() == Qt.Key.Key_Left else step
+            stop.at = max(0.0, min(100.0, current + delta))
+            self.update()
             self.preview.emit()
-
-    def _on_changed(self, *_args) -> None:
-        if not self._updating:
-            self.edited.emit()
+            self.changed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class GradientEditor(QWidget):
     """Structured linear/radial gradient editor.
 
+    The ramp owns positions; one :class:`ColorEditor` edits the selected
+    stop's colour (plane, hue, alpha and hex), so a gradient is edited with
+    exactly the same control as a solid.
+
     Signals
-        preview(str) — live CSS while a stop colour/position is dragged.
-        changed(str) — committed CSS (release, add/remove, kind/angle).
+        preview(str) — live CSS while a stop or the angle is dragged.
+        changed(str) — committed CSS (release, add/remove, kind/angle, hex).
     """
 
     preview = pyqtSignal(str)
@@ -410,25 +556,30 @@ class GradientEditor(QWidget):
         self._palette = list(palette)
         self._spec = GradientSpec(stops=[
             GradientStop(0.0, "#ffffff"), GradientStop(100.0, "#000000")])
-        self._min_stops = max(1, min_stops)
+        self._min_stops = max(2, min_stops)
         self._max_stops = max(self._min_stops, max_stops)
         self._updating = False
         self._raw_mode = False
-        self._rows: list[_GradientStopRow] = []
+        self._selected = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(tokens.SPACE_4)
 
-        self.preview_bar = _GradientPreview(self)
-        layout.addWidget(self.preview_bar)
+        self.bar = _GradientBar(self)
+        self.bar.preview.connect(self._on_bar_preview)
+        self.bar.changed.connect(self._on_bar_changed)
+        self.bar.add_requested.connect(self._add_stop_at)
+        self.bar.remove_requested.connect(self._remove_stop_at)
+        self.bar.selected_changed.connect(self._on_selected)
+        layout.addWidget(self.bar)
 
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(tokens.SPACE_4)
         self.kind = SegmentedToggle(
-            [("Linear", "linear"), ("Radial", "radial")], "linear",
-            accessible_name="Gradient type")
+            [ChoiceOption("linear", "Linear"), ChoiceOption("radial", "Radial")],
+            "linear", accessible_name="Gradient type")
         controls.addWidget(self.kind, 1)
         self.angle = NumberField(
             180, minimum=0, maximum=360, step=5, suffix="°",
@@ -437,11 +588,11 @@ class GradientEditor(QWidget):
         controls.addWidget(self.angle, 0)
         layout.addLayout(controls)
 
-        self.rows_host = QWidget(self)
-        self.rows_layout = QVBoxLayout(self.rows_host)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
-        self.rows_layout.setSpacing(tokens.SPACE_4)
-        layout.addWidget(self.rows_host)
+        self.stop_editor = ColorEditor(
+            "#ffffff", palette=self._palette, alpha=True)
+        self.stop_editor.preview.connect(self._on_stop_preview)
+        self.stop_editor.committed.connect(self._on_stop_committed)
+        layout.addWidget(self.stop_editor)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -489,8 +640,9 @@ class GradientEditor(QWidget):
     # ── public ──────────────────────────────────────────────────────────────
     def set_palette(self, palette: Iterable[tuple[str, str]]) -> None:
         self._palette = list(palette)
-        for row in self._rows:
-            row.color.set_palette(self._palette)
+        self.bar.set_spec(self._spec, dict(self._palette))
+        self.stop_editor.set_palette(self._palette)
+        self.bar.update()
 
     def set_gradient(self, value: Any) -> None:
         text = "" if value is None else str(value)
@@ -522,10 +674,9 @@ class GradientEditor(QWidget):
             self._spec.stops.append(GradientStop(
                 100.0, self._spec.stops[-1].color))
         self._spec.stops = self._spec.stops[:self._max_stops]
+        self._selected = 0
         self._sync_controls()
-        self._rebuild_rows()
-        self._update_preview()
-        self._update_count()
+        self._show_stop()
 
     def gradient(self) -> str:
         if self._raw_mode:
@@ -537,6 +688,7 @@ class GradientEditor(QWidget):
 
     # ── syncing ─────────────────────────────────────────────────────────────
     def _sync_controls(self) -> None:
+        self.bar.set_spec(self._spec, dict(self._palette))
         self._updating = True
         try:
             self.kind.set_value(self._spec.kind)
@@ -545,73 +697,95 @@ class GradientEditor(QWidget):
         finally:
             self._updating = False
 
-    def _rebuild_rows(self) -> None:
-        for row in self._rows:
-            self.rows_layout.removeWidget(row)
-            row.setParent(None)
-            row.deleteLater()
-        self._rows = []
-        for index, stop in enumerate(self._spec.stops):
-            row = _GradientStopRow(
-                stop, palette=self._palette,
-                can_remove=len(self._spec.stops) > self._min_stops,
-                parent=self.rows_host)
-            row.preview.connect(self._on_row_preview)
-            row.edited.connect(self._on_row_edited)
-            row.removed.connect(self._remove_row)
-            self.rows_layout.addWidget(row)
-            self._rows.append(row)
-
-    def _update_count(self) -> None:
+    def _show_stop(self) -> None:
+        if not self._spec.stops:
+            return
+        self._selected = max(0, min(self._selected, len(self._spec.stops) - 1))
+        stop = self._spec.stops[self._selected]
+        self._updating = True
+        try:
+            self.stop_editor.set_value(stop.color)
+        finally:
+            self._updating = False
+        self.bar.set_selected(self._selected)
         count = len(self._spec.stops)
-        self.count_label.setText(f"{count} stop{'s' if count != 1 else ''}")
+        label = f"Stop {self._selected + 1} of {count}"
+        if stop.at is not None:
+            label += f" · {format_number(stop.at, decimals=1)}%"
+        self.count_label.setText(label)
         self.add_button.setEnabled(count < self._max_stops)
-        for row in self._rows:
-            row.remove.setEnabled(count > self._min_stops)
-
-    def _collect(self) -> None:
-        self._spec.stops = [row.stop() for row in self._rows]
-
-    def _update_preview(self) -> None:
-        self.preview_bar.set_spec(self._spec, dict(self._palette))
 
     def _update_preview_raw(self, text: str) -> None:
         spec = parse_gradient(text)
-        if spec is not None:
-            self.preview_bar.set_spec(spec, dict(self._palette))
-        else:
-            self.preview_bar.set_spec(
-                GradientSpec(stops=[GradientStop(0.0, "#00000000"),
-                                    GradientStop(100.0, "#00000000")]),
-                dict(self._palette))
+        if spec is None:
+            spec = GradientSpec(stops=[GradientStop(0.0, "#00000000"),
+                                       GradientStop(100.0, "#00000000")])
+        self.bar.set_spec(spec, dict(self._palette))
 
-    # ── row actions ─────────────────────────────────────────────────────────
-    def _on_row_preview(self) -> None:
-        self._collect()
-        self._update_preview()
+    # ── stop actions ────────────────────────────────────────────────────────
+    def _on_selected(self, index: int) -> None:
+        if self._updating:
+            return
+        self._selected = index
+        self._show_stop()
+
+    def _on_bar_preview(self) -> None:
+        if self._updating:
+            return
+        self._show_stop()
         self.preview.emit(format_gradient(self._spec))
 
-    def _on_row_edited(self) -> None:
-        self._collect()
-        self._update_preview()
+    def _on_bar_changed(self) -> None:
+        if self._updating:
+            return
+        self._show_stop()
         self.changed.emit(format_gradient(self._spec))
 
-    def _remove_row(self, row: _GradientStopRow) -> None:
-        if len(self._spec.stops) <= self._min_stops:
+    def _on_stop_preview(self, text: str) -> None:
+        if self._updating or not self._spec.stops:
             return
-        self._collect()
-        index = self._rows.index(row) if row in self._rows else -1
-        if index >= 0:
-            del self._spec.stops[index]
-        self._rebuild_rows()
-        self._update_preview()
-        self._update_count()
+        self._spec.stops[self._selected].color = str(text)
+        self.bar.update()
+        self.preview.emit(format_gradient(self._spec))
+
+    def _on_stop_committed(self, text: str) -> None:
+        if self._updating or not self._spec.stops:
+            return
+        self._spec.stops[self._selected].color = str(text)
+        self.bar.update()
+        self.changed.emit(format_gradient(self._spec))
+
+    def _add_stop_at(self, position: Any) -> None:
+        if self._raw_mode or len(self._spec.stops) >= self._max_stops:
+            return
+        try:
+            at = max(0.0, min(100.0, float(position)))
+        except (TypeError, ValueError):
+            at = 50.0
+        color = sample_gradient(self._spec, at, self._palette)
+        stop = GradientStop(at, color)
+        self._spec.stops.append(stop)
+        self._spec.stops.sort(
+            key=lambda item: item.at if item.at is not None else 0.0)
+        self._selected = self._spec.stops.index(stop)
+        self._sync_controls()
+        self._show_stop()
+        self.changed.emit(format_gradient(self._spec))
+
+    def _remove_stop_at(self, index: int) -> None:
+        if self._raw_mode or len(self._spec.stops) <= self._min_stops:
+            return
+        if not 0 <= index < len(self._spec.stops):
+            return
+        del self._spec.stops[index]
+        self._selected = min(index, len(self._spec.stops) - 1)
+        self._sync_controls()
+        self._show_stop()
         self.changed.emit(format_gradient(self._spec))
 
     def _add_stop(self) -> None:
         if len(self._spec.stops) >= self._max_stops:
             return
-        self._collect()
         stops = self._spec.stops
         # Insert at the widest gap so the new stop is always visible.
         best_index = max(0, len(stops) - 1)
@@ -628,13 +802,7 @@ class GradientEditor(QWidget):
         right = (stops[best_index].at
                  if best_index < len(stops)
                  and stops[best_index].at is not None else 100.0)
-        at = (left + right) / 2
-        color = stops[best_index - 1].color
-        stops.insert(best_index, GradientStop(at, color))
-        self._rebuild_rows()
-        self._update_preview()
-        self._update_count()
-        self.changed.emit(format_gradient(self._spec))
+        self._add_stop_at((left + right) / 2)
 
     # ── controls ────────────────────────────────────────────────────────────
     def _on_kind(self, kind: str) -> None:
@@ -642,21 +810,21 @@ class GradientEditor(QWidget):
             return
         self._spec.kind = kind
         self.angle.setVisible(kind == "linear")
-        self._update_preview()
+        self.bar.update()
         self.changed.emit(format_gradient(self._spec))
 
     def _on_angle_preview(self, value) -> None:
         if self._updating or value is None:
             return
         self._spec.angle = float(value)
-        self._update_preview()
+        self.bar.update()
         self.preview.emit(format_gradient(self._spec))
 
     def _on_angle_changed(self, value) -> None:
         if self._updating or value is None:
             return
         self._spec.angle = float(value)
-        self._update_preview()
+        self.bar.update()
         self.changed.emit(format_gradient(self._spec))
 
     def _toggle_raw(self, checked: bool) -> None:
@@ -681,9 +849,7 @@ class GradientEditor(QWidget):
         self._spec = spec
         self._show_raw(False)
         self._sync_controls()
-        self._rebuild_rows()
-        self._update_preview()
-        self._update_count()
+        self._show_stop()
         self.changed.emit(format_gradient(self._spec))
 
     def _force_raw_toggle(self, checked: bool) -> None:
@@ -693,8 +859,8 @@ class GradientEditor(QWidget):
 
     def _show_raw(self, raw: bool) -> None:
         self._raw_mode = raw
-        self.preview_bar.setVisible(True)
-        self.rows_host.setVisible(not raw)
+        self.bar.setVisible(True)
+        self.stop_editor.setVisible(not raw)
         self.kind.setVisible(not raw)
         self.angle.setVisible(not raw and self._spec.kind == "linear")
         self.add_button.setVisible(not raw)
@@ -723,18 +889,21 @@ class _PaintPopover(PopupSurface):
         self._field = field
         self._cancelled = False
         self._updating = False
+        self._current_text = "" if field._value is None else str(field._value)
         spec = parse_gradient(field._value)
 
         layout = self.content
         layout.setSpacing(tokens.SPACE_8)
 
-        modes = []
-        modes.append(("Solid", "solid"))
+        # A (label, value) tuple is ONE option, not an option pair: the old
+        # call made SegmentedToggle render "('Solid', 'solid')".
+        modes = [ChoiceOption("solid", "Solid")]
         if field._allow_gradient:
-            modes.append(("Gradient", "gradient"))
+            modes.append(ChoiceOption("gradient", "Gradient"))
         if field._allow_none:
-            modes.append(("None", "none"))
-        self.mode = SegmentedToggle(modes, "solid", accessible_name="Paint type")
+            modes.append(ChoiceOption("none", "None"))
+        self.mode = SegmentedToggle(modes, "solid",
+                                    accessible_name="Paint type")
         layout.addWidget(self.mode)
 
         from PyQt6.QtWidgets import QStackedWidget
@@ -749,6 +918,11 @@ class _PaintPopover(PopupSurface):
         initial_solid = field._value
         if spec is not None and spec.stops:
             initial_solid = spec.stops[0].color
+        color = resolve_paint_color(initial_solid, field._palette_map)
+        if color is None or color.alpha() == 0:
+            # A transparent value must not seed the plane at alpha 0, or the
+            # first hue pick would produce an invisible #rrggbb00.
+            initial_solid = field.last_solid() or "#ffffff"
         self.editor = ColorEditor(
             initial_solid, palette=field._palette,
             keywords=field._keywords, alpha=True)
@@ -776,23 +950,17 @@ class _PaintPopover(PopupSurface):
         none_layout = QVBoxLayout(none_page)
         none_layout.setContentsMargins(0, 0, 0, 0)
         self.none_note = InlineMessage(
-            "Paint is disabled for this value. Choose Solid or Gradient to "
-            "paint it again.", role="muted")
+            "No paint. Choose Solid or Gradient to paint this value again.",
+            role="muted")
         none_layout.addWidget(self.none_note)
         none_layout.addStretch(1)
         self.stack.addWidget(none_page)
 
+        # The mode is derived from the stored value, never stored: an empty,
+        # "none" or fully transparent value opens the None page, a gradient
+        # opens the Gradient page, anything else opens Solid.
         self.mode.changed.connect(self._on_mode)
-        mode = "solid"
-        if spec is not None:
-            mode = "gradient"
-        elif field._value is None or str(field._value).strip().lower() in (
-                "", "none"):
-            mode = "none" if field._allow_none else "solid"
-        self.mode.blockSignals(True)
-        self.mode.set_value(mode)
-        self.mode.blockSignals(False)
-        self._apply_mode(mode)
+        self._sync_mode(follow_page=True)
         self.setMinimumWidth(260)
         self._sync_height()
 
@@ -814,38 +982,93 @@ class _PaintPopover(PopupSurface):
                   + tokens.SPACE_8 + hint + tokens.POPUP_GUTTER * 2)
         self.resize(self.width(), max(120, min(480, height)))
 
+    def _sync_mode(self, *, follow_page: bool = False) -> None:
+        """Show the mode the stored value implies.
+
+        The mode is never its own state: painting a colour over a transparent
+        value turns the value into a solid, and the segment follows it in the
+        same update instead of waiting for a mode button.
+
+        The page only follows on open and on a mode click. Dragging the alpha
+        strip to 0 legitimately makes the value transparent (derived None),
+        but yanking the page out from under the cursor would strand the drag;
+        the page catches up when the popover reopens.
+        """
+        mode = self._field.paint_mode()
+        self.mode.blockSignals(True)
+        self.mode.set_value(mode)
+        self.mode.blockSignals(False)
+        if follow_page:
+            self._apply_mode(mode)
+
+    # ── value restores ──────────────────────────────────────────────────────
+    def _solid_text(self) -> str:
+        """The solid a mode switch lands on, or opaque white."""
+        value = self._field._value
+        if paint_mode(value) == "solid":
+            text = str(value)
+        else:
+            text = self._field.last_solid() or "#ffffff"
+        if not text.strip():
+            text = "#ffffff"
+        self.editor.set_value(text)
+        return text
+
+    def _gradient_text(self) -> str:
+        """The gradient a mode switch lands on, or a 2-stop default."""
+        value = self._field._value
+        if paint_mode(value) == "gradient":
+            text = str(value)
+        else:
+            text = self._field.last_gradient()
+        if not text:
+            base = (str(value) if paint_mode(value) == "solid"
+                    else self._field.last_solid() or "#ffffff")
+            text = format_gradient(GradientSpec(
+                kind="linear", angle=180.0,
+                stops=[GradientStop(0.0, base),
+                       GradientStop(100.0, "#00000000")]))
+        self.gradient.set_gradient(text)
+        return text
+
+    def _paint(self, text: Any, *, commit: bool = False) -> None:
+        text = "" if text is None else str(text)
+        self._current_text = text
+        if commit:
+            # Commit through the popover signal: the field is what forwards a
+            # committed value to the store (`changed`). Pre-setting `_value`
+            # on the preview path first would make that commit look unchanged
+            # and the edit would never leave the popover.
+            self.committed.emit(text)
+        else:
+            self._field._on_popover_preview(text)
+        self._sync_mode()
+
+    # ── edits ───────────────────────────────────────────────────────────────
     def _on_mode(self, mode: str) -> None:
+        """A mode button only switches type; the value stays the truth."""
         if self._updating:
             return
-        self._apply_mode(mode)
         if mode == "none":
-            text = "none" if self._field._allow_none else ""
+            text = "transparent"
         elif mode == "gradient":
-            text = self.gradient.gradient()
+            text = self._gradient_text()
         else:
-            text = str(self.editor.value() or "")
-        self._field._on_popover_preview(text)
-        self.committed.emit(text)
+            text = self._solid_text()
+        self._paint(text, commit=True)
+        self._apply_mode(self._field.paint_mode())
 
     def _on_solid_preview(self, text: str) -> None:
-        if self.mode.value() != "solid":
-            return
-        self._field._on_popover_preview(text)
+        self._paint(text)
 
     def _on_solid_committed(self, text: str) -> None:
-        if self.mode.value() != "solid":
-            return
-        self.committed.emit(text)
+        self._paint(text, commit=True)
 
     def _on_gradient_preview(self, text: str) -> None:
-        if self.mode.value() != "gradient":
-            return
-        self._field._on_popover_preview(text)
+        self._paint(text)
 
     def _on_gradient_changed(self, text: str) -> None:
-        if self.mode.value() != "gradient":
-            return
-        self.committed.emit(text)
+        self._paint(text, commit=True)
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -855,16 +1078,9 @@ class _PaintPopover(PopupSurface):
     def closeEvent(self, event) -> None:
         if self._cancelled:
             self.cancelled.emit()
-        else:
-            mode = self.mode.value()
-            if mode == "none":
-                text = "none"
-            elif mode == "gradient":
-                text = self.gradient.gradient()
-            else:
-                text = str(self.editor.value() or "")
-            if text != self._field._value:
-                self.committed.emit(text)
+        elif self._current_text != self._field._value:
+            # Closing unchanged writes nothing.
+            self.committed.emit(self._current_text)
         super().closeEvent(event)
 
 
@@ -895,8 +1111,13 @@ class PaintField(QWidget):
         self._max_stops = max(2, max_stops)
         self._popover: Optional[_PaintPopover] = None
         self._open_value = ""
+        #: Session-only memory of the last visible solid and gradient. Mode
+        #: switches restore these; they are never stored in the theme.
+        self._last_solid = ""
+        self._last_gradient = ""
         self._hover = False
         self._warning = ""
+        self._remember(self._value)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFixedHeight(tokens.CONTROL_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -911,11 +1132,39 @@ class PaintField(QWidget):
     def value(self) -> Any:
         return self._value or None
 
+    def paint_mode(self) -> str:
+        """Mode derived from the value, narrowed to what this field allows."""
+        mode = paint_mode(self._value)
+        if mode == "gradient" and not self._allow_gradient:
+            return "solid"
+        if mode == "none" and not self._allow_none:
+            return "solid"
+        return mode
+
+    def last_solid(self) -> str:
+        return self._last_solid
+
+    def last_gradient(self) -> str:
+        return self._last_gradient
+
+    def _remember(self, text: Any) -> None:
+        """Cache the last visible solid/gradient for mode switches."""
+        value = "" if text is None else str(text).strip()
+        if not value:
+            return
+        if parse_gradient(value) is not None:
+            self._last_gradient = value
+            return
+        color = resolve_paint_color(value, self._palette_map)
+        if color is not None and color.alpha() > 0:
+            self._last_solid = value
+
     def set_value(self, value: Any, *, emit: bool = False) -> None:
         text = "" if value is None else str(value)
         if text == self._value:
             return
         self._value = text
+        self._remember(text)
         self.update()
         if emit:
             self.changed.emit(self.value())
@@ -953,6 +1202,7 @@ class PaintField(QWidget):
 
     def _on_popover_preview(self, text: Any) -> None:
         self._value = "" if text is None else str(text)
+        self._remember(self._value)
         self.update()
         self.preview.emit(self.value())
 
@@ -961,13 +1211,19 @@ class PaintField(QWidget):
         if text == self._value:
             return
         self._value = text
+        self._remember(text)
         self.update()
         self.changed.emit(self.value())
 
     def _on_popover_cancelled(self) -> None:
+        """Escape rewinds the store too: it stayed in step while editing."""
+        previous = self._value
         self._value = self._open_value
         self.update()
-        self.preview.emit(self.value())
+        if self._value != previous:
+            self.changed.emit(self.value())
+        else:
+            self.preview.emit(self.value())
 
     def _on_popover_closed(self) -> None:
         popover = self._popover
@@ -1063,5 +1319,6 @@ class PaintField(QWidget):
 
 __all__ = [
     "PaintField", "GradientEditor", "GradientSpec", "GradientStop",
-    "parse_gradient", "format_gradient", "paint_value",
+    "parse_gradient", "format_gradient", "paint_mode", "paint_value",
+    "sample_gradient",
 ]

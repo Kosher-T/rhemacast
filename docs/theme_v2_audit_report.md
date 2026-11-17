@@ -73,7 +73,7 @@ The animation/payload blocks in `display/display.js` and `ui/widgets/display_vie
 
 ### 4.3 Preview viewport
 
-- **Zoom:** v1 themes carry `canvas.fit: "none"` so OBS never rescales them. Both renderers now honour the authored value, including the in-app preview (the `window.__RC_PREVIEW` override that forced `"contain"` was removed — it made the Designer's Fit chips do nothing). A theme with `fit: "none"` is therefore drawn at its authored size in the preview and clipped by the panel, which is what OBS shows when the browser source is smaller than the canvas.
+- **Zoom:** `canvas.fit` is the OBS contract: `"contain"` scales the canvas into the browser source, `"none"` leaves it at 1:1 and lets a smaller source crop it. The Designer preview is always a fixed 16:9 stage — it contains the whole canvas (letterboxing/pillarboxing around it) at `canvas.width × canvas.height`, so the preview can never crop or reshape the canvas. The stage and the legacy absolute-position wrapper are sized from the canvas, not from a hard-coded 1920.
 - **White background:** `DisplayView` sets `page().setBackgroundColor(QColor("#000000"))`; `display/display.html` remains transparent for OBS. The White toggle still works because `set_screen_white` uses inline `background:#ffffff !important`.
 - **Vertical centering:** container/body flex ownership was corrected, and the `"none"` border is written as a real CSS value to `--rc-container-border` instead of producing an invalid declaration.
 

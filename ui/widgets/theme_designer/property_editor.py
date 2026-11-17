@@ -710,6 +710,12 @@ class ThemePropertyEditor(QWidget):
                               full_width=spec.get("full", False) or chips)
             self._layout.addWidget(row)
             self._bind(widget, path, spec)
+            if path == ("canvas", "background"):
+                # The reset glyph restores the schema default through the same
+                # document write every other background edit uses.
+                row.reset_requested.connect(
+                    lambda _checked=False, target=path, control=widget:
+                    self._reset_paint(target, control))
 
     def _add_sides(self, spec: dict, prefix: tuple) -> None:
         base = str(spec["base"])
@@ -842,6 +848,20 @@ class ThemePropertyEditor(QWidget):
         if value is None or str(value).strip() == "":
             return None
         return str(value)
+
+    def _reset_paint(self, path: tuple, widget: QWidget) -> None:
+        """Reset the canvas background to the schema default in one write."""
+        default = schema.SAFE_THEME.get("canvas", {}).get("background",
+                                                         "transparent")
+        setter = getattr(widget, "set_value", None)
+        if callable(setter):
+            setter(default)
+        if self._document is not None:
+            self._document.set(path, default, source=self)
+            self._doc = self._document.snapshot()
+        else:
+            self._write(path, default)
+        self._after_edit(str(path[-1]))
 
     # ── validation ──────────────────────────────────────────────────────────
     def _after_edit(self, key: str) -> None:

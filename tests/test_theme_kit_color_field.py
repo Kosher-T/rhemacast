@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import QApplication
 from ui.theme_kit.color_field import (
     ColorEditor, ColorField, display_color_text,
 )
-from ui.theme_kit.paint_field import PaintField, _describe
+from ui.theme_kit.paint_field import (
+    PaintField, _describe, paint_mode, parse_gradient,
+)
 
 GOLD = "#d4af37"
 
@@ -122,11 +124,104 @@ def test_color_field_shows_hex_but_keeps_the_token(app):
 def test_paint_field_describes_tokens_as_hex():
     palette = {"gold": GOLD}
     assert _describe("@gold", palette) == GOLD
-    assert _describe("transparent", palette) == "#00000000"
-    assert _describe(None, palette) == "Not set"
+    # A transparent value is None, never an invisible eight-digit hex.
+    assert _describe("transparent", palette) == "None"
+    assert _describe("#ffffff00", palette) == "None"
+    assert _describe(None, palette) == "None"
+    assert _describe("linear-gradient(180deg, #ff0000 0%, #0000ff 100%)",
+                     palette) == "Gradient"
 
 
 def test_paint_field_keeps_the_token_while_showing_hex(app):
     field = PaintField("@gold", palette=[("Gold", GOLD)])
     assert field.value() == "@gold"
     assert _describe(field._value, field._palette_map) == GOLD
+
+
+# ── the mode is derived from the stored value, never a separate state ──────
+
+def test_paint_mode_is_derived_from_the_value():
+    assert paint_mode(None) == "none"
+    assert paint_mode("") == "none"
+    assert paint_mode("transparent") == "none"
+    assert paint_mode("#ffffff00") == "none"
+    assert paint_mode("#ff0000") == "solid"
+    assert paint_mode("linear-gradient(180deg, #ff0000, #0000ff)") == "gradient"
+
+
+def test_popover_derives_gradient_mode_for_a_reloaded_theme(app):
+    gradient = ("linear-gradient(90deg, #ff0000 0%, #00ff00 50%, "
+                "#0000ff 100%)")
+    field = PaintField(gradient)
+    field._open_popover()
+    popover = field._popover
+    try:
+        assert popover.mode.value() == "gradient"
+        assert popover.stack.currentIndex() == 1
+        assert len(popover.gradient.spec().stops) == 3
+    finally:
+        popover.close()
+
+
+def test_popover_segments_are_options_not_tuples(app):
+    field = PaintField("transparent")
+    field._open_popover()
+    popover = field._popover
+    try:
+        labels = [option.label for option in popover.mode._options]
+        assert labels == ["Solid", "Gradient", "None"]
+        # Starting transparent opens None, without anyone clicking a mode.
+        assert popover.mode.value() == "none"
+        assert field.paint_mode() == "none"
+    finally:
+        popover.close()
+
+
+def test_picking_a_colour_from_transparent_switches_to_solid(app):
+    field = PaintField("transparent")
+    field._open_popover()
+    popover = field._popover
+    try:
+        assert popover.mode.value() == "none"
+        # A completed plane/hue edit arrives as `committed`; no mode button.
+        popover.editor.committed.emit("#c0392b")
+        assert field.value() == "#c0392b"
+        assert field.paint_mode() == "solid"
+        assert popover.mode.value() == "solid"
+    finally:
+        popover.close()
+
+
+def test_mode_buttons_restore_the_last_solid_and_gradient(app):
+    field = PaintField("transparent")
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.committed.emit("#123456")
+        popover._on_mode("none")
+        assert field.value() == "transparent"
+        popover._on_mode("gradient")
+        gradient = field.value()
+        assert gradient.startswith("linear-gradient(")
+        assert "#123456" in gradient
+        popover._on_mode("none")
+        assert field.value() == "transparent"
+        popover._on_mode("gradient")
+        assert field.value() == gradient
+        popover._on_mode("solid")
+        assert field.value() == "#123456"
+    finally:
+        popover.close()
+
+
+def test_gradient_stop_edits_reach_the_stored_value(app):
+    field = PaintField("#112233")
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover._on_mode("gradient")
+        popover.gradient._add_stop_at(50.0)
+        spec = parse_gradient(field.value())
+        assert spec is not None and len(spec.stops) == 3
+    finally:
+        popover.close()

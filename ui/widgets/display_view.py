@@ -478,24 +478,49 @@ function _authoredBlock(c, name) {
 let _currentTheme = null;
 let _currentContainers = [];
 
+// The one converter from a stored `canvas.background` value to a CSS paint.
+// The Designer preview and the OBS renderer both come through here, so
+// "none"/"transparent", plain colours and gradients can never diverge between
+// what the operator edits and what OBS shows.
+function resolveBackground(value) {
+    if (value === null || value === undefined) return "transparent";
+    const text = String(value).trim();
+    if (!text) return "transparent";
+    const low = text.toLowerCase();
+    if (low === "none" || low === "transparent") return "transparent";
+    return text;
+}
+
 function applyCanvasFit(canvas) {
     const stg = document.getElementById("stage");
     if (!stg) return;
     const cw = (canvas && canvas.width) || 1920;
     const ch = (canvas && canvas.height) || 1080;
-    // Honour the authored fit in the preview too: "contain" scales the
-    // design canvas into the viewport, "none" leaves it at its authored size
-    // (the same thing OBS shows when its surface does not match the canvas).
-    // The Designer preview used to force "contain", so switching Fit never
-    // visibly changed anything.
+    // `fit` is the OBS contract: "contain" scales the design canvas into the
+    // browser source, "none" leaves it at its authored size (a smaller source
+    // crops it). The canvas size is the target display's real resolution, so
+    // container geometry is never hard-coded to 1920.
     const fit = (canvas && canvas.fit) || "contain";
-    const bg = (canvas && canvas.background) || "transparent";
     stg.style.width = cw + "px";
     stg.style.height = ch + "px";
-    stg.style.background = bg;
+    stg.style.background = resolveBackground(canvas && canvas.background);
 
-    if (fit === "contain" && typeof window !== "undefined" && window.innerWidth && window.innerHeight) {
-        const scale = Math.min(window.innerWidth / cw, window.innerHeight / ch);
+    if (typeof window === "undefined" || !window.innerWidth || !window.innerHeight) return;
+
+    let boxW = window.innerWidth;
+    let boxH = window.innerHeight;
+    let contain = fit === "contain";
+    if (window.__RC_PREVIEW) {
+        // The Designer preview is always a 16:9 stage: the whole canvas is
+        // contained inside a centred 16:9 box and letterboxed/pillarboxed
+        // around it — never cropped, never reshaped. `fit` still drives the
+        // real OBS output.
+        boxW = Math.min(window.innerWidth, window.innerHeight * 16 / 9);
+        boxH = boxW * 9 / 16;
+        contain = true;
+    }
+    if (contain) {
+        const scale = Math.min(boxW / cw, boxH / ch);
         const left = (window.innerWidth - cw * scale) / 2;
         const top = (window.innerHeight - ch * scale) / 2;
         stg.style.transformOrigin = "0 0";
@@ -954,9 +979,14 @@ function _applyContainers(theme) {
     _activeContainers = ct;
     if (verseContent) verseContent.style.display = "none";
 
+    // The wrapper is the canvas, not a 1920x1080 box: positions are authored
+    // in canvas pixels, so a fixed 1920 frame pushed every verse into the left
+    // edge of a wider wall (4270x1080) and clipped the rest.
+    const canvasW = (theme.canvas && theme.canvas.width) || 1920;
+    const canvasH = (theme.canvas && theme.canvas.height) || 1080;
     container.style.position = "absolute";
-    container.style.width = "1920px";
-    container.style.height = "1080px";
+    container.style.width = canvasW + "px";
+    container.style.height = canvasH + "px";
     container.style.left = "0";
     container.style.top = "0";
 

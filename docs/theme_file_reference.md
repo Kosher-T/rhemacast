@@ -68,10 +68,10 @@ authoring-only metadata.
 
 | Property | Type | Default | Rules |
 |---|---|---|---|
-| `width` | integer | `1920` | 320–7680. Design-space width. |
-| `height` | integer | `1080` | 240–4320. Design-space height. |
-| `background` | paint | `transparent` | Color or safe gradient. `@palette` tokens expand here. |
-| `fit` | enum | `contain` | `contain` scales the design canvas into the output; `none` uses the output viewport without canvas scaling. Both renderers honour it, including the Theme Designer preview: with `none` a canvas larger than the preview panel is shown at its authored size and clipped, exactly as OBS clips it when the browser source is smaller than the canvas. |
+| `width` | integer | `1920` | 320–7680. Design-space width — the target display's real resolution (e.g. `4270` for a wide LED wall). Positions, sizes and percentages resolve against it. |
+| `height` | integer | `1080` | 240–4320. Design-space height — the target display's real resolution. |
+| `background` | paint | `transparent` | Three stored shapes: `transparent` (or `none`) = no paint, a CSS colour (`#rrggbb`, `#rrggbbaa`, `rgb()`/`hsl()`), or a safe `linear-gradient(...)`/`radial-gradient(...)` string with optional stop percentages and 8-digit stop colours. One paint fills the whole canvas; both renderers resolve it through the same `resolveBackground()`, so the Designer preview and OBS output never diverge. `@palette` tokens expand here. |
+| `fit` | enum | `contain` | `contain` scales the design canvas into the output; `none` uses the output viewport without canvas scaling (a smaller browser source crops it). Both renderers honour it for the output. The Theme Designer preview is always a fixed 16:9 stage: it contains the entire canvas at `width × height` with letterbox/pillarbox bars, so `fit` never crops or reshapes the preview. |
 
 ## 3. Animation library (`animations`)
 
