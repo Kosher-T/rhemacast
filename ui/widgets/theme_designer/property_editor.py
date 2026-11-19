@@ -17,24 +17,46 @@ import copy
 import re
 from typing import Any, Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from core import theme_schema as schema
 from core.theme_shared import load_family
 from ui import tokens
+from ui.scrollbars import reserve_scrollbar_lane
 from ui.theme_kit import (
-    BlockTabBar, BorderField, ChipSelect, ChoiceOption, ColorField,
-    CompactDropdown, FourSideField, NumberField, PaintField, PropertyRow,
-    PropertySection, SegmentedToggle, ShadowField, SplitEditor, Switch,
-    TextInput,
+    BackdropField, BlockTabBar, BorderField, ChipSelect, ChoiceOption,
+    ColorField, CompactDropdown, FourSideField, IconButton, InlineMessage,
+    NumberField, PaintField, ParamGroup, PropertyRow, PropertySection,
+    SegmentedToggle, ShadowField, SplitEditor, Switch, TextInput,
+    panel_state,
 )
+from ui.theme_kit.paint_field import paint_mode
+from ui.theme_kit.panel_layout import PANEL_PAD
 from ui.widgets.theme_designer.animation_panel import definitions_for
 from ui.widgets.theme_designer.document import ThemeDocument
 
 _PX_RE = re.compile(r"^(-?\d+(?:\.\d+)?)\s*px$", re.I)
+
+#: Control kinds that sit under their label instead of beside it. At 240 px
+#: their content does not fit the shared value column and the label reads as
+#: the field's name (docs/PANEL_ORGANIZATION.md §2).
+_STACKED_KINDS = frozenset({
+    "border", "color", "enum", "font", "paint", "shadow", "shadow_no_shared",
+    "text",
+})
+
+#: Container size leaves: preferred size and the bounds around it.
+_SIZE_LEAVES = ("width", "min_width", "max_width",
+                "height", "min_height", "max_height")
+
+#: Tooltip on the preferred-size rows.
+_PREFERRED_SIZE_HINT = "Preferred size. Kept between Min and Max."
+
+#: "No override" for optional arguments whose real value may be ``None``.
+_UNSET = object()
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -72,6 +94,12 @@ def _length_doc(text: Any) -> Any:
         number = float(match.group(1))
         return int(number) if number.is_integer() else number
     return raw
+
+
+def _size_number(value: float) -> Any:
+    """A pixel size as the document stores it: int when whole."""
+    number = float(value)
+    return int(number) if number.is_integer() else number
 
 
 def _widget_value(widget: Any) -> Any:
@@ -115,38 +143,95 @@ CANVAS_SPECS = [
      "full": True},
 ]
 
-CONTAINER_SPECS = [
-    {"path": ("label",), "label": "Label", "kind": "text"},
-    {"kind": "note",
-     "text": "Kind is authoring metadata. Rendering uses Visible, not Kind."},
-    {"path": ("layer",), "label": "Layer", "kind": "int"},
-    {"path": ("visible",), "label": "Visible", "kind": "bool"},
-    {"path": ("min_width",), "label": "Min width", "kind": "length",
-     "units": ["px", "%"]},
-    {"path": ("max_width",), "label": "Max width", "kind": "length",
-     "units": ["px", "%"], "nullable": True},
-    {"path": ("min_height",), "label": "Min height", "kind": "length",
-     "units": ["px", "%"]},
-    {"path": ("max_height",), "label": "Max height", "kind": "length",
-     "units": ["px", "%"], "nullable": True},
-    {"path": ("container_background",), "label": "Container bg",
-     "kind": "paint", "full": True},
-    {"path": ("background",), "label": "Border fill", "kind": "paint",
-     "full": True},
-    {"path": ("border",), "label": "Border", "kind": "border", "full": True},
-    {"path": ("border_padding",), "label": "Border pad", "kind": "length",
-     "units": ["px"]},
-    {"path": ("border_radius",), "label": "Radius", "kind": "length",
-     "units": ["px"], "nullable": True},
-    {"path": ("box_shadow",), "label": "Shadow", "kind": "shadow",
-     "full": True},
-    {"path": ("backdrop_filter",), "label": "Backdrop", "kind": "text",
-     "full": True},
-    {"path": ("opacity",), "label": "Opacity", "kind": "float", "step": 0.05,
-     "default": 1.0},
-    {"path": ("overflow",), "label": "Overflow", "kind": "enum",
-     "options": schema.OVERFLOWS, "chips": True},
+CONTAINER_LAYOUT = [
+    {"group": "Identity", "state_key": "identity", "rows": [
+        # The selector is also the rename surface: the stored `label` stays in
+        # the document (the canvas badge reads it) but is no longer a row of
+        # its own — it only repeated the id.
+        {"kind": "container_identity"},
+        {"kind": "note",
+         "text": "Kind is authoring metadata. Rendering uses Visible, not "
+                 "Kind."},
+    ]},
+    {"group": "Visibility", "state_key": "visibility", "rows": [
+        {"path": ("visible",), "label": "Visible", "kind": "bool"},
+        {"path": ("layer",), "label": "Layer", "kind": "int"},
+        {"path": ("opacity",), "label": "Opacity", "kind": "float",
+         "step": 0.05, "default": 1.0},
+    ]},
+    {"group": "Size", "state_key": "size", "rows": [
+        {"path": ("width",), "label": "Width", "kind": "length",
+         "units": ["px", "%"], "keywords": ("auto",), "placeholder": "auto",
+         "state_key": "size.width", "expanded": False,
+         "sub": [
+             {"path": ("min_width",), "label": "Min", "kind": "length",
+              "units": ["px", "%"], "placeholder": "Unset"},
+             {"path": ("max_width",), "label": "Max", "kind": "length",
+              "units": ["px", "%"], "nullable": True,
+              "placeholder": "Unset"},
+         ]},
+        {"path": ("height",), "label": "Height", "kind": "length",
+         "units": ["px", "%"], "keywords": ("auto",), "placeholder": "auto",
+         "state_key": "size.height", "expanded": False,
+         "sub": [
+             {"path": ("min_height",), "label": "Min", "kind": "length",
+              "units": ["px", "%"], "placeholder": "Unset"},
+             {"path": ("max_height",), "label": "Max", "kind": "length",
+              "units": ["px", "%"], "nullable": True,
+              "placeholder": "Unset"},
+         ]},
+        {"path": ("overflow",), "label": "Overflow", "kind": "enum",
+         "options": schema.OVERFLOWS, "chips": True},
+    ]},
+    {"group": "Fill", "state_key": "fill", "rows": [
+        {"path": ("container_background",), "label": "Container bg",
+         "kind": "paint", "full": True},
+    ]},
+    {"group": "Border", "state_key": "border", "rows": [
+        {"path": ("border",), "label": "Border", "kind": "border",
+         "full": True, "state_key": "border.options", "expanded": True,
+         "sub": [
+             # The border layer always exists: Fill, Pad, Radius and the border
+             # shadow change the render even when no outline is stroked, so
+             # "Border = none" never disables them (docs/PANEL_ORGANIZATION.md
+             # §3, decisions 1 and 2 of round 3).
+             {"path": ("background",), "label": "Fill", "kind": "paint",
+              "full": True},
+             {"path": ("border_padding",), "label": "Pad", "kind": "length",
+              "units": ["px"]},
+             {"path": ("border_radius",), "label": "Radius", "kind": "length",
+              "units": ["px"], "nullable": True},
+             {"path": ("border_shadow",), "label": "Border shadow",
+              "kind": "shadow", "full": True},
+         ]},
+    ]},
+    {"group": "Effects", "state_key": "effects", "rows": [
+        # Exactly one of the two shadows is painted: the container shadow owns
+        # a filled rectangle, the border shadow owns the border shape. The
+        # hidden row keeps its stored value (docs §3, decision 3).
+        {"path": ("box_shadow",), "label": "Shadow", "kind": "shadow",
+         "full": True},
+        # Stacked: the blur field is wide, and keeping it on its own line
+        # leaves the shared label column at the width of the short rows.
+        {"path": ("backdrop_filter",), "label": "Backdrop",
+         "kind": "backdrop", "full": True},
+    ]},
 ]
+
+
+def _flatten_layout(layout: list[dict]) -> list[dict]:
+    """Every spec in a tiered layout, parents before their subparameters."""
+    flat: list[dict] = []
+    for entry in layout:
+        for spec in entry["rows"]:
+            flat.append(spec)
+            flat.extend(spec.get("sub") or [])
+    return flat
+
+
+#: Flat view of the container page. Paths, limits and validation read this;
+#: only the layout tree above decides where a row sits.
+CONTAINER_SPECS = _flatten_layout(CONTAINER_LAYOUT)
 
 _COMMON_BLOCK = [
     {"path": ("visible",), "label": "Visible", "kind": "bool"},
@@ -255,6 +340,116 @@ def block_specs(block: str) -> list[dict]:
             for spec in specs]
 
 
+# ─── identity control ───────────────────────────────────────────────────────
+
+
+class _InlineIdEdit(TextInput):
+    """TextInput that reports Esc instead of leaving it to the focus path."""
+
+    cancelled = pyqtSignal()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _ContainerIdentity(QWidget):
+    """Container selector with an inline rename of the selected id.
+
+    The control owns layout and edit mode only: it never decides whether an id
+    is acceptable. The editor validates, then calls :meth:`end_rename` or
+    :meth:`show_error`, so the rule lives in ``ThemeDocument``.
+
+    Signals
+        picked(str)           — another container was chosen.
+        rename_requested(str) — an id was submitted (Enter or focus loss).
+    """
+
+    picked = pyqtSignal(str)
+    rename_requested = pyqtSignal(str)
+
+    def __init__(self, ids: list[str], current: str, parent=None):
+        super().__init__(parent)
+        self._editing = False
+        self._current = str(current)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(tokens.SPACE_4)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(tokens.SPACE_4)
+        self.picker = CompactDropdown(
+            [ChoiceOption(value, value) for value in ids], current)
+        self.picker.changed.connect(self._on_pick)
+        row.addWidget(self.picker, 1)
+        self._rename = IconButton(
+            text="Rename", tooltip="Rename this container id",
+            accessible_name="Rename container")
+        self._rename.clicked.connect(self._on_rename_clicked)
+        row.addWidget(self._rename, 0)
+        layout.addLayout(row)
+
+        self._edit = _InlineIdEdit(
+            "", placeholder="new-id",
+            max_length=schema.CONTAINER_ID_MAX_LENGTH)
+        self._edit.changed.connect(self._on_submitted)
+        self._edit.cancelled.connect(self.end_rename)
+        self._edit.hide()
+        layout.addWidget(self._edit)
+
+        self._message = InlineMessage("", "danger")
+        self._message.hide()
+        layout.addWidget(self._message)
+
+    # ── edit mode ───────────────────────────────────────────────────────────
+    def is_editing(self) -> bool:
+        return self._editing
+
+    def begin_rename(self) -> None:
+        self._editing = True
+        self._message.hide()
+        self._edit.set_state("neutral")
+        self._edit.setText(self._current)
+        self._edit.show()
+        self._edit.setFocus()
+        self._edit.selectAll()
+        self._rename.setText("Cancel")
+
+    def end_rename(self) -> None:
+        self._editing = False
+        self._edit.setText(self._current)
+        self._edit.hide()
+        self._message.hide()
+        self._rename.setText("Rename")
+
+    def show_error(self, reason: str) -> None:
+        text = str(reason or "")
+        self._message.setText(text)
+        self._message.setVisible(bool(text))
+        self._edit.set_state("error" if text else "neutral", text)
+
+    # ── signals ─────────────────────────────────────────────────────────────
+    def _on_pick(self, value: str) -> None:
+        self._current = str(value)
+        self.picked.emit(self._current)
+
+    def _on_rename_clicked(self) -> None:
+        if self._editing:
+            self.end_rename()
+        else:
+            self.begin_rename()
+
+    def _on_submitted(self, text: str) -> None:
+        if not self._editing:
+            return
+        self.rename_requested.emit(str(text))
+
+
 # ─── editor ─────────────────────────────────────────────────────────────────
 
 
@@ -283,10 +478,10 @@ class ThemePropertyEditor(QWidget):
         self._field_widgets: dict[tuple, QWidget] = {}
 
         root = QVBoxLayout(self)
-        # 4 px side margins keep the 240 px panel clear of a horizontal
-        # scrollbar (the four-side rows need 214 px; the viewport is 210 at
-        # 8 px margins).
-        root.setContentsMargins(4, 8, 4, 8)
+        # PANEL_PAD is the grid origin the tiered page counts from: a Tier-1
+        # heading starts at x=8 and its text sits one gutter right of that.
+        # Everything below reads ui.theme_kit.panel_layout, never these numbers.
+        root.setContentsMargins(PANEL_PAD, 8, PANEL_PAD, 8)
         root.setSpacing(6)
         self._pages = SegmentedToggle(
             [ChoiceOption("canvas", "Canvas"),
@@ -298,7 +493,15 @@ class ThemePropertyEditor(QWidget):
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self._scroll.setStyleSheet("QScrollArea, QWidget { background: transparent; }")
+        # The lane is reserved and painted here too, not only by the app-wide
+        # filter and stylesheet: at 240 px the difference between the token's
+        # 8 px bar and the platform default (14 px) is the difference between
+        # the block page reflowing and growing a horizontal bar, so the panel
+        # has to behave the same in a bare test app as it does at runtime.
+        reserve_scrollbar_lane(self._scroll, horizontal=False)
+        self._scroll.setStyleSheet(
+            "QScrollArea, QWidget { background: transparent; }"
+            + tokens.scrollbar_qss())
         self._host = QWidget(self._scroll)
         self._layout = QVBoxLayout(self._host)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -528,15 +731,26 @@ class ThemePropertyEditor(QWidget):
                 widget.setParent(None)
                 widget.deleteLater()
         self._field_widgets = {}
+        #: Rows this page built. Alignment uses this registry so nested
+        #: subparameters share the page grid without reaching into widgets
+        #: another editor owns (SplitEditor). Filtered to the mounted rows.
+        self._page_rows: list[PropertyRow] = []
+        #: Shadow row → which of the two it is. Exactly one is visible at a
+        #: time, following the container background (docs §3, decision 3).
+        self._shadow_rows: dict[str, PropertyRow] = {}
+        #: Container size leaves → field and row, for the Min/Max/Width rules.
+        self._size_fields: dict[str, NumberField] = {}
+        self._size_rows: dict[str, PropertyRow] = {}
+        self._identity: Optional[_ContainerIdentity] = None
         page = self._page()
         if page == "canvas":
             self._add_specs(CANVAS_SPECS, ("canvas",))
             self._add_slide_options()
         elif page == "container":
-            self._add_container_picker()
             prefix = ("containers", self._container_index)
-            self._add_specs(CONTAINER_SPECS, prefix)
-            self._link_container_limits(prefix)
+            self._add_container_layout(CONTAINER_LAYOUT, prefix)
+            self._wire_size_fields(prefix)
+            self._refresh_container_shadow_state()
         else:
             self._add_block_bar()
             prefix = ("containers", self._container_index, "blocks",
@@ -547,16 +761,20 @@ class ThemePropertyEditor(QWidget):
         self._layout.addStretch(1)
         self._layout.activate()
         self._align_page_rows()
+        self._refresh_size_markers()
         self._note.setText("")
 
     def _align_page_rows(self) -> None:
-        """Align the page's top-level rows to the widest label."""
+        """Align the page's rows to the widest label, nesting included."""
         rows = []
-        for index in range(self._layout.count()):
-            item = self._layout.itemAt(index)
-            widget = item.widget() if item is not None else None
-            if isinstance(widget, PropertyRow) and not widget._full_width:
-                rows.append(widget)
+        for row in self._page_rows:
+            try:
+                if row.parent() is not None and not row._full_width:
+                    rows.append(row)
+            except RuntimeError:
+                # A rebuilt page deleted the underlying widget.
+                continue
+        self._page_rows = rows
         if not rows:
             return
         width = max(row.required_label_width() for row in rows)
@@ -605,18 +823,181 @@ class ThemePropertyEditor(QWidget):
         self._write(prefix + ("animation",), animation or None)
         self._after_edit("split")
 
-    def _add_container_picker(self) -> None:
-        containers = self._containers()
-        ids = [str(c.get("id", f"container{i}")) if isinstance(c, dict)
-               else f"container{i}" for i, c in enumerate(containers)] or ["main"]
-        index = min(self._container_index, len(ids) - 1)
-        picker = CompactDropdown([ChoiceOption(i, i) for i in ids], ids[index])
-        picker.changed.connect(self._on_container_pick)
-        self._layout.addWidget(PropertyRow("Container", picker,
-                                           label_width=76))
+    # ── container page (tiered) ────────────────────────────────────────────
+    # Tier 1 headings are PropertySections, Tier 2 parameters are rows and
+    # Tier 3 subparameters live in a ParamGroup body. The rules are in
+    # docs/PANEL_ORGANIZATION.md; this builder only follows the spec tree.
+    def _add_container_layout(self, layout: list[dict], prefix: tuple) -> None:
+        for entry in layout:
+            key = str(entry.get("state_key") or entry["group"])
+            section = PropertySection(
+                entry["group"], state_key=key, tiered=True,
+                expanded=panel_state.is_open("container", key,
+                                             default=entry.get("expanded",
+                                                               True)))
+            section.expanded_changed.connect(self._on_group_toggled)
+            for spec in entry["rows"]:
+                self._add_container_item(section, spec, prefix)
+            self._layout.addWidget(section)
+
+    def _add_container_item(self, section: PropertySection, spec: dict,
+                            prefix: tuple) -> None:
+        kind = spec["kind"]
+        if kind == "note":
+            section.add_widget(self._note_label(spec.get("text", "")))
+            return
+        if kind == "container_identity":
+            row = self._identity_row()
+            row.set_disclosure(False, reserve=True)
+            section.add_row(row)
+            return
+
+        path = prefix + tuple(spec["path"])
+        initial = self._get(path)
+        if initial is None and kind == "float":
+            initial = self._float_default(spec)
+        widget = self._make(spec, initial)
+        if widget is None:
+            return
+        row = PropertyRow(spec["label"], widget, label_width=76,
+                          full_width=self._stacked(spec, widget))
+        self._bind(widget, path, spec)
+        if isinstance(widget, NumberField):
+            self._field_widgets[path] = widget
+        leaf = str(spec["path"][-1])
+        if leaf in _SIZE_LEAVES:
+            self._size_rows[leaf] = row
+
+        sub = spec.get("sub") or []
+        if sub:
+            state_key = str(spec.get("state_key")
+                            or ".".join(str(part) for part in spec["path"]))
+            group = ParamGroup(
+                row, state_key=state_key,
+                expanded=panel_state.is_open(
+                    "container", state_key,
+                    default=bool(spec.get("expanded", False))))
+            group.expanded_changed.connect(self._on_group_toggled)
+            for child in sub:
+                self._add_container_sub(group, child, prefix)
+            section.add_widget(group)
+        else:
+            # Keep the empty chevron gutter so every parameter label starts
+            # at the same x (docs/PANEL_ORGANIZATION.md §2).
+            row.set_disclosure(False, reserve=True)
+            section.add_row(row)
+        if not row._full_width:
+            self._page_rows.append(row)
+        self._register_container_row(row, leaf)
+
+    def _add_container_sub(self, group: ParamGroup, spec: dict,
+                           prefix: tuple) -> None:
+        path = prefix + tuple(spec["path"])
+        widget = self._make(spec, self._get(path))
+        if widget is None:
+            return
+        row = PropertyRow(spec["label"], widget, label_width=76,
+                          full_width=self._stacked(spec, widget))
+        group.add_row(row)
+        row.set_disclosure(False, reserve=True)
+        self._bind(widget, path, spec)
+        if isinstance(widget, NumberField):
+            self._field_widgets[path] = widget
+        leaf = str(spec["path"][-1])
+        if leaf in _SIZE_LEAVES:
+            self._size_rows[leaf] = row
+        if not row._full_width:
+            self._page_rows.append(row)
+        self._register_container_row(row, leaf)
+
+    @staticmethod
+    def _stacked(spec: dict, widget: QWidget) -> bool:
+        """Whether the control sits under its label (docs §2, alignment).
+
+        Number fields and small toggles stay in the shared value column;
+        dropdowns, colour/paint boxes, text inputs and the compound border,
+        shadow and identity controls need the whole width.
+        """
+        return bool(spec.get("full", False)) or isinstance(widget, ChipSelect) \
+            or spec["kind"] in _STACKED_KINDS
+
+    def _identity_row(self) -> PropertyRow:
+        ids = self._container_ids() or ["main"]
+        index = min(max(self._container_index, 0), len(ids) - 1)
+        control = _ContainerIdentity(ids, ids[index])
+        control.picked.connect(self._on_container_pick)
+        control.rename_requested.connect(self._on_container_rename)
+        self._identity = control
+        return PropertyRow("Container", control, label_width=76,
+                           full_width=True)
+
+    def _note_label(self, text: str) -> QLabel:
+        note = QLabel(str(text))
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"color: {tokens.TEXT_MUTED}; font-size: 11px; "
+            "background: transparent;")
+        return note
+
+    def _on_group_toggled(self, state_key: str, expanded: bool) -> None:
+        """Remember a heading or disclosure state in the saved UI state."""
+        panel_state.remember("container", state_key, expanded)
+
+    def _register_container_row(self, row: PropertyRow, leaf: str) -> None:
+        """Remember the rows whose visibility follows another control."""
+        role = {"box_shadow": "container", "border_shadow": "border"}.get(leaf)
+        if role:
+            self._shadow_rows[role] = row
+
+    def _refresh_container_shadow_state(self, background: Any = _UNSET) -> None:
+        """Show the shadow of what is actually visible (docs §3, decision 3).
+
+        A container background is a rectangle, so it owns the container
+        shadow; without one, the border shape owns the shadow. The hidden row
+        keeps its stored value, so switching the fill back restores it.
+
+        ``background`` overrides the document for the in-flight paint drag; the
+        preview path never writes ``self._doc``, so it must pass its value.
+        """
+        if self._page() != "container":
+            return
+        if background is _UNSET:
+            background = self._get(("containers", self._container_index,
+                                    "container_background"))
+        filled = paint_mode(background) != "none"
+        for role, show in (("container", filled), ("border", not filled)):
+            row = self._shadow_rows.get(role)
+            if row is None:
+                continue
+            try:
+                row.setVisible(show)
+            except RuntimeError:
+                # The page was rebuilt; the registry is replaced there.
+                continue
 
     def _on_container_pick(self, value: str) -> None:
         self.container_selected.emit(str(value))
+
+    def _on_container_rename(self, new_id: str) -> None:
+        """Validate a typed id, rename in one write, then rebuild the page."""
+        control = self._identity
+        document = self._document
+        old = self.container_id()
+        if control is None or document is None or not old:
+            return
+        ok, reason = document.validate_container_id(new_id, ignore=old)
+        if not ok:
+            control.show_error(reason)
+            return
+        renamed = document.rename_container(old, new_id, source=self)
+        if not renamed:
+            control.show_error("That id is already used.")
+            return
+        self._doc = document.snapshot()
+        self._container_index = document.container_index(renamed)
+        self._rebuild()
+        self.theme_changed.emit(self.get_theme())
+        self.container_selected.emit(renamed)
 
     def _add_block_bar(self) -> None:
         allowed = list(schema.BLOCK_IDS.get(self._kind, ()))
@@ -678,7 +1059,7 @@ class ThemePropertyEditor(QWidget):
             specs = block_specs(self._block)
         paths: list[tuple] = []
         for spec in specs:
-            if spec["kind"] == "note":
+            if spec["kind"] == "note" or "path" not in spec:
                 continue
             if spec["kind"] == "sides":
                 base = str(spec["base"])
@@ -690,45 +1071,116 @@ class ThemePropertyEditor(QWidget):
                 paths.append(prefix + tuple(spec["path"]))
         return paths
 
-    def _link_container_limits(self, prefix: tuple) -> None:
-        """Min ≤ Max, in whichever units the two fields currently show."""
-        for low_key, high_key, axis in (
-                ("min_width", "max_width", "width"),
-                ("min_height", "max_height", "height")):
-            low = self._field_widgets.get(prefix + (low_key,))
-            high = self._field_widgets.get(prefix + (high_key,))
-            if low is None or high is None:
-                continue
-            high_path = prefix + (high_key,)
-            low_path = prefix + (low_key,)
-            low.set_limit_providers(maximum=(
-                lambda unit, path=high_path, ax=axis:
-                self._sibling_limit(path, ax, unit)))
-            high.set_limit_providers(minimum=(
-                lambda unit, path=low_path, ax=axis:
-                self._sibling_limit(path, ax, unit)))
+    def _wire_size_fields(self, prefix: tuple) -> None:
+        """Collect the size fields and give the preferred rows their hint.
 
-    def _sibling_limit(self, path: tuple, axis: str,
-                       unit: str) -> Optional[float]:
-        widget = self._field_widgets.get(path)
-        if widget is None:
+        Min/Max are not bound to each other with limit providers any more: a
+        provider clamps the field being edited, which cannot express "raising
+        Min raises Max". Each edit decides what it moves (``_size_edits``).
+        """
+        for leaf in _SIZE_LEAVES:
+            widget = self._field_widgets.get(prefix + (leaf,))
+            if isinstance(widget, NumberField):
+                self._size_fields[leaf] = widget
+        for leaf in ("width", "height"):
+            row = self._size_rows.get(leaf)
+            if row is not None:
+                row.set_label_tooltip(_PREFERRED_SIZE_HINT)
+
+    def _size_numbers(self, axis: str) -> tuple[Optional[float], ...]:
+        """(preferred, min, max) for one axis as pixels, or ``None`` each.
+
+        Only same-unit values are comparable: ``auto``, unset and percent
+        fields stay out of the comparison instead of being converted against
+        a canvas the operator may not be thinking about.
+        """
+        def value(leaf: str) -> Optional[float]:
+            field = self._size_fields.get(leaf)
+            if field is None or field.keyword():
+                return None
+            number = field.numeric_value()
+            if number is None or field.unit() != "px":
+                return None
+            return float(number)
+
+        return value(axis), value(f"min_{axis}"), value(f"max_{axis}")
+
+    def _rendered_size(self, axis: str) -> Optional[float]:
+        """The size the renderer will use, given Min/Max."""
+        preferred, low, high = self._size_numbers(axis)
+        if preferred is None:
             return None
-        value = widget.numeric_value()
-        if value is None:
-            return None
-        total = schema.canvas_axis(self._doc, axis)
-        other = getattr(widget, "_unit", "")
-        return schema.convert_length(value, other, unit, total)
+        if low is not None:
+            preferred = max(preferred, low)
+        if high is not None:
+            preferred = min(preferred, high)
+        return preferred
+
+    def _size_edits(self, leaf: str, path: tuple,
+                    widget: NumberField) -> list[tuple[tuple, Any]]:
+        """The writes one size edit implies, the clamped value first."""
+        prefix = path[:-1]
+        axis = "width" if leaf.endswith("width") else "height"
+        low_leaf, high_leaf = f"min_{axis}", f"max_{axis}"
+        preferred, low, high = self._size_numbers(axis)
+        edits: list[tuple[tuple, Any]] = [(path, _length_doc(widget.value()))]
+        if leaf == low_leaf and low is not None and high is not None \
+                and low > high:
+            # Raising Min raises Max instead of clamping Min back.
+            self._set_size_widget(self._size_fields[high_leaf], low)
+            edits.append((prefix + (high_leaf,), _size_number(low)))
+        elif leaf == high_leaf and low is not None and high is not None \
+                and high < low:
+            # Lowering Max lowers Min.
+            self._set_size_widget(self._size_fields[low_leaf], high)
+            edits.append((prefix + (low_leaf,), _size_number(high)))
+        elif leaf == axis:
+            rendered = self._rendered_size(axis)
+            if rendered is not None and preferred is not None \
+                    and rendered != preferred:
+                self._set_size_widget(widget, rendered)
+                edits[0] = (path, _size_number(rendered))
+        return edits
+
+    def _write_size(self, leaf: str, path: tuple,
+                    widget: NumberField) -> None:
+        edits = self._size_edits(leaf, path, widget)
+        if self._document is not None:
+            self._document.set_many(edits, source=self)
+            self._doc = self._document.snapshot()
+        else:
+            for edit_path, value in edits:
+                self._write(edit_path, value)
+        self._after_edit(leaf)
+
+    @staticmethod
+    def _set_size_widget(field: NumberField, value: float) -> None:
+        field.set_value(f"{value:g}px", emit=False)
+
+    def _refresh_size_markers(self) -> None:
+        """Say where a preferred size will actually render.
+
+        Loading never rewrites the document. When Min/Max push Width or Height
+        somewhere else, the authored value stays and the row carries the
+        marker "Renders as <value>" instead.
+        """
+        if self._page() != "container":
+            return
+        for axis in ("width", "height"):
+            row = self._size_rows.get(axis)
+            if row is None:
+                continue
+            preferred, _low, _high = self._size_numbers(axis)
+            rendered = self._rendered_size(axis)
+            if rendered is None or preferred is None or rendered == preferred:
+                row.set_warning("")
+            else:
+                row.set_warning(f"Renders as {rendered:g}px")
 
     def _add_specs(self, specs: list[dict], prefix: tuple) -> None:
         for spec in specs:
             if spec["kind"] == "note":
-                note = QLabel(str(spec.get("text", "")))
-                note.setWordWrap(True)
-                note.setStyleSheet(
-                    f"color: {tokens.TEXT_MUTED}; font-size: 11px; "
-                    "background: transparent;")
-                self._layout.addWidget(note)
+                self._layout.addWidget(self._note_label(spec.get("text", "")))
                 continue
             if spec["kind"] == "sides":
                 self._add_sides(spec, prefix)
@@ -744,6 +1196,8 @@ class ThemePropertyEditor(QWidget):
             row = PropertyRow(spec["label"], widget, label_width=76,
                               full_width=spec.get("full", False) or chips)
             self._layout.addWidget(row)
+            if not row._full_width:
+                self._page_rows.append(row)
             self._bind(widget, path, spec)
             if isinstance(widget, NumberField):
                 self._field_widgets[path] = widget
@@ -845,12 +1299,14 @@ class ThemePropertyEditor(QWidget):
         if kind in ("length", "length_null"):
             units = list(spec.get("units", ["px", "em"]))
             ranges, converter = self._length_limits(leaf, units)
+            placeholder = spec.get("placeholder") or (
+                "Default" if kind == "length_null" else "Inherit")
             return NumberField(
                 _length_text(initial), units=units,
                 nullable=True,
                 keywords=spec.get("keywords", ()),
                 unit_ranges=ranges, unit_converter=converter,
-                placeholder="Default" if kind == "length_null" else "Inherit")
+                placeholder=placeholder)
         if kind == "bool":
             return Switch(bool(initial))
         if kind == "enum":
@@ -879,6 +1335,8 @@ class ThemePropertyEditor(QWidget):
                                shared_options=self._shadows if allow else (),
                                palette=self._palette, allow_shared=allow,
                                structured=True)
+        if kind == "backdrop":
+            return BackdropField(initial if initial is not None else "none")
         if kind in ("text", "font"):
             return TextInput(str(initial or ""))
         return None
@@ -887,8 +1345,14 @@ class ThemePropertyEditor(QWidget):
         def changed(*_args) -> None:
             if self._loading:
                 return
+            leaf = str(path[-1])
+            if leaf in _SIZE_LEAVES and self._page() == "container":
+                # Size fields cannot be written alone: Min, Max and the
+                # preferred value move each other (docs §2, size semantics).
+                self._write_size(leaf, path, widget)
+                return
             self._write(path, self._doc_value(spec, widget))
-            self._after_edit(str(path[-1]))
+            self._after_edit(leaf)
 
         _connect(widget, changed)
 
@@ -909,6 +1373,10 @@ class ThemePropertyEditor(QWidget):
             self._document.preview(path, value, source=self)
         else:
             self._write(path, value)
+        # A live paint drag can flip which shadow is visible before it commits,
+        # and the preview does not touch the document snapshot this reads.
+        self._refresh_container_shadow_state(
+            value if path and path[-1] == "container_background" else _UNSET)
 
     def _doc_value(self, spec: dict, widget: QWidget) -> Any:
         kind = spec["kind"]
@@ -921,7 +1389,7 @@ class ThemePropertyEditor(QWidget):
             return _length_doc(widget.value())
         if kind == "bool":
             return bool(_widget_value(widget))
-        if kind in ("border", "shadow", "shadow_no_shared"):
+        if kind in ("border", "shadow", "shadow_no_shared", "backdrop"):
             return widget.value()
         value = _widget_value(widget)
         if value is None or str(value).strip() == "":
@@ -961,4 +1429,6 @@ class ThemePropertyEditor(QWidget):
         if not message and items:
             message = str(getattr(items[0], "message", items[0]))
         self._note.setText(message)
+        self._refresh_container_shadow_state()
+        self._refresh_size_markers()
         self.theme_changed.emit(self.get_theme())

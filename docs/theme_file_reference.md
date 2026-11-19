@@ -307,8 +307,8 @@ border visible. A container with no border width skips the track.
 
 | Property | Type | Default | Rules |
 |---|---|---|---|
-| `id` | string | `container{index}` | `^[a-z][a-z0-9_-]{0,31}$`. Must be unique; duplicates get `_index`. |
-| `label` | string | `id` | Max 80. Designer-facing layer name. |
+| `id` | string | `container{index}` | `^[a-z][a-z0-9_-]{0,31}$` (`theme_schema.valid_container_id`, `CONTAINER_ID_MAX_LENGTH = 32`). Must be unique; on load duplicates get `_index` and an invalid id is repaired to `container{index}`. This is the only stored reference to a container: nothing else in the document names it. |
+| `label` | string | `id` | Max 80. Designer-facing layer name; the canvas badge and its accessible name read it (`ContainerBox.title()`). |
 | `kind` | enum | theme kind | `scripture`, `freeform`, or `any`. Which blocks are legal is decided by the **theme** kind. |
 | `layer` | integer | `index * 10` | 0–100. Paint/render order. |
 | `visible` | boolean | `true` | Hidden containers are not painted. Freeform renders only its first visible container; later visible containers are forced hidden. |
@@ -324,7 +324,8 @@ border visible. A container with no border width skips the track.
 | `border` | string / object / shared | `"none"` | See §5.2. |
 | `border_padding` | length | `0` | px, 0–400. Gap between the container edge and the border's outer edge. Never changes the container's size. |
 | `border_radius` | length | `null` | px or `%`, 0–400. When set, it wins over `border.radius`. |
-| `box_shadow` | string / object / shared | `"none"` | See §5.3. |
+| `box_shadow` | string / object / shared | `"none"` | The container's shadow. See §5.3. Painted only while `container_background` has a paint. |
+| `border_shadow` | string / object / shared | `"none"` | Shadow of the **border layer's shape**: follows `border_padding` and `border_radius`, is inset like the layer, and paints on the canvas outside the container so `overflow: hidden` cannot clip it. Painted only while `container_background` has no paint. See §5.3. |
 | `backdrop_filter` | string | `"none"` | `"none"`, `"off"`, or a validated function list; see §5.4. |
 | `opacity` | number | `1` | 0–1 for the whole container. |
 | `overflow` | enum | `hidden` | `hidden` or `visible`. |
@@ -336,6 +337,20 @@ Container `padding`, `display`, `flex_direction`, `justify_content`, and
 legacy flex keys are ignored with a warning. Content padding and
 `border_padding` are independent: padding moves the content, border padding
 moves the ring.
+
+**Identity.** `id` is the container's one name. The Theme Designer edits it
+through the **Rename** action beside the container selector — there is no
+`id` row and no `label` row. Before writing, the Designer validates the typed
+id against the pattern above (trimmed, non-empty, unique among containers) and
+shows the reason inline on refusal, because `normalize_theme` otherwise
+silently repairs an invalid id at render time and the file would be saved under
+a different id than the one on screen. A rename rewrites `containers[i].id` and
+every reference to the old id in one atomic document revision; `label` follows
+only when it was empty or equal to the old id, so a custom label is preserved.
+Adding a container asks for a name first and derives the id from it. `main` is
+not reserved: only `SAFE_THEME`/migration defaults use it, and the renderer
+falls back to the first container id, then `"main"`. See
+`docs/PANEL_ORGANIZATION.md` §3, decision 4.
 
 ### 5.0 Geometry contract
 
@@ -354,9 +369,22 @@ canvas. Neither the border nor the radius can change that rectangle:
   the ring's outer edge *is* the container edge and nothing is clipped.
   `border_radius` rounds only this outer edge; the container background still
   shows in the corner gaps.
-- `box_shadow` and `backdrop_filter` stay on the container element itself, so
-  a shadow is not clipped by the container's own `overflow`. Consequence: with
-  a radius the shadow outline stays square while the ring is rounded.
+- `backdrop_filter` stays on the container element itself; it blurs whatever
+  paints behind that element.
+- **Only one shadow paints, and it follows what is visible.**
+  - `container_background` has a paint → `box_shadow` paints on the container
+    element (its outline is the rectangle, so a radius leaves the shadow
+    square) and `border_shadow` is not painted.
+  - `container_background` has no paint → `border_shadow` paints and
+    `box_shadow` is not painted. The border shadow is a *sibling* of the
+    container on the stage, positioned at the border layer's rect (inset by
+    `border_padding`, shaped by `border_radius`), so the shadow reaches the
+    canvas and is never clipped by the container's `overflow` or bounds.
+  - "No paint" is the Designer's **None** state: the key is absent, or the
+    value is `none`, `transparent`, or a colour with alpha 0. The renderer and
+    the editor use the same rule.
+  - A shadow that is not painted keeps its stored value; it comes back
+    unchanged when the container background is switched back.
 
 ### 5.1 `position`
 
@@ -447,6 +475,11 @@ these are accepted:
 | `hue-rotate` | number or `deg` | −1080–1080 |
 
 For percentage arguments on multiplier functions, `100%` equals `1`.
+
+The Theme Designer edits this property as a **blur radius in px** (0–60, the
+main control). Any other function already in the stored list is preserved
+verbatim when the blur changes, so `blur(12px) saturate(1.2)` becomes
+`blur(20px) saturate(1.2)` and never silently loses its saturation.
 
 ## 6. Blocks
 

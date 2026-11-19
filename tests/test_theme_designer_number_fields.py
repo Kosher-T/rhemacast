@@ -81,11 +81,15 @@ def test_multi_unit_lengths_keep_their_dropdown(qapp):
 
 
 def test_container_id_row_is_gone_but_label_stays(qapp):
-    editor = _editor(_theme())
+    """Neither id nor label is a row; both fields survive in the document."""
+    theme = _theme()
+    editor = _editor(theme)
     paths = editor.field_paths()
 
     assert "containers.0.id" not in paths
-    assert "containers.0.label" in paths
+    # The Label row was removed (it only echoed the id); Rename owns the id.
+    assert "containers.0.label" not in paths
+    assert editor.get_theme()["containers"][0]["label"] == "Main"
 
 
 # ─── limits ────────────────────────────────────────────────────────────────
@@ -142,24 +146,32 @@ def test_a_drag_that_hits_a_bound_flashes_the_field(qapp):
 
 # ─── min / max relationship ────────────────────────────────────────────────
 
-def test_min_width_cannot_pass_max_width(qapp):
+def test_raising_min_width_raises_max_width(qapp):
+    """Min is not clamped back: it moves Max out of its way (docs §2)."""
     editor = _editor(_theme())
     low = _field(editor, "min_width")
     high = _field(editor, "max_width")
 
+    low.begin_scrub()
     low.scrub_to(10 ** 6)
-    assert low.value() == "1500px"
-    assert high.value() == "1500px"
+    low.end_scrub()
+    assert low.value() == "1920px"
+    assert high.value() == "1920px"
+    assert editor.get_theme()["containers"][0]["max_width"] == 1920
 
 
-def test_max_width_cannot_drop_below_min_width(qapp):
+def test_lowering_max_width_lowers_min_width(qapp):
     editor = _editor(_theme())
     low = _field(editor, "min_width")
     high = _field(editor, "max_width")
     low.set_value("400px")
 
+    high.begin_scrub()
     high.scrub_to(-10 ** 6)
-    assert high.value() == "400px"
+    high.end_scrub()
+    assert high.value() == "0px"
+    assert low.value() == "0px"
+    assert editor.get_theme()["containers"][0]["min_width"] == 0
 
 
 def test_clearing_max_releases_the_min_width_limit(qapp):

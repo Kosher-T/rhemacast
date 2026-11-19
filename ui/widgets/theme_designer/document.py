@@ -12,6 +12,7 @@ Paths are tuples of dict keys and list indices, for example
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Iterable, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -21,6 +22,27 @@ from ui.widgets.theme_designer import container_geometry as geometry
 
 Path = tuple
 _MISSING = object()
+
+#: Keys that may point at a container id. v2 stores the id once, on the
+#: container itself, but older or hand-edited documents are walked too so a
+#: rename never leaves a dangling reference behind.
+_REFERENCE_KEYS = ("container", "container_id", "containerId")
+
+
+def container_id_from_name(name: str) -> str:
+    """Derive a schema-valid container id from a name the operator typed.
+
+    The id doubles as a DOM id, so the name is lowercased and every run of
+    unsupported characters becomes one ``-``. Returns ``""`` for a name with
+    nothing usable in it, which the validator then reports.
+    """
+    text = re.sub(r"[^a-z0-9_-]+", "-", str(name or "").strip().lower())
+    text = text.strip("-_")
+    if not text:
+        return ""
+    if not text[0].isalpha():
+        text = f"c-{text}"
+    return text[:schema.CONTAINER_ID_MAX_LENGTH].rstrip("-_")
 
 
 class ThemeDocument(QObject):
@@ -128,18 +150,84 @@ class ThemeDocument(QObject):
         self.replaced.emit(source)
 
     # ── structural operations ────────────────────────────────────────────────
-    def add_container(self, *, source=None) -> Optional[str]:
+    def validate_container_id(self, value: str, *,
+                              ignore: Optional[str] = None) -> tuple[bool, str]:
+        """``(ok, reason)`` for a container id the operator typed or renamed.
+
+        The id is written straight into the document and becomes the
+        renderer's DOM id, so it has to satisfy the schema pattern here — not
+        at render time, where ``normalize_theme`` would rename it silently.
+        """
+        text = str(value or "").strip()
+        if not text:
+            return False, "Enter a name."
+        if not schema.valid_container_id(text):
+            return False, ("Use up to 32 lowercase letters, digits, - or _, "
+                           "starting with a letter.")
+        for container in self.containers():
+            if not isinstance(container, dict):
+                continue
+            if str(container.get("id", "")) == text \
+                    and text != str(ignore or ""):
+                return False, "That id is already used."
+        return True, ""
+
+    def rename_container(self, container_id: str, new_id: str, *,
+                         source=None) -> Optional[str]:
+        """Rename one container id and every reference to it.
+
+        One revision and one emission: the id, the label that mirrored the old
+        id and any reference anywhere in the document change together, so no
+        intermediate state can be saved.
+        """
+        old = str(container_id or "")
+        new = str(new_id or "").strip()
+        index = self.container_index(old)
+        if index < 0:
+            return None
+        if new == old:
+            return old
+        ok, _reason = self.validate_container_id(new, ignore=old)
+        if not ok:
+            return None
+        container = self.containers()[index]
+        container["id"] = new
+        label = container.get("label")
+        if not isinstance(label, str) or not label.strip() \
+                or label.strip() == old:
+            # The label was only echoing the id; keep it honest.
+            container["label"] = new
+        self._rewrite_container_references(old, new)
+        self._revision += 1
+        self.changed.emit((("containers", index),), source)
+        return new
+
+    def add_container(self, name: Optional[str] = None, *,
+                      source=None) -> Optional[str]:
+        """Append one container. ``name`` becomes its id and its label.
+
+        Without a name the old programmatic behaviour stands: a generated
+        ``containerN`` id and a "Container N" label.
+        """
         containers = self._containers_mutable()
         if len(containers) >= schema.MAX_CONTAINERS:
             return None
+        if name is None:
+            container_id = self._unique_id(containers)
+            label = f"Container {len(containers) + 1}"
+        else:
+            container_id = container_id_from_name(name)
+            ok, _reason = self.validate_container_id(container_id)
+            if not ok:
+                return None
+            label = str(name).strip() or container_id
         width, height = self._canvas_size()
-        container_id = self._unique_id(containers)
         top = max((int(c.get("layer") or 0) for c in containers
                    if isinstance(c, dict)), default=0)
         offset = 8 * (len(containers) - 1)
         containers.append({
             "id": container_id,
-            "label": f"Container {len(containers) + 1}",
+            "label": label,
             "layer": min(100, top + 10),
             "visible": True,
             "position": {"anchor": "center", "x": offset, "y": offset},
@@ -250,6 +338,22 @@ class ThemeDocument(QObject):
         while f"container{number}" in used:
             number += 1
         return f"container{number}"
+
+    def _rewrite_container_references(self, old: str, new: str) -> None:
+        """Point every container reference at the renamed id."""
+
+        def walk(node) -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key in _REFERENCE_KEYS and str(value) == old:
+                        node[key] = new
+                    else:
+                        walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(self._theme)
 
     def _emit_containers(self, source) -> None:
         self._revision += 1

@@ -16,13 +16,13 @@ from PyQt6.QtWidgets import (
 )
 
 from core import theme_schema as schema
-from ui import tokens
+from ui import dialogs, tokens
 from ui.theme_kit import (
     ChoiceOption, CompactDropdown, ContainerBox, ContainerCanvas,
     ContainerStrip, NumberField, PropertyRow, SectionLabel, Switch,
 )
 from ui.widgets.theme_designer import container_geometry as geometry
-from ui.widgets.theme_designer.document import ThemeDocument
+from ui.widgets.theme_designer.document import ThemeDocument, container_id_from_name
 
 _SIDE_WIDTH = 240
 
@@ -77,7 +77,7 @@ class ContainerWorkspace(QWidget):
 
         self.strip = ContainerStrip(max_visible_rows=5)
         self.strip.selected.connect(self._on_selected)
-        self.strip.add_requested.connect(self.add_container)
+        self.strip.add_requested.connect(self.prompt_add_container)
         self.strip.duplicate_requested.connect(self.duplicate_container)
         self.strip.delete_requested.connect(self.delete_container)
         self.strip.visibility_toggled.connect(self._set_visible)
@@ -436,10 +436,11 @@ class ContainerWorkspace(QWidget):
         self._write("visible", bool(value))
 
     # ── structural operations ───────────────────────────────────────────────
-    def add_container(self) -> None:
+    def add_container(self, name: Optional[str] = None) -> None:
+        """Append a container. Programmatic: no prompt, no dialog."""
         if self._document is None:
             return
-        container_id = self._document.add_container(source=self)
+        container_id = self._document.add_container(name, source=self)
         if not container_id:
             return
         self._theme = self._document.snapshot()
@@ -447,6 +448,34 @@ class ContainerWorkspace(QWidget):
         self._sync_all()
         self._emit()
         self.container_selected.emit(container_id)
+
+    def prompt_add_container(self) -> None:
+        """The strip's + button: ask for a name, then add one container.
+
+        The name becomes the id, so it is validated here rather than at render
+        time; a rejected name keeps the dialog open with the reason showing.
+        """
+        if self._document is None:
+            return
+        if len(self._containers()) >= schema.MAX_CONTAINERS:
+            return
+        name, accepted = dialogs.get_validated_text(
+            self, "Add container", "Name",
+            validator=self._new_container_reason,
+            placeholder="e.g. Lower third")
+        if not accepted:
+            return
+        self.add_container(name)
+
+    def _new_container_reason(self, name: str) -> str:
+        """Rejection reason for a new container name, or ``""``."""
+        if self._document is None:
+            return ""
+        container_id = container_id_from_name(name)
+        _ok, reason = self._document.validate_container_id(container_id)
+        if reason == "That id is already used." and container_id:
+            return f"'{container_id}' is already used."
+        return reason
 
     def duplicate_container(self, container_id: str) -> None:
         if self._document is None:

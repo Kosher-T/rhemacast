@@ -85,7 +85,12 @@ def test_hidden_controls_keep_their_values_through_edit_and_reload(qapp):
     editor._pages.set_value("container")
     container_paths = editor.field_paths()
     assert "containers.0.kind" not in container_paths
-    assert "containers.0.label" in container_paths
+    # The Label row is gone (the selector's Rename owns the id now), but the
+    # stored label still survives an edit and a reload untouched — absent
+    # stays absent here, and a present one keeps its value (see
+    # test_the_removed_label_row_does_not_touch_the_stored_field).
+    assert "containers.0.label" not in container_paths
+    assert "label" not in editor.get_theme()["containers"][0]
 
     editor._pages.set_value("blocks")
     editor._on_block("body")
@@ -96,6 +101,7 @@ def test_hidden_controls_keep_their_values_through_edit_and_reload(qapp):
     editor.set_field("canvas.width", 1600)
     before = editor.get_theme()
     assert before["containers"][0]["kind"] == "freeform"
+    assert "label" not in before["containers"][0]
     assert before["containers"][0]["blocks"]["body"]["visible"] is False
     assert before["containers"][0]["blocks"]["verse_num"]["position"] == "below_verse"
 
@@ -103,6 +109,9 @@ def test_hidden_controls_keep_their_values_through_edit_and_reload(qapp):
     assert not report.errors, report.errors
     after = _editor(resolved).get_theme()
     assert after["containers"][0]["kind"] == "freeform"
+    # Reading a theme fills the label from the id; the Designer no longer
+    # shows it, so it must not be rewritten as a side effect either.
+    assert after["containers"][0]["label"] == after["containers"][0]["id"]
     assert after["containers"][0]["blocks"]["body"]["visible"] is False
     assert after["containers"][0]["blocks"]["verse_num"]["position"] == "below_verse"
     assert after["canvas"]["width"] == 1600

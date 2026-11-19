@@ -121,19 +121,25 @@ def test_multi_layer_shadow_keeps_inline_labels_at_240px(qapp):
 
 # ─── Border editor ──────────────────────────────────────────────────────────
 
-def test_border_radius_fields_carry_inline_labels_at_240px(qapp):
+def test_border_editor_does_not_repeat_radius_at_240px(qapp):
+    """Radius lives under Border, so the popup must not offer it again.
+
+    The popup's radius fed ``border.radius``, which the renderer ignores while
+    the container's ``border_radius`` is set. It looked like a dead control.
+    """
     editor = BorderEditor({"width": 2, "style": "solid", "color": "#ffffff",
                            "radius": 8})
     _show(editor, 240, 520, qapp)
 
-    assert editor.radius_field.inline_label() == "Radius"
-    _assert_inside(editor.radius_field, editor.width())
-
+    assert not hasattr(editor, "radius_field")
     editor._on_side_selected("top")
     qapp.processEvents()
-    assert editor.side_radius.inline_label() == "Radius"
-    assert editor.side_radius.isVisible()
-    _assert_inside(editor.side_radius, editor.width())
+    assert not hasattr(editor, "side_radius")
+    # A stored border.radius is carried through untouched, not zeroed.
+    assert editor.value()["radius"] == 8
+    editor.width_field.set_value(4)
+    assert editor.value() == {"width": 4, "style": "solid",
+                              "color": "#ffffff", "radius": 8}
 
 
 # ─── Animation panel at 240 px ──────────────────────────────────────────────

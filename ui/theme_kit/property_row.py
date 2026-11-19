@@ -21,7 +21,21 @@ from PyQt6.QtWidgets import (
 
 from ui import tokens
 from ui.theme_kit.base import draw_chevron, paint_focus_ring
+from ui.theme_kit.panel_layout import GUTTER, TIER_STEP
 from ui.theme_kit.popup import attach_tooltip
+
+#: Width of the leading arrow slot. Tier-2 rows in a tiered panel reserve this
+#: gutter whether or not they have an arrow, so all parameter labels share one
+#: x; the subparameter body is then indented by ``param_group.SUB_INDENT``
+#: (docs/PANEL_ORGANIZATION.md §2). The one source of truth is
+#: ``panel_layout.GUTTER``.
+DISCLOSURE_GUTTER = GUTTER
+
+#: Space kept clear at the right of the label column for state chrome that is
+#: painted over the label rather than laid out beside it.
+_CHANGED_CHROME = tokens.CHANGED_DOT_SIZE + tokens.SPACE_4
+_WARNING_CHROME = 6 + tokens.SPACE_4
+_RESET_CHROME = 16 + 3
 
 
 class _Marker(QWidget):
@@ -100,11 +114,60 @@ class _ResetButton(QAbstractButton):
         painter.end()
 
 
+class _DisclosureArrow(QAbstractButton):
+    """Painted chevron that reveals a parameter's subparameters.
+
+    Drawn rather than typed for the same reason as the reset glyph: one glyph
+    on every platform, scaling with the row's font size.
+    """
+
+    toggled_expanded = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(GUTTER, tokens.CONTROL_HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self._expanded = False
+        self.clicked.connect(self._on_clicked)
+
+    def _on_clicked(self) -> None:
+        self.set_expanded(not self._expanded, emit=True)
+
+    def set_expanded(self, expanded: bool, *, emit: bool = False) -> None:
+        expanded = bool(expanded)
+        if expanded == self._expanded:
+            if emit:
+                self.toggled_expanded.emit(expanded)
+            return
+        self._expanded = expanded
+        self.update()
+        if emit:
+            self.toggled_expanded.emit(expanded)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self.hasFocus():
+            paint_focus_ring(painter, QRectF(self.rect()), tokens.RADIUS_SM)
+        colour = (tokens.ACCENT_TEXT if self.underMouse() or self.hasFocus()
+                  else tokens.TEXT_MUTED)
+        draw_chevron(painter,
+                     QRectF(self.rect()).center(),
+                     "down" if self._expanded else "right",
+                     colour, size=5.0)
+        painter.end()
+
+
 class PropertyRow(QFrame):
     """Label + control row with changed/warning/disabled chrome.
 
     Signals
         reset_requested() — the reset glyph or the context action fired.
+        disclosure_toggled(bool) — the parameter's chevron was clicked.
 
     The control can expose ``begin_scrub`` / ``scrub_to`` / ``end_scrub`` to
     let the label itself be a scrub handle (NumberField does); otherwise the
@@ -112,6 +175,7 @@ class PropertyRow(QFrame):
     """
 
     reset_requested = pyqtSignal()
+    disclosure_toggled = pyqtSignal(bool)
 
     def __init__(self, label: str, control: Optional[QWidget] = None, *,
                  label_width: int = tokens.LABEL_COLUMN_WIDTH,
@@ -136,6 +200,11 @@ class PropertyRow(QFrame):
         self._scrub_active = False
         self._scrub_origin = QPoint()
         self._scrubbing_control = False
+        self._disclosure: Optional[_DisclosureArrow] = None
+        self._disclosure_enabled = False
+        self._disclosure_reserved = False
+        self._gutter: Optional[QWidget] = None
+        self._label_hint = ""
         self.setMouseTracking(True)
 
         self._outer = QVBoxLayout(self)
@@ -147,13 +216,8 @@ class PropertyRow(QFrame):
         self._label_layout.setContentsMargins(0, 0, 0, 0)
         self._label_layout.setSpacing(0)
 
-        self._changed_dot = _Marker(tokens.ACCENT)
-        self._changed_dot.setFixedSize(tokens.CHANGED_DOT_SIZE,
-                                       tokens.CHANGED_DOT_SIZE)
-        self._changed_dot.setProperty("role", "changed")
-        self._label_layout.addWidget(self._changed_dot)
-        self._label_layout.addSpacing(tokens.SPACE_4)
-
+        # The label is the only layout item. Every leading slot (the arrow or
+        # its reserved gutter) is inserted before it by set_disclosure().
         self._label = QLabel(self._label_text, self)
         self._label.setTextFormat(Qt.TextFormat.PlainText)
         self._label.setSizePolicy(QSizePolicy.Policy.Ignored,
@@ -165,12 +229,18 @@ class PropertyRow(QFrame):
             "background: transparent;")
         attach_tooltip(self._label, lambda: self._label_tooltip())
         self._label_layout.addWidget(self._label, 1)
-        self._label_layout.addSpacing(tokens.SPACE_4)
 
-        self._warning_dot = _Marker(tokens.WARNING, 6)
-        self._warning_dot.hide()
+        # State dots are painted over the trailing end of the label column,
+        # never laid out before the label: the label must start exactly at the
+        # tier's gutter (docs/PANEL_ORGANIZATION.md §2).
+        self._changed_dot = _Marker(tokens.ACCENT, parent=self._label_row)
+        self._changed_dot.setProperty("role", "changed")
+        self._changed_dot.hide()
+
+        self._warning_dot = _Marker(tokens.WARNING, 6,
+                                    parent=self._label_row)
         attach_tooltip(self._warning_dot, lambda: self._warning)
-        self._label_layout.addWidget(self._warning_dot)
+        self._warning_dot.hide()
 
         self._reset = _ResetButton(self)
         self._reset.clicked.connect(self.reset_requested)
@@ -214,24 +284,25 @@ class PropertyRow(QFrame):
             row.addWidget(self._label_row, 0)
             row.addWidget(self._control_host, 1)
             self._outer.addLayout(row)
-        # The reset glyph is an overlay, not a layout item: it must not steal
-        # 16 px from every label column when it is hidden.
+        # The reset glyph and the state dots are overlays, not layout items:
+        # they must not steal width from the label column when hidden.
         self._reset.setParent(self)
         self._reset.raise_()
-        self._position_reset()
+        self._position_chrome()
+
+    def _label_chrome(self) -> int:
+        """Width in the label row that is not the text itself."""
+        chrome = _CHANGED_CHROME + _RESET_CHROME
+        if self._disclosure_reserved:
+            chrome += DISCLOSURE_GUTTER
+        if self._warning_dot.isVisible():
+            chrome += _WARNING_CHROME
+        return chrome
 
     def required_label_width(self) -> int:
         """The configured column, or the width this label actually needs."""
         metrics = QFontMetrics(self._label.font())
-        chrome = 12  # changed dot and its spacing
-        if self._warning_dot.isVisible():
-            chrome += 6 + tokens.SPACE_4
-        # The reset glyph is an overlay at the right edge of the column. Its
-        # 16 px plus a hair of clearance stay inside the column so showing it
-        # does not elide the label. Two extra pixels keep elidedText from
-        # replacing the last glyph at exactly the text width.
-        chrome += 16 + 3
-        needed = metrics.horizontalAdvance(self._label_text) + chrome
+        needed = metrics.horizontalAdvance(self._label_text) + self._label_chrome()
         return max(int(self._label_width), needed)
 
     def _update_label_column(self) -> None:
@@ -243,18 +314,14 @@ class PropertyRow(QFrame):
             return
         self._effective_label_width = width
         self._label_row.setFixedWidth(width)
-        self._position_reset()
+        self._position_chrome()
 
     def _sync_label_width(self) -> None:
-        if self._full_width:
-            available = max(0, self._label_row.width() - 20)
-        else:
-            # The label starts after the changed dot and its spacing (8 px);
-            # the reset glyph is painted 17 px from the right edge.
-            available = max(0, self._effective_label_width
-                            - (27 if self._reset.isVisible() else 12))
-            if self._warning_dot.isVisible():
-                available -= 6 + tokens.SPACE_4
+        # The same chrome the column was sized with, so text never elides to
+        # make room for a dot that is painted over the column, not laid out.
+        # Two pixels of slack keep ``elidedText`` from replacing the last glyph
+        # when the text is exactly as wide as the space it was given.
+        available = max(0, self._label_row.width() - self._label_chrome() + 2)
         metrics = QFontMetrics(self._label.font())
         elided = metrics.elidedText(self._label_text,
                                     Qt.TextElideMode.ElideRight,
@@ -262,27 +329,51 @@ class PropertyRow(QFrame):
         if elided != self._label.text():
             self._label.setText(elided)
 
+    def set_label_tooltip(self, text: str) -> None:
+        """Show a fixed hint when the label is hovered (Width/Height use this)."""
+        self._label_hint = str(text or "")
+        self._label.setToolTip(self._label_hint)
+
     def _label_tooltip(self) -> str:
         if self._disabled_reason:
             return f"{self._label_text} — {self._disabled_reason}"
+        if self._label_hint:
+            return self._label_hint
         return self._label_text
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_label_column()
         self._sync_label_width()
-        self._position_reset()
+        self._position_chrome()
 
-    def _position_reset(self) -> None:
-        """Keep the reset glyph at the right edge of the label column."""
+    def _position_chrome(self) -> None:
+        """Place the reset glyph and the state dots on the trailing edge."""
         if self._full_width:
-            x = max(0, self.width() - 17)
-            y = 4
+            base = max(0, self.width())
+            reset_y = 4
         else:
-            x = max(0, self._effective_label_width - 17)
-            y = max(0, (tokens.CONTROL_HEIGHT - 16) // 2)
-        self._reset.move(x, y)
+            base = max(0, self._effective_label_width)
+            reset_y = max(0, (tokens.CONTROL_HEIGHT - 16) // 2)
+        self._reset.move(max(0, base - 17), reset_y)
         self._reset.raise_()
+
+        label_w = max(0, self._label_row.width())
+        row_h = self._label_row.height()
+        x = label_w - 17 - tokens.SPACE_4
+        if self._changed_dot.isVisible():
+            x -= self._changed_dot.width()
+            self._changed_dot.move(
+                max(0, x),
+                max(0, (row_h - self._changed_dot.height()) // 2))
+            self._changed_dot.raise_()
+            x -= tokens.SPACE_4
+        if self._warning_dot.isVisible():
+            x -= self._warning_dot.width()
+            self._warning_dot.move(
+                max(0, x),
+                max(0, (row_h - self._warning_dot.height()) // 2))
+            self._warning_dot.raise_()
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self._label:
@@ -326,6 +417,10 @@ class PropertyRow(QFrame):
 
     def set_label(self, text: str) -> None:
         self._label_text = str(text)
+        if self._disclosure is not None:
+            self._disclosure.setAccessibleName(
+                f"Toggle {self._label_text} options")
+            self._disclosure.setToolTip(f"Toggle {self._label_text} options")
         self._update_label_column()
         self._sync_label_width()
 
@@ -339,6 +434,73 @@ class PropertyRow(QFrame):
 
     def label(self) -> str:
         return self._label_text
+
+    # ── disclosure (Tier 3) ─────────────────────────────────────────────────
+    def set_disclosure(self, enabled: bool, expanded: bool = False, *,
+                       reserve: bool = False) -> None:
+        """Give the row a chevron that opens its subparameters.
+
+        The chevron takes the row's leading gutter and subparameter rows are
+        indented by the same amount, so the labels line up. A row without
+        subparameters never gets a chevron, but ``reserve`` keeps its empty
+        gutter so every parameter label in a tiered panel starts at the same
+        x whether or not it has subparameters.
+        """
+        self._disclosure_enabled = bool(enabled)
+        self._disclosure_reserved = bool(reserve) or bool(enabled)
+        if self._disclosure_reserved:
+            if self._disclosure is None:
+                arrow = _DisclosureArrow(self)
+                arrow.set_expanded(expanded)
+                arrow.setAccessibleName(f"Toggle {self._label_text} options")
+                arrow.setToolTip(f"Toggle {self._label_text} options")
+                arrow.toggled_expanded.connect(self._on_disclosure_toggled)
+                self._disclosure = arrow
+                self._label_layout.insertWidget(0, arrow)
+            if self._gutter is None:
+                gutter = QWidget(self)
+                gutter.setFixedSize(GUTTER, tokens.CONTROL_HEIGHT)
+                gutter.setAttribute(
+                    Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+                self._gutter = gutter
+                self._label_layout.insertWidget(0, gutter)
+            self._disclosure.setVisible(self._disclosure_enabled)
+            self._gutter.setVisible(not self._disclosure_enabled)
+            if self._disclosure_enabled:
+                self._disclosure.set_expanded(expanded)
+        else:
+            if self._disclosure is not None:
+                self._disclosure.setVisible(False)
+            if self._gutter is not None:
+                self._gutter.setVisible(False)
+        self._apply_control_indent()
+        self._update_label_column()
+        self._sync_label_width()
+        self._position_chrome()
+
+    def _apply_control_indent(self) -> None:
+        """Stacked rows start at their label, so indent by the arrow gutter.
+
+        Inline rows already sit after the fixed label column; only a
+        full-width row puts its control on a second line that would otherwise
+        begin at the row edge.
+        """
+        left = GUTTER if (self._full_width and self._disclosure_reserved) else 0
+        self._control_layout.setContentsMargins(left, 0, 0, 0)
+
+    def _on_disclosure_toggled(self, expanded: bool) -> None:
+        self.disclosure_toggled.emit(bool(expanded))
+
+    def set_disclosure_expanded(self, expanded: bool) -> None:
+        if self._disclosure is not None:
+            self._disclosure.set_expanded(expanded)
+
+    def disclosure_expanded(self) -> bool:
+        return bool(self._disclosure is not None
+                    and self._disclosure.is_expanded())
+
+    def has_disclosure(self) -> bool:
+        return bool(self._disclosure_enabled and self._disclosure is not None)
 
     # ── state chrome ────────────────────────────────────────────────────────
     def set_changed(self, changed: bool) -> None:
@@ -396,7 +558,7 @@ class PropertyRow(QFrame):
         self._reset.set_shown(shown)
         if changed:
             self._sync_label_width()
-        self._position_reset()
+        self._position_chrome()
 
     def enterEvent(self, event) -> None:
         self._hovered = True
@@ -456,9 +618,10 @@ class PropertyRow(QFrame):
 class _SectionHeader(QAbstractButton):
     toggled_expanded = pyqtSignal(bool)
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, *, tiered: bool = False, parent=None):
         super().__init__(parent)
         self._title = str(title)
+        self._tiered = bool(tiered)
         self._count = 0
         self._expanded = True
         self.setCheckable(True)
@@ -505,13 +668,22 @@ class _SectionHeader(QAbstractButton):
             paint_focus_ring(painter, QRectF(rect).adjusted(1, 1, -1, -1),
                              tokens.RADIUS_SM)
 
+        # A tiered heading puts its chevron in the same GUTTER slot every row
+        # uses and starts its text where a Tier-2 label starts, so the group
+        # name sits one gutter left of its parameters (docs/PANEL_ORGANIZATION.md §2).
+        if self._tiered:
+            chevron_x = 0
+            text_left = GUTTER
+        else:
+            chevron_x = 8
+            text_left = 26
         draw_chevron(
             painter,
-            QRectF(8, 0, 12, rect.height()).center(),
+            QRectF(chevron_x, 0, GUTTER, rect.height()).center(),
             "down" if self._expanded else "right",
             tokens.TEXT_SECONDARY if self.underMouse() else tokens.TEXT_MUTED,
             size=6.0)
-        text_rect = rect.adjusted(26, 0, -34 if self._count else -8, 0)
+        text_rect = rect.adjusted(text_left, 0, -34 if self._count else -8, 0)
         f = QFont(self.font())
         f.setPixelSize(11)
         f.setWeight(QFont.Weight(tokens.WEIGHT_SEMIBOLD))
@@ -554,7 +726,7 @@ class PropertySection(QWidget):
     expanded_changed = pyqtSignal(str, bool)
 
     def __init__(self, title: str, *, state_key: str = "",
-                 expanded: bool = True, parent=None):
+                 expanded: bool = True, tiered: bool = False, parent=None):
         super().__init__(parent)
         self.state_key = state_key or title
         self._rows: list[PropertyRow] = []
@@ -562,14 +734,15 @@ class PropertySection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.header = _SectionHeader(title)
+        self.header = _SectionHeader(title, tiered=tiered)
         self.header.set_expanded(expanded)
         layout.addWidget(self.header)
         layout.addSpacing(tokens.SPACE_4)
 
         self.body = QWidget(self)
         self._body_layout = QVBoxLayout(self.body)
-        self._body_layout.setContentsMargins(0, 0, 0, tokens.SPACE_8)
+        self._body_layout.setContentsMargins(TIER_STEP if tiered else 0, 0, 0,
+                                             tokens.SPACE_8)
         self._body_layout.setSpacing(tokens.SPACE_4)
         layout.addWidget(self.body)
         self.body.setVisible(expanded)

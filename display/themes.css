@@ -101,6 +101,23 @@ body, html {
     background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
 }
 
+/* Border shadow — the shadow of the border layer's shape, painted on the
+   canvas.
+
+   The host is a *sibling* of the container, not a child: `overflow: hidden`
+   clips every descendant, so a child's shadow could never paint outside the
+   container's bounds. It carries no paint of its own — only the shadow of the
+   rectangle inset by `border_padding` and shaped by `border_radius`, which
+   the renderer writes inline. It is inserted before the container, so DOM
+   order paints it under the container and above the stage background. */
+.rc-border-shadow {
+    position: absolute;
+    box-sizing: border-box;
+    background: transparent;
+    border: 0;
+    pointer-events: none;
+}
+
 /* Legacy v1 absolute panels (#ct-text/#ct-reference/#ct-translation) place
    their text by canvas coordinates and have no layer of their own, so they
    keep the ring and fill on the element itself. */

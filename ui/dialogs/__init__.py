@@ -610,6 +610,47 @@ class TextInputDialog(_InputDialog):
         return self._edit.text()
 
 
+class ValidatedTextDialog(TextInputDialog):
+    """One-field input that refuses to close on an invalid value.
+
+    ``validator`` receives the current text and returns the reason to reject
+    it, or an empty string to accept. The reason stays visible under the field
+    and OK stays disabled, so a refused name never looks like a dead button.
+    """
+
+    def __init__(self, parent, title: str, label: str, text: str = "", *,
+                 validator=None, placeholder: str = ""):
+        super().__init__(parent, title, label, text=text)
+        self._validator = validator
+        if placeholder:
+            self._edit.setPlaceholderText(placeholder)
+        self._message = QLabel("", self.surface)
+        self._message.setObjectName(_HINT_NAME)
+        self._message.setWordWrap(True)
+        self._message.setStyleSheet(f"color: {tokens.DANGER};")
+        self._message.hide()
+        self.body_layout.insertWidget(3, self._message)
+        self._edit.textChanged.connect(self._revalidate)
+        self._revalidate()
+
+    def reason(self) -> str:
+        if self._validator is None:
+            return ""
+        return str(self._validator(self._edit.text()) or "")
+
+    def _revalidate(self, _text: str = "") -> None:
+        reason = self.reason()
+        self._message.setText(reason)
+        self._message.setVisible(bool(reason))
+        self._ok.setEnabled(not reason)
+
+    def accept(self) -> None:
+        self._revalidate()
+        if self.reason():
+            return
+        super().accept()
+
+
 class DoubleInputDialog(_InputDialog):
     def __init__(self, parent, title: str, label: str, value: float,
                  minimum: float, maximum: float, decimals: int, step: float):
@@ -632,6 +673,15 @@ class DoubleInputDialog(_InputDialog):
 def get_text(parent, title, label, echo=None, text="", **kwargs):
     """Mirror of ``QInputDialog.getText`` -> ``(str, bool)``."""
     dialog = TextInputDialog(parent, title, label, text=text, echo=echo)
+    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    return (dialog.value() if accepted else ""), accepted
+
+
+def get_validated_text(parent, title, label, *, validator=None, text="",
+                       placeholder=""):
+    """Like ``get_text``, but refuses to accept a rejected value."""
+    dialog = ValidatedTextDialog(parent, title, label, text=text,
+                                 validator=validator, placeholder=placeholder)
     accepted = dialog.exec() == QDialog.DialogCode.Accepted
     return (dialog.value() if accepted else ""), accepted
 

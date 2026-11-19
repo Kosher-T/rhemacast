@@ -12,6 +12,7 @@ dataclasses and painting helpers, ``popup`` owns every floating surface
 """
 
 from ui.theme_kit.anchor_picker import ANCHOR_GRID, ANCHORS, AnchorPicker, AnchorRow
+from ui.theme_kit.backdrop_field import BackdropField
 from ui.theme_kit.animation_phase import (
     INLINE_TYPES, ORIGINS, AnimationDefinition, AnimationPhaseCard,
     resolve_slot, slot_mode,
@@ -40,6 +41,7 @@ from ui.theme_kit.paint_field import (
     GradientEditor, GradientSpec, GradientStop, PaintField, format_gradient,
     parse_gradient,
 )
+from ui.theme_kit.param_group import SUB_INDENT, ParamGroup
 from ui.theme_kit.popup import PopupSurface, attach_tooltip
 from ui.theme_kit.property_row import PropertyRow, PropertySection
 from ui.theme_kit.sample_injector import SampleInjector
@@ -59,6 +61,7 @@ from ui.theme_kit.timeline import KeyframeEditor, Timeline
 
 __all__ = [
     "ANCHOR_GRID", "ANCHORS", "AnchorPicker", "AnchorRow",
+    "BackdropField",
     "INLINE_TYPES", "ORIGINS", "AnimationDefinition", "AnimationPhaseCard",
     "resolve_slot", "slot_mode",
     "ChoiceOption", "SampleState", "checkerboard", "coerce_option",
@@ -75,6 +78,7 @@ __all__ = [
     "FlowLayout", "FlowRow", "FourSideField", "NumberField",
     "GradientEditor", "GradientSpec", "GradientStop", "PaintField",
     "format_gradient", "parse_gradient",
+    "ParamGroup", "SUB_INDENT",
     "PopupSurface", "attach_tooltip",
     "PropertyRow", "PropertySection", "SampleInjector",
     "SegmentedToggle", "ToggleButton",

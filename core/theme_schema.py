@@ -179,6 +179,10 @@ INHERITABLE_TRANSLATION_FIELDS = (
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,63}$")
 _ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+#: Longest container id. The id doubles as the renderer's DOM id, so the
+#: pattern stays CSS-selector safe; the Designer validates against it before
+#: it writes, or ``normalize_theme`` would silently rewrite the id at render.
+CONTAINER_ID_MAX_LENGTH = 32
 _ANIM_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
 _NUM_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 _PX_RE = re.compile(r"^(-?\d+(?:\.\d+)?)px$", re.I)
@@ -1625,6 +1629,15 @@ def _block_order(block_id: str) -> int:
     }.get(block_id, 9)
 
 
+def valid_container_id(value: Any) -> bool:
+    """Whether ``value`` is a container id the renderer can safely use.
+
+    Container ids become DOM ids (``rc-cont-<id>``), so they stay lowercase,
+    selector-safe and no longer than :data:`CONTAINER_ID_MAX_LENGTH`.
+    """
+    return isinstance(value, str) and bool(_ID_RE.match(value))
+
+
 def _validate_container(raw: Any, index: int, *, theme_kind: str,
                         report: ThemeReport) -> Optional[dict]:
     path = f"containers[{index}]"
@@ -1632,7 +1645,7 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
         report.warn(path, "container is not an object", type(raw).__name__)
         return None
     cid = raw.get("id")
-    if not isinstance(cid, str) or not _ID_RE.match(cid):
+    if not valid_container_id(cid):
         cid = f"container{index}"
         report.warn(f"{path}.id", "invalid container id", raw.get("id"), cid)
     out: dict = {
@@ -1692,6 +1705,10 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
                                         percent=True, label="border_radius")),
         "box_shadow": _coerce_shadow(raw.get("box_shadow", "none"), "none",
                                      path=f"{path}.box_shadow", report=report),
+        "border_shadow": _coerce_shadow(raw.get("border_shadow", "none"),
+                                        "none",
+                                        path=f"{path}.border_shadow",
+                                        report=report),
         "backdrop_filter": _coerce_filter(raw.get("backdrop_filter", "none"),
                                           "none", path=f"{path}.backdrop_filter",
                                           report=report),
@@ -1726,7 +1743,7 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
         "id", "label", "kind", "layer", "visible", "position", "width",
         "height", "min_width", "max_width", "min_height", "max_height",
         "container_background", "background", "border", "border_padding",
-        "border_radius", "box_shadow",
+        "border_radius", "box_shadow", "border_shadow",
         "backdrop_filter", "opacity", "overflow", "animation", "blocks",
         "display", "flex_direction", "justify_content", "align_items",
     }
@@ -2150,6 +2167,7 @@ def _safe_theme() -> dict:
             "border_padding": 0,
             "border_radius": 0,
             "box_shadow": "none",
+            "border_shadow": "none",
             "backdrop_filter": "none",
             "opacity": 1.0,
             "overflow": "hidden",

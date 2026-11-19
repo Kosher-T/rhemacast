@@ -176,10 +176,6 @@ class NumberField(QWidget):
                  unit_ranges: Optional[
                      dict[str, tuple[Optional[float], Optional[float],
                                      float]]] = None,
-                 minimum_provider: Optional[
-                     Callable[[str], Optional[float]]] = None,
-                 maximum_provider: Optional[
-                     Callable[[str], Optional[float]]] = None,
                  label: str = "", inline_label: str = "", parent=None):
         super().__init__(parent)
         self._minimum = minimum
@@ -190,10 +186,6 @@ class NumberField(QWidget):
             str, tuple[Optional[float], Optional[float], float]] = {
                 str(unit_name): (rng[0], rng[1], float(rng[2]))
                 for unit_name, rng in (unit_ranges or {}).items()}
-        #: Dynamic bounds (for example "never above the Max field"). Providers
-        #: receive the active unit; ``None`` releases the constraint.
-        self._minimum_provider = minimum_provider
-        self._maximum_provider = maximum_provider
         self._step = float(step) if step else 1.0
         self._coarse = (float(coarse_step) if coarse_step is not None
                         else self._step * 10)
@@ -321,6 +313,14 @@ class NumberField(QWidget):
     def numeric_value(self) -> Optional[float]:
         return self._value
 
+    def unit(self) -> str:
+        """The unit this field currently shows (``"px"``, ``"%"``, ``""``)."""
+        return self._unit
+
+    def keyword(self) -> str:
+        """The active keyword (``"auto"``, ``"inherit"``), or ``""``."""
+        return self._keyword
+
     def set_value(self, value: Any, *, emit: bool = False) -> None:
         self._adopt(value)
         self._sync_display()
@@ -365,15 +365,6 @@ class NumberField(QWidget):
         self._minimum = minimum
         self._maximum = maximum
         self.update()
-
-    def set_limit_providers(
-            self, *, minimum: Optional[
-                Callable[[str], Optional[float]]] = None,
-            maximum: Optional[
-                Callable[[str], Optional[float]]] = None) -> None:
-        """Attach dynamic bounds (a sibling field, a live canvas size)."""
-        self._minimum_provider = minimum
-        self._maximum_provider = maximum
 
     def set_units(self, units: Iterable[str], *,
                   keywords: Iterable[str] = ()) -> None:
@@ -436,20 +427,6 @@ class NumberField(QWidget):
         unit = self._unit
         if unit in self._unit_ranges:
             low, high, step = self._unit_ranges[unit]
-        if self._minimum_provider is not None:
-            try:
-                extra = self._minimum_provider(unit)
-            except Exception:
-                extra = None
-            if extra is not None:
-                low = extra if low is None else max(low, extra)
-        if self._maximum_provider is not None:
-            try:
-                extra = self._maximum_provider(unit)
-            except Exception:
-                extra = None
-            if extra is not None:
-                high = extra if high is None else min(high, extra)
         return low, high, step
 
     def _clamp(self, value: float) -> float:

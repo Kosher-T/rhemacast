@@ -131,6 +131,12 @@ Tests: the six inline-label cases in `tests/test_theme_designer_m1.py`
 (visibility, fit at 240 px, no label when unset, no double label, multi-layer
 shadow, base + side radius).
 
+Round 3 removed the base and side radius fields from the Border popup: the
+container's Radius (Border ▸ subparameter) is the only radius control, because
+`border_radius` wins over `border.radius` in the renderer and the duplicate
+looked dead. That test now asserts the fields are absent and that a stored
+`border.radius` survives an edit.
+
 ### 3. Real Save, Export, Import with unknown keys
 
 Run with a redirected themes directory (a temp copy of `themes/`, never the

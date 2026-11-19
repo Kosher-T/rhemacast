@@ -312,8 +312,14 @@ class BorderEditor(QWidget):
     Args
         styles: allowlisted style values (caller-supplied; defaults to the
             reference list).
-        width_range/radius_range: inclusive bounds.
+        width_range: inclusive bounds.
         palette: ``[(label, value)]`` for the colour fields.
+
+    There is no radius control here. The shape radius is the container's
+    ``border_radius``, edited once under Border ▸ Radius; a stored
+    ``border.radius`` is preserved on the object it came from but is no longer
+    offered here, because the container value wins and editing the duplicate
+    looked like a dead control.
     """
 
     changed = pyqtSignal(object)
@@ -325,8 +331,6 @@ class BorderEditor(QWidget):
                  allow_shared: bool = True,
                  styles: Iterable[str] = BORDER_STYLES,
                  width_range: tuple[float, float] = (0, 40),
-                 radius_range: tuple[float, float] = (0, 400),
-                 side_radius: bool = True,
                  parent=None):
         super().__init__(parent)
         self._palette = list(palette)
@@ -334,8 +338,6 @@ class BorderEditor(QWidget):
         self._allow_shared = bool(allow_shared)
         self._styles = [str(style) for style in styles]
         self._width_range = width_range
-        self._radius_range = radius_range
-        self._side_radius = bool(side_radius)
         self._base: dict[str, Any] = dict(_DEFAULTS)
         self._side_specs: dict[str, dict[str, Any]] = {}
         self._editing_side: Optional[str] = None
@@ -393,17 +395,12 @@ class BorderEditor(QWidget):
         self.color_field = ColorField(
             "currentColor", palette=self._palette,
             keywords=("currentColor", "inherit"), nullable=False)
-        self.radius_field = NumberField(
-            0, minimum=radius_range[0], maximum=radius_range[1],
-            integer=True, label="Corner radius", inline_label="Radius")
-        attach_tooltip(self.radius_field, "Corner radius")
         color_host = QWidget(self)
         color_row = QHBoxLayout(color_host)
         color_row.setContentsMargins(0, 0, 0, 0)
         color_row.setSpacing(tokens.SPACE_4)
         color_row.addWidget(self.color_field, 1)
         custom.addWidget(PropertyRow("Color", color_host, label_width=52))
-        custom.addWidget(self.radius_field)
 
         sides_head = QWidget(self)
         sides_head_row = QHBoxLayout(sides_head)
@@ -456,12 +453,6 @@ class BorderEditor(QWidget):
         self.side_color = ColorField(
             "currentColor", palette=self._palette,
             keywords=("currentColor", "inherit"), nullable=False)
-        self.side_radius = NumberField(
-            0, minimum=radius_range[0], maximum=radius_range[1],
-            integer=True, label="Side corner radius",
-            inline_label="Radius")
-        attach_tooltip(self.side_radius, "Side corner radius")
-        self.side_radius.setVisible(self._side_radius)
         side_color_host = QWidget(self)
         side_color_row = QHBoxLayout(side_color_host)
         side_color_row.setContentsMargins(0, 0, 0, 0)
@@ -469,19 +460,16 @@ class BorderEditor(QWidget):
         side_color_row.addWidget(self.side_color, 1)
         side_layout.addWidget(
             PropertyRow("Color", side_color_host, label_width=52))
-        side_layout.addWidget(self.side_radius)
         custom.addWidget(self.side_host)
 
         layout.addWidget(self.custom_host)
 
         for signal in (self.width_field.changed, self.style_dropdown.changed,
-                       self.radius_field.changed, self.color_field.changed,
-                       self.side_width.changed, self.side_style.changed,
-                       self.side_color.changed, self.side_radius.changed):
+                       self.color_field.changed, self.side_width.changed,
+                       self.side_style.changed, self.side_color.changed):
             signal.connect(self._emit_commit)
-        for signal in (self.width_field.preview, self.radius_field.preview,
-                       self.color_field.preview, self.side_width.preview,
-                       self.side_color.preview, self.side_radius.preview):
+        for signal in (self.width_field.preview, self.color_field.preview,
+                       self.side_width.preview, self.side_color.preview):
             signal.connect(self._emit_preview)
 
         self.set_value(value)
@@ -494,12 +482,7 @@ class BorderEditor(QWidget):
         if mode == "shared":
             name = self.shared_dropdown.value()
             return {"shared": name} if name else "none"
-        base = {
-            "width": _tidy(self.width_field.numeric_value() or 0),
-            "style": self.style_dropdown.value() or "solid",
-            "color": self.color_field.value() or "currentColor",
-            "radius": _tidy(self.radius_field.numeric_value() or 0),
-        }
+        base = self._live_base()
         sides: dict[str, dict[str, Any]] = {}
         for side, spec in self._side_specs.items():
             diff = {key: value for key, value in spec.items()
@@ -553,6 +536,15 @@ class BorderEditor(QWidget):
             self._on_side_selected(side)
 
     # ── syncing ─────────────────────────────────────────────────────────────
+    def _live_base(self) -> dict[str, Any]:
+        """The border the fields describe, radius carried over unchanged."""
+        return {
+            "width": _tidy(self.width_field.numeric_value() or 0),
+            "style": self.style_dropdown.value() or "solid",
+            "color": self.color_field.value() or "currentColor",
+            "radius": _tidy(self._base.get("radius") or 0),
+        }
+
     def _sync_fields(self) -> None:
         base = self._base
         self.width_field.set_value(base["width"])
@@ -560,7 +552,6 @@ class BorderEditor(QWidget):
             [ChoiceOption(style, style.title()) for style in self._styles],
             value=base["style"])
         self.color_field.set_value(base["color"])
-        self.radius_field.set_value(base["radius"])
         side = self._editing_side
         if side:
             spec = self._side_specs.get(side)
@@ -576,17 +567,11 @@ class BorderEditor(QWidget):
                  for style in self._styles],
                 value=values["style"])
             self.side_color.set_value(values["color"])
-            self.side_radius.set_value(values["radius"])
         overrides = self._override_set()
         self._refresh_side_chrome(overrides)
 
     def _override_set(self) -> set[str]:
-        base = {
-            "width": _tidy(self.width_field.numeric_value() or 0),
-            "style": self.style_dropdown.value() or "solid",
-            "color": self.color_field.value() or "currentColor",
-            "radius": _tidy(self.radius_field.numeric_value() or 0),
-        }
+        base = self._live_base()
         result = set()
         for side, spec in self._side_specs.items():
             if any(base.get(key) != value for key, value in spec.items()):
@@ -617,8 +602,17 @@ class BorderEditor(QWidget):
 
     # ── events ──────────────────────────────────────────────────────────────
     def _on_mode(self, mode: str) -> None:
+        """Open the chosen editor without committing.
+
+        Choosing Custom used to commit, and the popover closes on commit — so
+        the operator never got to set the border they had just asked for.
+        The switch is a preview: the popover stays open, and the first field
+        edit is the commit.
+        """
         self._apply_mode()
-        self._emit_commit()
+        if self._updating:
+            return
+        self.preview.emit(self.value())
 
     def _on_side_selected(self, side: str) -> None:
         if self._updating:
@@ -633,18 +627,12 @@ class BorderEditor(QWidget):
             self._emit_commit()
 
     def _selected_side_spec(self) -> dict[str, Any]:
-        width = _tidy(self.side_width.numeric_value() or 0)
-        style = self.side_style.value() or "solid"
-        color = self.side_color.value() or "currentColor"
-        radius = _tidy(self.side_radius.numeric_value() or 0)
-        base = {
-            "width": _tidy(self.width_field.numeric_value() or 0),
-            "style": self.style_dropdown.value() or "solid",
-            "color": self.color_field.value() or "currentColor",
-            "radius": _tidy(self.radius_field.numeric_value() or 0),
+        base = self._live_base()
+        full = {
+            "width": _tidy(self.side_width.numeric_value() or 0),
+            "style": self.side_style.value() or "solid",
+            "color": self.side_color.value() or "currentColor",
         }
-        full = {"width": width, "style": style, "color": color,
-                "radius": radius}
         return {key: value for key, value in full.items()
                 if key == "color" or base.get(key) != value}
 
@@ -720,6 +708,11 @@ class _BorderPopover(PopupSurface):
                  allow_shared=True, parent=None):
         super().__init__(parent)
         self._open_value = value
+        #: A commit closes the surface; that close is not a cancel. Without
+        #: this flag ``closeEvent`` emitted ``cancelled`` right after the
+        #: commit, the field rewound to the value it opened with, and the row
+        #: showed "None" again even though the edit had landed.
+        self._committed = False
         self.editor = BorderEditor(
             value, shared_options=shared_options, palette=palette,
             allow_shared=allow_shared, parent=self)
@@ -728,11 +721,12 @@ class _BorderPopover(PopupSurface):
         self.editor.preview.connect(self.previewed)
 
     def _on_committed(self, value: Any) -> None:
+        self._committed = True
         self.committed.emit(value)
         self.close()
 
     def closeEvent(self, event) -> None:
-        if self.isVisible():
+        if self.isVisible() and not self._committed:
             self.cancelled.emit()
         super().closeEvent(event)
 
@@ -830,6 +824,9 @@ class BorderField(QWidget):
 
     def _on_committed(self, value: Any) -> None:
         self._value = value
+        # The next cancel must rewind to this value, not to the one the
+        # previous opening started from.
+        self._open_value = value
         self.update()
         self.changed.emit(value)
 

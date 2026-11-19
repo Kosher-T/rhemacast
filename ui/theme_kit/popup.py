@@ -17,7 +17,7 @@ from typing import Callable, Optional
 from PyQt6.QtCore import (
     QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen
+from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPen
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from ui import tokens
@@ -173,6 +173,29 @@ class PopupSurface(QWidget):
         self.show()
         self.raise_()
 
+    def show_for(self, anchor: QWidget, *, width: Optional[int] = None,
+                 max_height: Optional[int] = tokens.POPUP_MAX_HEIGHT,
+                 gap: int = 6) -> None:
+        """Show next to a widget without covering it (tooltips)."""
+        top_left = anchor.mapToGlobal(QPoint(0, 0))
+        rect = QRect(top_left, anchor.size())
+        screen = self._screen_for(rect.center())
+        available = screen.availableGeometry() if screen else QRect(
+            0, 0, 1920, 1080)
+        wanted = width if width is not None else 270
+        wanted = max(120, min(wanted, available.width() - 2 * tokens.SPACE_8))
+        self.setFixedWidth(wanted)
+        self.adjustSize()
+        height = self.sizeHint().height()
+        if max_height is not None:
+            height = min(height, max_height)
+        height = min(height, available.height() - 2 * tokens.SPACE_8)
+        self.resize(wanted, height)
+        self.move(tooltip_position(rect, QSize(wanted, height), available,
+                                   gap=gap))
+        self.show()
+        self.raise_()
+
     def show_at(self, global_pos: QPoint, *, width: Optional[int] = None,
                 max_height: Optional[int] = tokens.POPUP_MAX_HEIGHT,
                 gap: int = 2) -> None:
@@ -198,6 +221,42 @@ class PopupSurface(QWidget):
 
 
 # ─── Tooltips ───────────────────────────────────────────────────────────────
+
+def tooltip_position(anchor, tip, available, *, gap: int = 6) -> QPoint:
+    """Top-left for a tooltip that does not cover the control it describes.
+
+    Below the anchor first, then above it, then beside it. The old placement
+    put the surface at the cursor plus an offset, which on a 240 px panel laid
+    a 270 px tooltip straight over its own control. A position that would
+    intersect the anchor is skipped even when it is otherwise on screen.
+    """
+    if not isinstance(anchor, QRect):
+        anchor = QRect(*anchor)
+    if not isinstance(available, QRect):
+        available = QRect(*available)
+    tip = tip if isinstance(tip, QSize) else QSize(*tip)
+
+    def place(x: int, y: int) -> tuple[bool, QPoint]:
+        x = max(available.left(),
+                min(int(x), available.right() - tip.width() + 1))
+        y = max(available.top(),
+                min(int(y), available.bottom() - tip.height() + 1))
+        rect = QRect(x, y, tip.width(), tip.height())
+        return (available.contains(rect) and not rect.intersects(anchor),
+                QPoint(x, y))
+
+    candidates = (
+        (anchor.left(), anchor.bottom() + gap),
+        (anchor.left(), anchor.top() - gap - tip.height()),
+        (anchor.right() + gap, anchor.top()),
+        (anchor.left() - gap - tip.width(), anchor.top()),
+    )
+    for x, y in candidates:
+        fits, point = place(x, y)
+        if fits:
+            return point
+    return place(*candidates[0])[1]
+
 
 class _TooltipPopup(PopupSurface):
     def __init__(self):
@@ -279,8 +338,9 @@ class TooltipManager(QObject):
             return
         self._popup.set_text(text, self._more)
         self._popup.follow(widget)
-        self._popup.show_at(QCursor.pos() + QPoint(10, 18), width=270,
-                            max_height=180)
+        # Beside the control, never over it: on a narrow panel a cursor-anchored
+        # tooltip covers the very field it describes.
+        self._popup.show_for(widget, width=270, max_height=180)
         self._popup.raise_()
 
     def hide(self) -> None:
@@ -322,8 +382,7 @@ class TooltipManager(QObject):
             self._popup.set_text(
                 value, str(obj.property("_rc_kit_tooltip_more") or ""))
             self._popup.follow(obj)
-            self._popup.show_at(QCursor.pos() + QPoint(10, 18), width=270,
-                                max_height=180)
+            self._popup.show_for(obj, width=270, max_height=180)
             return True
         if kind in (QEvent.Type.Hide, QEvent.Type.WindowDeactivate,
                     QEvent.Type.FocusOut):
@@ -342,5 +401,5 @@ def attach_tooltip(widget: QWidget, text: Callable[[], str] | str,
 
 
 __all__ = [
-    "PopupSurface", "TooltipManager", "attach_tooltip",
+    "PopupSurface", "TooltipManager", "attach_tooltip", "tooltip_position",
 ]

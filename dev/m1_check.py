@@ -236,11 +236,10 @@ popover.resize(240, 460)
 settle(400)
 editor = popover.editor
 assert editor.width() <= 240, editor.width()
-assert_inline(editor.radius_field, editor, "Radius")
+assert not hasattr(editor, "radius_field"), "radius lives under Border only"
 editor._on_side_selected("top")
 settle(300)
-assert editor.side_radius.isVisible()
-assert_inline(editor.side_radius, editor, "Radius")
+assert not hasattr(editor, "side_radius")
 print("BORDER editor", editor.width(), "popover", popover.width())
 print("AFTER BORDER animations", list(
     (tab._working_theme.get("animations") or {}).keys()))

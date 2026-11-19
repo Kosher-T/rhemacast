@@ -123,6 +123,23 @@ body, html {
     background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
 }
 
+/* Border shadow — the shadow of the border layer's shape, painted on the
+   canvas.
+
+   The host is a *sibling* of the container, not a child: `overflow: hidden`
+   clips every descendant, so a child's shadow could never paint outside the
+   container's bounds. It carries no paint of its own — only the shadow of the
+   rectangle inset by `border_padding` and shaped by `border_radius`, which
+   the renderer writes inline. It is inserted before the container, so DOM
+   order paints it under the container and above the stage background. */
+.rc-border-shadow {
+    position: absolute;
+    box-sizing: border-box;
+    background: transparent;
+    border: 0;
+    pointer-events: none;
+}
+
 /* Legacy v1 absolute panels (#ct-text/#ct-reference/#ct-translation) place
    their text by canvas coordinates and have no layer of their own, so they
    keep the ring and fill on the element itself. */
@@ -376,6 +393,14 @@ function resetTheme() {
             layer.removeAttribute("style");
             layer.innerHTML = "";
         }
+        // Border shadow hosts are siblings of their container, so a reset
+        // that only cleared the container would leave one painted on the
+        // canvas.
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+            document.querySelectorAll(".rc-border-shadow").forEach(
+                el => el.remove());
+            container.__rcBorderShadow = null;
+        }
     }
     const verseContent = document.getElementById("verse-content");
     if (verseContent && verseRef && verseText) {
@@ -496,6 +521,115 @@ function _paintLength(value, axis, fallback) {
     return resolved == null ? fallback : (resolved + "px");
 }
 
+function _boxShadowCss(value) {
+    if (value == null) return "none";
+    if (typeof value === "object") {
+        return (value.inset ? "inset " : "") + (value.x || 0) + "px "
+            + (value.y || 0) + "px " + (value.blur || 0) + "px "
+            + (value.spread || 0) + "px " + (value.color || "rgba(0,0,0,0.5)");
+    }
+    const text = String(value).trim();
+    if (!text || text === "none" || text === "off") return "none";
+    return text;
+}
+
+// A container background with no paint at all: absent, "none", "transparent"
+// or a colour whose alpha is 0. This is the same rule the Designer's paint
+// field uses to show its "None" state, so the row that is visible is the
+// shadow that paints.
+function _backgroundIsNone(value) {
+    if (value == null) return true;
+    const text = String(value).trim().toLowerCase();
+    if (!text || text === "none" || text === "transparent") return true;
+    const fn = text.match(/^rgba?\(([^)]+)\)$/);
+    if (fn) {
+        const parts = fn[1].split(/[,/ ]+/).filter(p => p.length > 0);
+        return parts.length > 3 && parseFloat(parts[3]) === 0;
+    }
+    const hex = text.match(/^#([0-9a-f]{4}|[0-9a-f]{8})$/);
+    if (hex) {
+        const digits = hex[1];
+        const alpha = digits.length === 4 ? digits.slice(3) : digits.slice(6);
+        return parseInt(alpha, 16) === 0;
+    }
+    return false;
+}
+
+function _borderShadowHost(el) {
+    const host = el && el.__rcBorderShadow;
+    if (host && host.parentElement === el.parentElement) return host;
+    return null;
+}
+
+function _ensureBorderShadowHost(el) {
+    let host = _borderShadowHost(el);
+    if (host) return host;
+    const parent = el ? el.parentElement : null;
+    if (!parent || typeof document === "undefined"
+        || typeof document.createElement !== "function") return null;
+    host = document.createElement("div");
+    host.className = "rc-border-shadow";
+    host.setAttribute("aria-hidden", "true");
+    // A sibling of the container, never a child: `overflow: hidden` clips
+    // every descendant, so a child's shadow could never reach the canvas.
+    parent.insertBefore(host, el);
+    host.__rcOwner = el;
+    el.__rcBorderShadow = host;
+    return host;
+}
+
+function _syncBorderShadow(el, c, canvasW) {
+    const host = _ensureBorderShadowHost(el);
+    if (!host) return;
+    // Exactly one shadow paints: the container's owns a filled rectangle, the
+    // border's owns the border shape. A hidden shadow is never painted.
+    const value = _backgroundIsNone(c.container_background)
+        ? _boxShadowCss(c.border_shadow) : "none";
+    if (value === "none" || !el.offsetWidth || !el.offsetHeight) {
+        host.style.display = "none";
+        host.style.boxShadow = "none";
+        return;
+    }
+    host.style.display = "block";
+    const bp = _resolveLength(c.border_padding, canvasW);
+    const gap = (bp == null || bp < 0) ? 0 : bp;
+    // Same rect as the border layer: inset by `border_padding`, shaped by the
+    // radius. The shadow itself paints outside it, onto the canvas.
+    host.style.position = "absolute";
+    host.style.left = (el.offsetLeft + gap) + "px";
+    host.style.top = (el.offsetTop + gap) + "px";
+    host.style.width = Math.max(0, el.offsetWidth - gap * 2) + "px";
+    host.style.height = Math.max(0, el.offsetHeight - gap * 2) + "px";
+    host.style.borderRadius = _containerRadius(c, canvasW);
+    host.style.boxShadow = value;
+    host.style.visibility = el.classList.contains("hidden") ? "hidden" : "";
+}
+
+function _scheduleBorderShadowSync(el, c, canvasW) {
+    if (typeof requestAnimationFrame !== "function") return;
+    if (el.__rcShadowFrame) return;
+    el.__rcShadowFrame = requestAnimationFrame(function () {
+        el.__rcShadowFrame = null;
+        _syncBorderShadow(el, c, canvasW);
+    });
+}
+
+function _syncBorderShadowVisibility() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return;
+    Array.prototype.forEach.call(
+        document.querySelectorAll(".rc-border-shadow"), function (host) {
+            const el = host.__rcOwner;
+            const hidden = !el || !el.parentElement
+                || el.classList.contains("hidden")
+                || el.style.display === "none";
+            if (hidden) {
+                host.style.visibility = "hidden";
+            } else if (host.style.display !== "none") {
+                host.style.visibility = "";
+            }
+        });
+}
+
 function _applyContainerPaint(el, c, canvasW) {
     if (!el || !el.style || !c) return;
     // 1. Outer fill: exactly the assigned rectangle, square corners. When
@@ -503,19 +637,13 @@ function _applyContainerPaint(el, c, canvasW) {
     el.style.background = resolveBackground(c.container_background);
     el.style.border = "0";
     el.style.borderRadius = "0";
-    // Shadow and backdrop stay on the container: an element's own shadow is
-    // not clipped by its own overflow, a child's would be.
-    if (c.box_shadow && c.box_shadow !== "none") {
-        let bs = c.box_shadow;
-        if (typeof bs === "object" && bs) {
-            bs = (bs.inset ? "inset " : "") + (bs.x || 0) + "px " + (bs.y || 0)
-                + "px " + (bs.blur || 0) + "px " + (bs.spread || 0) + "px "
-                + (bs.color || "rgba(0,0,0,0.5)");
-        }
-        el.style.boxShadow = bs;
-    } else {
-        el.style.boxShadow = "none";
-    }
+    // Shadows follow what is visible. A filled container is a rectangle, so
+    // the container shadow paints and the border shadow does not; with no
+    // container background the border shape owns the shadow instead. Both
+    // stay on the canvas: the container shadow on the element itself, the
+    // border shadow on a sibling host (a descendant would be clipped).
+    el.style.boxShadow = _backgroundIsNone(c.container_background)
+        ? "none" : _boxShadowCss(c.box_shadow);
     if (c.backdrop_filter && c.backdrop_filter !== "none") {
         el.style.backdropFilter = c.backdrop_filter;
     } else {
@@ -538,6 +666,8 @@ function _applyContainerPaint(el, c, canvasW) {
     _applyBorder(layer, c.border);
     layer.style.background = resolveBackground(c.background);
     layer.style.borderRadius = _containerRadius(c, canvasW);
+    _syncBorderShadow(el, c, canvasW);
+    _scheduleBorderShadowSync(el, c, canvasW);
 }
 
 function _computePosition(pos, width, height, canvasW, canvasH) {
@@ -1684,6 +1814,7 @@ function _autoFitPanels() {
 function _renderMultiContainers(data) {
     const stg = document.getElementById("stage") || document.body;
     if (container) container.style.display = "none";
+    _syncBorderShadowVisibility();
     const refText = data.reference || (data.book && data.chapter && data.verse
         ? data.book + " " + data.chapter + ":" + data.verse : "");
     const canvasW = (_currentTheme && _currentTheme.canvas && _currentTheme.canvas.width) || 1920;
@@ -4278,6 +4409,8 @@ function _setContainersHidden(hidden) {
             el.classList.toggle("hidden", !!hidden);
         });
     }
+    // A cloaked container must take its border shadow with it.
+    _syncBorderShadowVisibility();
 }
 
 function _sustainTargets(theme) {
@@ -4429,6 +4562,7 @@ function handlePayload(data, silent) {
             if (typeof document !== "undefined" && document.querySelectorAll) {
                 document.querySelectorAll(".rc-dynamic-container").forEach(el => el.classList.add("hidden"));
             }
+            _syncBorderShadowVisibility();
             _prevPayload = null;
             return;
         }
@@ -4438,6 +4572,7 @@ function handlePayload(data, silent) {
             if (typeof document !== "undefined" && document.querySelectorAll) {
                 document.querySelectorAll(".rc-dynamic-container").forEach(el => el.classList.add("hidden"));
             }
+            _syncBorderShadowVisibility();
             _cancelAllAnimations();
         });
         _prevPayload = null;

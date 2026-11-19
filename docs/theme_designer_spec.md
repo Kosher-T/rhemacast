@@ -86,6 +86,12 @@ Each container has:
   backdrop-filter, box-shadow
 - Padding (content inset via `body.padding`)
 
+The Container page arranges these in tiers — group headings, parameter rows,
+and subparameters tucked under the parameter they refine. The rules, the
+finished layout and the old → new label map are in
+`docs/PANEL_ORGANIZATION.md`; any change to the page's structure belongs there
+first.
+
 ### Transform Controls
 Containers are directly manipulable in the preview viewport:
 
@@ -110,7 +116,13 @@ Every numeric control in the Designer — Canvas, Container, Blocks, the right-p
 - Typed or pasted values clamp when committed (Enter or focus loss), never mid-keystroke.
 - Arrow keys, wheel and Shift/Alt coarse/fine steps all clamp the same way.
 - Hitting a bound tints the field border for a moment; the tooltip always states the active range in the active unit.
-- `min_width`/`min_height` and their `max_*` siblings cross-limit each other: the lower field cannot pass the upper one and vice versa. The comparison converts between the two fields' units through the live canvas. Clearing the max (nullable) releases that constraint.
+- `min_width`/`min_height` and their `max_*` siblings bound each other, but the
+  bound moves instead of the field being clamped: raising Min above Max raises
+  Max, lowering Max below Min lowers Min. Width/Height clamp between them only
+  on their own edit, and only same-unit values are compared (a `%`, `auto` or
+  unset bound is skipped). Clearing the max (nullable) releases that
+  constraint. There is no dynamic-bound provider here — a provider clamps the
+  field being edited, which cannot express "raising Min raises Max".
 - Switching px ↔ % converts through the canvas so the rendered size is unchanged, then clamps. A `0px` ↔ `0%` switch renders identically and does not mark the theme dirty.
 
 **Units.** A parameter with one authored mode shows its unit as plain, non-interactive text where a dropdown would sit (no chevron, no hover state). A dropdown appears only when there is a real choice — `px`/`%` for lengths, `px`/`em` for typography, or a keyword such as `auto` alongside real units.
@@ -420,27 +432,36 @@ Status key:
 
 ### 9.7 Containers
 
+The Container page is organized in tiers (headings, parameters, nested
+subparameters); `docs/PANEL_ORGANIZATION.md` holds the layout, the old → new
+label map and the rules. Rows below name the heading and the nesting.
+
+A control that still changes the render is never disabled
+(`docs/PANEL_ORGANIZATION.md` §3, decision 6): `Border = none` removes the
+outline stroke only, so Fill, Pad, Radius and Border shadow stay editable.
+
 | Key | Status | Where / note |
 |---|---|---|
-| `id` | preserve-only | Permanent container key; not shown as a field. Auto-generated for new containers. Renaming is not supported. |
-| `label` | editable | Container page. |
+| `id` | editable | The container's one name, renamed through the selector's **Rename** action (validated `^[a-z][a-z0-9_-]{0,31}$`, trimmed, unique; a refusal shows its reason inline). A rename rewrites every reference in one atomic revision. New containers derive it from the typed name. |
+| `label` | preserve-only | No row. The stored field keeps its value (the canvas badge reads it) and follows a rename only when it was empty or equal to the old id. |
 | `kind` | preserve-only | Authoring metadata; the renderer does not filter by it, so the control is hidden and the value is kept. |
 | `layer` | editable | Container page and workspace. |
 | `visible` | editable | Container page and workspace. |
 | `position` | editable | Workspace anchor + X/Y fields and canvas drag. |
-| `width` | editable | Workspace geometry field and canvas resize. |
-| `height` | editable | Workspace geometry field and canvas resize. |
-| `min_width` | editable | Container page. |
-| `max_width` | editable | Container page, nullable. |
-| `min_height` | editable | Container page. |
-| `max_height` | editable | Container page, nullable. |
-| `container_background` | editable | Container page, paint field. Fills the whole assigned rectangle with square corners, painted under the border fill. |
-| `background` | editable | Container page, paint field ("Border fill"). Painted inside the border shape, following `border_radius` and `border_padding`. |
-| `border` | editable | Container page, border editor (none / structured / shared reference). |
-| `border_padding` | editable | Container page, px length 0–400 (default 0). Gap between the container edge and the border's outer edge; never changes the container's size. |
-| `border_radius` | editable | Container page, nullable length; wins over `border.radius`. Rounds the border shape only, never the container rectangle. |
-| `box_shadow` | editable | Container page, shadow editor (layers, shared reference). |
-| `backdrop_filter` | editable | Container page, free-text field. The function list and ranges are raw CSS grammar; there is no per-function UI. |
+| `width` | editable | Workspace geometry field, canvas resize, and Container page (Size ▸ Width). |
+| `height` | editable | Workspace geometry field, canvas resize, and Container page (Size ▸ Height). |
+| `min_width` | editable | Container page, Size ▸ Width ▸ Min (subparameter). |
+| `max_width` | editable | Container page, Size ▸ Width ▸ Max (subparameter), nullable. |
+| `min_height` | editable | Container page, Size ▸ Height ▸ Min (subparameter). |
+| `max_height` | editable | Container page, Size ▸ Height ▸ Max (subparameter), nullable. |
+| `container_background` | editable | Container page, Fill heading, paint field. Fills the whole assigned rectangle with square corners, painted under the border fill. |
+| `background` | editable | Container page, Border ▸ Fill (subparameter, always live). Painted inside the border shape, following `border_radius` and `border_padding`; `Border = none` removes only the outline stroke. |
+| `border` | editable | Container page, Border heading, border editor (none / structured / shared reference). |
+| `border_padding` | editable | Container page, Border ▸ Pad (subparameter, always live), px length 0–400 (default 0). Gap between the container edge and the border's outer edge; never changes the container's size. |
+| `border_radius` | editable | Container page, Border ▸ Radius (Tier-3 subparameter after Pad), nullable length; wins over `border.radius`. Rounds the border shape only, never the container rectangle. The only radius control in the designer. |
+| `box_shadow` | editable | Container page, Effects ▸ Shadow (layers, shared reference), the shadow of the container rectangle. Hidden (value kept) while `container_background` has no paint. |
+| `border_shadow` | editable | Container page, Border ▸ Border shadow (layers, shared reference), the shadow of the border layer's shape: it follows Pad and Radius and paints on the canvas, outside the container, so `overflow: hidden` cannot clip it. Hidden (value kept) while `container_background` paints. Default `none`. |
+| `backdrop_filter` | editable | Container page, Effects ▸ Backdrop: a blur radius in px (0–60). Any other function already stored (`saturate`, `brightness`, …) is preserved verbatim; clearing the blur keeps them, and "None" writes `none`. Tooltip: *Blurs whatever is behind this container. Needs a semi-transparent fill to be visible.* |
 | `opacity` | editable | Container page. |
 | `overflow` | editable | Container page, chips. |
 | `animation` | editable | Container 0 only; see §9.5. |
@@ -465,12 +486,12 @@ Status key:
 | `border.width` | editable | Border editor. |
 | `border.style` | editable | Border editor. |
 | `border.color` | editable | Border editor (palette aware). |
-| `border.radius` | editable | Border editor. |
+| `border.radius` | preserve-only | Superseded by `border_radius` (Border ▸ Radius), which wins in the renderer. Carried through untouched; the Border popup no longer offers it. |
 | `border.sides` | editable | Border editor, per-side overrides. |
 | `border.sides.<top\|right\|bottom\|left>.width` | editable | Border editor. |
 | `border.sides.<top\|right\|bottom\|left>.style` | editable | Border editor. |
 | `border.sides.<top\|right\|bottom\|left>.color` | editable | Border editor. |
-| `border.sides.<top\|right\|bottom\|left>.radius` | editable | Border editor. |
+| `border.sides.<top\|right\|bottom\|left>.radius` | preserve-only | Per-side radius is not painted (each side applies width/style/color only) and is no longer offered in the Border editor. |
 | `{"shared": "name"}` border reference | editable | Border editor, Shared mode; the shared entry itself is preserve-only (§9.12). |
 
 ### 9.10 `box_shadow`
