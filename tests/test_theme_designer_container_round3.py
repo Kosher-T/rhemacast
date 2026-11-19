@@ -226,8 +226,8 @@ def test_radius_is_a_border_subparameter_after_pad(qapp):
     editor = _editor(qapp)
     headings = [section.header._title for section in _sections(editor)]
     assert "Shape" not in headings
-    assert headings == ["Identity", "Visibility", "Size", "Fill", "Border",
-                        "Effects"]
+    assert headings == ["Identity", "Visibility", "Size", "Position", "Fill",
+                        "Border", "Effects"]
     assert [row.label() for row in _groups(editor)["border.options"].sub_rows()] \
         == ["Fill", "Pad", "Radius", "Border shadow"]
     editor.close()

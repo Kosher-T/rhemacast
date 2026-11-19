@@ -44,10 +44,14 @@ class AnchorPicker(QWidget):
 
     def __init__(self, value: Any = "center", *,
                  allow_fill: bool = True, cell: int = 22,
+                 dormant: bool = False,
                  accessible_name: str = "Anchor", parent=None):
         super().__init__(parent)
         self._value = str(value or "center")
         self._allow_fill = bool(allow_fill)
+        #: A dormant grid may show no selection at all: the pin is free, and
+        #: clicking a cell is what wakes the alignment again.
+        self._dormant = bool(dormant)
         self._cell = int(cell)
         self._hover: Optional[str] = None
         self._focus_index = 0
@@ -63,8 +67,18 @@ class AnchorPicker(QWidget):
     def value(self) -> str:
         return self._value
 
+    def clear(self) -> None:
+        """Show no selection. Only a dormant grid can be cleared."""
+        if not self._dormant or not self._value:
+            return
+        self._value = ""
+        self.update()
+
     def set_value(self, value: Any, *, emit: bool = False) -> None:
         text = str(value or "").strip()
+        if text == "" and self._dormant:
+            self.clear()
+            return
         if text not in ANCHORS or (text == "fill" and not self._allow_fill):
             return
         if text == self._value:

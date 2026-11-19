@@ -274,11 +274,15 @@ class ContainerWorkspace(QWidget):
 
     def _boxes(self) -> list[ContainerBox]:
         size = self._canvas()
+        containers = self._containers()
+        # One scene pass: a tied box is drawn where its target puts it.
+        scene = geometry.resolve_scene(containers, size)
         boxes = []
-        for container in self._containers():
+        for container in containers:
             if not isinstance(container, dict):
                 continue
-            rect = geometry.container_rect(container, size)
+            rect = scene.get(str(container.get("id", ""))) \
+                or geometry.container_rect(container, size)
             boxes.append(ContainerBox(
                 id=str(container.get("id", "")),
                 label=str(container.get("label", "")),
@@ -319,11 +323,36 @@ class ContainerWorkspace(QWidget):
                 widget.setEnabled(enabled)
             if container is None:
                 return
-            anchor = geometry._anchor(container)
-            fill = anchor == "fill"
-            self.anchor_field.set_value(anchor)
-            self.x_field.set_value(geometry.offset_value(container, "x"))
-            self.y_field.set_value(geometry.offset_value(container, "y"))
+            model = geometry.position_model(container.get("position"))
+            # Only a legacy `fill` container has a geometry the fields cannot
+            # express; a pinned or tied one always has an editable pin.
+            fill = False
+            if model is not None:
+                # A pin-model container shows the pin, not the legacy offsets:
+                # x/y are where the pin goes (docs/PANEL_ORGANIZATION.md §3).
+                canvas = model.get("canvas") if isinstance(
+                    model.get("canvas"), dict) else {}
+                edge = model.get("edge") if isinstance(
+                    model.get("edge"), dict) else {}
+                on_edge = str(model.get("mode") or "canvas") == "edge"
+                anchor = (edge.get("anchor") if on_edge
+                          else canvas.get("anchor")) or "top_left"
+                ax, ay = geometry.fractions(anchor)
+                rect = geometry.container_rect(container, self._canvas(),
+                                              self._containers())
+                self.anchor_field.set_value(anchor)
+                self.x_field.set_value(
+                    geometry._clean(rect["x"] + ax * rect["width"])
+                    if on_edge else canvas.get("x", 0))
+                self.y_field.set_value(
+                    geometry._clean(rect["y"] + ay * rect["height"])
+                    if on_edge else canvas.get("y", 0))
+            else:
+                anchor = geometry._anchor(container)
+                fill = anchor == "fill"
+                self.anchor_field.set_value(anchor)
+                self.x_field.set_value(geometry.offset_value(container, "x"))
+                self.y_field.set_value(geometry.offset_value(container, "y"))
             self.width_field.set_value(geometry.size_value(container, "width"))
             self.height_field.set_value(geometry.size_value(container, "height"))
             self.layer_field.set_value(int(container.get("layer") or 0))
@@ -383,6 +412,15 @@ class ContainerWorkspace(QWidget):
             return
         index = self._index(self._selected_id)
         if self._document is not None and index >= 0:
+            if geometry.position_model(container.get("position")) is not None \
+                    and path in ("position.anchor", "position.x",
+                                 "position.y"):
+                self._write_model_position(container, index, path, value)
+                self._theme = self._document.snapshot()
+                self._sync_canvas()
+                self._sync_fields()
+                self._emit()
+                return
             if path == "position.anchor":
                 self._document.set(
                     ("containers", index, "position", "anchor"), value,
@@ -431,6 +469,43 @@ class ContainerWorkspace(QWidget):
         self._sync_canvas()
         self._sync_fields()
         self._emit()
+
+    def _write_model_position(self, container: dict, index: int, path: str,
+                              value: Any) -> None:
+        """Apply a geometry field to a pin-model container.
+
+        The anchor combo pins that point of the box to that canvas point (the
+        same thing the panel's grid does). X/Y move the pin through the drag
+        writer, which knows how each mode turns a rectangle into a pin. Fill
+        drops the model so the legacy stretch keyword applies again.
+        """
+        assert self._document is not None
+        canvas_size = self._canvas()
+        if path == "position.anchor":
+            payload = copy.deepcopy(container.get("position"))
+            if value == "fill":
+                for key in ("canvas", "edge", "mode"):
+                    payload.pop(key, None)
+                self._document.set(("containers", index, "position"),
+                                   payload or None, source=self)
+                return
+            ax, ay = geometry.fractions(value)
+            canvas = payload.get("canvas")
+            canvas = dict(canvas) if isinstance(canvas, dict) else {}
+            canvas.update({"aligned": value, "anchor": value,
+                           "x": ax * canvas_size[0],
+                           "y": ay * canvas_size[1]})
+            payload["mode"] = "canvas"
+            payload["canvas"] = canvas
+            self._document.set(("containers", index, "position"), payload,
+                               source=self)
+            return
+        axis = path.split(".")[-1]
+        rect = dict(geometry.container_rect(container, canvas_size,
+                                            self._containers()))
+        total = canvas_size[0] if axis == "x" else canvas_size[1]
+        rect[axis] = geometry.resolve_length(value, total, 0.0)
+        self._document.set_container_rect(self._selected_id, rect, source=self)
 
     def _on_visible_switch(self, value: bool) -> None:
         self._write("visible", bool(value))

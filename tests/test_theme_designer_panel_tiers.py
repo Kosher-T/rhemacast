@@ -107,16 +107,19 @@ def _inside_heading(row, editor):
 
 
 # ── tier 1: headings ────────────────────────────────────────────────────────
-def test_container_page_opens_with_six_group_headings(qapp):
+def test_container_page_opens_with_seven_group_headings(qapp):
     editor = _editor(qapp)
     sections = _sections(editor)
     # Shape is gone: Radius shapes the border layer, so it is a Border
-    # subparameter now (round 3, decision 2).
+    # subparameter now (round 3, decision 2). Position is new in round 4 and
+    # sits between Size and Fill.
     assert [section.header._title for section in sections] == [
-        "Identity", "Visibility", "Size", "Fill", "Border", "Effects",
+        "Identity", "Visibility", "Size", "Position", "Fill", "Border",
+        "Effects",
     ]
     assert [section.state_key for section in sections] == [
-        "identity", "visibility", "size", "fill", "border", "effects",
+        "identity", "visibility", "size", "position", "fill", "border",
+        "effects",
     ]
     assert all(not section.body.isHidden() for section in sections)
     editor.close()
@@ -180,14 +183,17 @@ def test_parameter_labels_share_one_grid(qapp):
     qapp.processEvents()
 
     sub_ids = _sub_row_ids(editor)
+    # Only the rows the operator can see: the Position section swaps its
+    # canvas rows for its edge rows, and a hidden row has no geometry.
+    visible = [row for row in _rows(editor) if row.isVisibleTo(editor)]
     parameter_x = {
         row._label.mapTo(editor._host, row._label.rect().topLeft()).x()
-        for row in _rows(editor)
+        for row in visible
         if not row._full_width and id(row) not in sub_ids
     }
     sub_x = {
         row._label.mapTo(editor._host, row._label.rect().topLeft()).x()
-        for row in _rows(editor)
+        for row in visible
         if not row._full_width and id(row) in sub_ids
     }
     assert len(parameter_x) == 1
@@ -277,6 +283,9 @@ def test_every_control_is_still_reachable(qapp):
         "containers.0.border_shadow",
         "containers.0.box_shadow",
         "containers.0.backdrop_filter",
+        "containers.0.position.mode",
+        "containers.0.position.canvas",
+        "containers.0.position.edge",
     }
     editor.close()
 

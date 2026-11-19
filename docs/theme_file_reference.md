@@ -312,7 +312,7 @@ border visible. A container with no border width skips the track.
 | `kind` | enum | theme kind | `scripture`, `freeform`, or `any`. Which blocks are legal is decided by the **theme** kind. |
 | `layer` | integer | `index * 10` | 0–100. Paint/render order. |
 | `visible` | boolean | `true` | Hidden containers are not painted. Freeform renders only its first visible container; later visible containers are forced hidden. |
-| `position` | object | `{anchor:"center"}` | See §5.1. |
+| `position` | object | `{anchor:"center"}` | Anchor, offsets, and the optional pin model. See §5.1. |
 | `width` | length | `"auto"` | px, `%`, or `"auto"`. |
 | `height` | length | `"auto"` | px, `%`, or `"auto"`. |
 | `min_width` | length | `0` | px or `%`, 0–7680. |
@@ -417,6 +417,59 @@ Anchor placement, with canvas `W×H` and container `w×h`:
 `fill` ignores `width`, `height`, `x`, and `y` with a warning. Percentages use
 the design canvas (`canvas.width` / `canvas.height`). “Given” means the key is
 present and not `null`; an explicit `0` counts.
+
+#### 5.1.1 Pin model (round 4)
+
+A second, additive model lives in the same object. A container picks **one of
+nine points of its own box** (the pin) and says where on the canvas that pin
+goes; resizing then grows the box around the pin. The nine points are
+`top_left`, `top`, `top_right`, `left`, `center`, `right`, `bottom_left`,
+`bottom`, `bottom_right` (`theme_schema.POSITION_POINTS`) with fractions
+`(0|0.5|1, 0|0.5|1)`.
+
+| Property | Type | Default | Rules |
+|---|---|---|---|
+| `mode` | enum | `canvas` | `canvas` or `edge`. Only the active mode's payload drives rendering. Present only once the model is used. |
+| `canvas` | object | absent | `{aligned, anchor, x, y}`. |
+| `canvas.aligned` | point / null | `null` | One of the nine points: the pin sits on that canvas point and follows a canvas resize. `null` means the pin is the free `x`/`y`. |
+| `canvas.anchor` | point | `top_left` | Which point of the box is the pin. |
+| `canvas.x` | number | `0` | px, −10000–10000, may be negative or beyond the canvas. The pin's x when `aligned` is null. |
+| `canvas.y` | number | `0` | Same, vertically. |
+| `edge` | object | absent | `{anchor, edge, d, unit, target}`. |
+| `edge.anchor` | point | `top_left` | Which point of the box is the pin; it decides the axis the distance does **not** govern. |
+| `edge.edge` | enum | `left` | `top`, `bottom`, `left`, `right`. Which canvas edge `d` is measured from. |
+| `edge.d` | number | `0` | −10000–10000. Positive is inward from the edge, negative is outward (overlap allowed). |
+| `edge.unit` | enum | `px` | `px` or `percent`. A percent is of the tied axis: canvas **width** for `left`/`right`, canvas **height** for `top`/`bottom`. |
+| `edge.target` | string | `canvas` | Reserved. Only `canvas` is meaningful today; another container's id is preserved for a later release, and no picker exists for it. |
+
+Resolution, in floats (rounded once at paint), with canvas `W×H`, the box's
+rendered `w×h` **after Min/Max**, and the anchor's fractions `ax, ay`:
+
+| State | Pin | Origin |
+|---|---|---|
+| `canvas`, `aligned` set | `(aligned_x·W, aligned_y·H)` | `pin − (ax·w, ay·h)` |
+| `canvas`, `aligned` null | `(x, y)` | `pin − (ax·w, ay·h)` |
+| `edge` = `left` | `(d, ay·H)` | `pin − (ax·w, ay·h)` |
+| `edge` = `right` | `(W − d, ay·H)` | same |
+| `edge` = `top` | `(ax·W, d)` | same |
+| `edge` = `bottom` | `(ax·W, H − d)` | same |
+
+Nothing is ever clamped: a negative or off-canvas origin is a valid position.
+The resolver is `container_geometry.resolve_origin` in Python and
+`_modelPosition` in `display/display.js` (and in the JS mirror embedded in
+`ui/widgets/display_view.py`); the three are kept identical by
+`tests/test_theme_designer_position.py`, which runs one case table through all
+of them.
+
+**Compatibility.** Both payloads are optional and the legacy `anchor`/`x`/`y`
+keys are never removed, so no `schema_version` bump is needed: a file written
+before round 4 is a file without the payload, and a renderer that predates it
+falls back to the anchor table above. Loading never writes the model. The
+Theme Designer derives the panel's starting state from the rectangle a legacy
+container paints today (pin `top_left`, `aligned` null, `x`/`y` = that
+rectangle's origin) and stores the model on the first position edit, so a
+legacy container keeps its old anchor behaviour — including tracking a
+container resize — until the operator places it.
 
 ### 5.2 `border`
 

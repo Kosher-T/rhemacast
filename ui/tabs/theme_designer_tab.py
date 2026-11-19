@@ -308,6 +308,10 @@ class ThemeDesignerTab(QWidget):
         # ── Disk-change notice (hidden until the watcher has something to say) ──
         self._notice = NoticeBar(self)
         root_layout.addWidget(self._notice)
+        # Document-level messages (a deleted tie target, say) share the bar.
+        self._document.noticed.connect(
+            lambda text: self._notice.show_notice(
+                text, [("Dismiss", self._notice.dismiss)]))
 
         # ── Separator ──
         sep = QFrame()

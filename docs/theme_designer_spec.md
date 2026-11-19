@@ -447,7 +447,7 @@ outline stroke only, so Fill, Pad, Radius and Border shadow stay editable.
 | `kind` | preserve-only | Authoring metadata; the renderer does not filter by it, so the control is hidden and the value is kept. |
 | `layer` | editable | Container page and workspace. |
 | `visible` | editable | Container page and workspace. |
-| `position` | editable | Workspace anchor + X/Y fields and canvas drag. |
+| `position` | editable | Container page, **Position** heading (round 4): mode switch, 3×3 align grid, pin point, pin X/Y, edge distance; plus the workspace anchor + X/Y fields and the canvas drag/resize. See §9.7.1. |
 | `width` | editable | Workspace geometry field, canvas resize, and Container page (Size ▸ Width). |
 | `height` | editable | Workspace geometry field, canvas resize, and Container page (Size ▸ Height). |
 | `min_width` | editable | Container page, Size ▸ Width ▸ Min (subparameter). |
@@ -467,7 +467,31 @@ outline stroke only, so Fill, Pad, Radius and Border shadow stay editable.
 | `animation` | editable | Container 0 only; see §9.5. |
 | `blocks` | editable | Blocks page. |
 | legacy `padding` / `display` / `flex_direction` / `justify_content` / `align_items` | preserve-only | Not v2 parameters; the editor never writes them and the validator ignores them. |
+| `position.mode` | editable | `canvas` or `edge`; only the active payload drives rendering. |
+| `position.canvas` | editable | `{aligned, anchor, x, y}` — the pin sits on an aligned canvas point (and follows a canvas resize) or on a free `x`/`y`. |
+| `position.edge` | editable | `{anchor, edge, d, unit, target}` — one axis is a distance in from a canvas edge, the other follows the anchor. `target` is reserved and preserve-only. |
 | legacy container `x` / `y` | preserve-only | v1 shape; migration moves them into `position`. |
+
+### 9.7.1 The Position heading (round 4)
+
+The heading sits between Size and Fill and holds one pin per container:
+
+| Row | Control | Rule |
+|---|---|---|
+| Mode | `SegmentedToggle` Canvas / Edge, full width | Only the active mode's rows are shown. The other payload stays in the file. |
+| Align | 3×3 `AnchorPicker` (no Fill row), inline | Clicking a cell sets `canvas.aligned`, `canvas.anchor` and `canvas.x/y` to that canvas point. The grid is **dormant** (no selection) whenever `aligned` is null. |
+| Point | compact dropdown of the nine points, full width | The pin point: sets `canvas.anchor` (or `edge.anchor` in edge mode) and clears `aligned`. |
+| X / Y | two number fields, inline | The pin's coordinates. Editing either clears `aligned`. Shown as the **derived** canvas point while aligned, so they follow a canvas resize. Both stay enabled in every state. |
+| Edge | compact dropdown Top / Bottom / Left / Right, full width | Edge mode only. Switches which canvas edge `d` measures from. |
+| X or Y (distance) | one number field with a px / % unit toggle, inline | Edge mode only; the row is labelled for the tied axis. Negative values are allowed. |
+
+Rules the panel follows:
+
+- **Linking.** A grid click is the only thing that sets `aligned`. Editing X, Y, the pin point, or dragging/resizing on the canvas clears it, and the grid goes dormant until the next click.
+- **Mode switch.** No teleport on the tied axis: Canvas → Edge keeps the anchor, uses `left` and sets `d` to the current pin x; Edge → Canvas keeps the anchor, sets `x`/`y` to the current pin and clears `aligned`. The untied axis can move, because in edge mode it follows the anchor.
+- **One edit, one change.** Every edit — including the mode switch — writes the whole `position` object at one path, so the document advances one revision and emits one change.
+- **Legacy.** A container with no payload shows its current rectangle as a top-left pin; the first edit stores the model. Nothing is written on load.
+- The resolver is `container_geometry.resolve_origin` (Python) and `_modelPosition` in both JS renderers; the panel only seeds and displays it.
 
 ### 9.8 `position`
 
@@ -476,7 +500,12 @@ outline stroke only, so Fill, Pad, Radius and Border shadow stay editable.
 | `anchor` | editable | Workspace anchor dropdown. |
 | `x` | editable | Workspace X field / canvas drag. |
 | `y` | editable | Workspace Y field / canvas drag. |
+| `mode` | editable | Container page, Position ▸ Mode (§9.7.1). |
+| `canvas` | editable | Container page, Position ▸ Align / Point / X / Y. |
+| `edge` | editable | Container page, Position ▸ Edge / distance. `edge.target` is reserved (always `canvas` today). |
 | legacy corner booleans (`top_left`, `top_right`, `bottom_left`, `bottom_right`) | preserve-only | Accepted by the validators for v1 files; migration owns them. |
+
+In the workspace, a container that has the pin model shows the **pin** in its X/Y fields and edits the model (the anchor combo pins the same way the grid does; Fill drops the model back to the legacy stretch keyword).
 
 ### 9.9 `border`
 

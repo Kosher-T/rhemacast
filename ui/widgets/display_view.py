@@ -670,8 +670,67 @@ function _applyContainerPaint(el, c, canvasW) {
     _scheduleBorderShadowSync(el, c, canvasW);
 }
 
+// ─── Pin model (round 4) ─────────────────────────────────────────────────
+// A container picks one of nine points of its own box (the pin) and says where
+// on the canvas that pin goes: an aligned canvas point, a free x/y, or a
+// distance in from one canvas edge. Resizing then grows the box around the
+// pin. Files that never used the model have no `canvas`/`edge` payload and
+// keep the legacy arithmetic below, untouched (docs/theme_file_reference §5.3).
+const _RC_POINT_FRACTIONS = {
+    top_left: [0, 0], top: [0.5, 0], top_right: [1, 0],
+    left: [0, 0.5], center: [0.5, 0.5], right: [1, 0.5],
+    bottom_left: [0, 1], bottom: [0.5, 1], bottom_right: [1, 1],
+};
+
+function _pointFraction(point) {
+    return _RC_POINT_FRACTIONS[point] || _RC_POINT_FRACTIONS.top_left;
+}
+
+function _edgeDistance(edge, canvasW, canvasH) {
+    const axis = (edge.edge === "left" || edge.edge === "right")
+        ? canvasW : canvasH;
+    const raw = edge.d != null ? edge.d : 0;
+    if (typeof raw === "number") {
+        return (edge.unit || "px") === "percent" ? axis * raw / 100 : raw;
+    }
+    const resolved = _resolveLength(raw, axis);
+    return resolved == null ? 0 : resolved;
+}
+
+function _modelPosition(pos, width, height, canvasW, canvasH) {
+    const canvas = pos.canvas || {};
+    const edge = pos.edge || {};
+    if ((pos.mode || "canvas") === "edge") {
+        const af = _pointFraction(edge.anchor || canvas.anchor || "top_left");
+        const pinned = edge.edge || "left";
+        const distance = _edgeDistance(edge, canvasW, canvasH);
+        let pinX = af[0] * canvasW;
+        let pinY = af[1] * canvasH;
+        if (pinned === "left") pinX = distance;
+        else if (pinned === "right") pinX = canvasW - distance;
+        else if (pinned === "top") pinY = distance;
+        else if (pinned === "bottom") pinY = canvasH - distance;
+        return { left: pinX - af[0] * width, top: pinY - af[1] * height };
+    }
+    const af = _pointFraction(canvas.anchor || "top_left");
+    let pinX = 0;
+    let pinY = 0;
+    const aligned = _RC_POINT_FRACTIONS[canvas.aligned];
+    if (aligned) {
+        pinX = aligned[0] * canvasW;
+        pinY = aligned[1] * canvasH;
+    } else {
+        pinX = canvas.x != null ? (Number(canvas.x) || 0) : 0;
+        pinY = canvas.y != null ? (Number(canvas.y) || 0) : 0;
+    }
+    return { left: pinX - af[0] * width, top: pinY - af[1] * height };
+}
+
 function _computePosition(pos, width, height, canvasW, canvasH) {
     pos = pos || {};
+    if (pos.canvas || pos.edge) {
+        return _modelPosition(pos, width, height, canvasW, canvasH);
+    }
     let anchor = pos.anchor || "center";
     if (!pos.anchor) {
         if (pos.top_left) anchor = "top_left";
@@ -697,6 +756,130 @@ function _computePosition(pos, width, height, canvasW, canvasH) {
     if (anchor === "right") return { left: canvasW - width - x, top: hasY ? y : centeredY };
     if (anchor === "fill") return { left: 0, top: 0, width: canvasW, height: canvasH };
     return { left: centeredX + x, top: centeredY + y };
+}
+
+// ─── Scene pass: ties between containers (round 5) ───────────────────────
+// One container can stick to a point of another: put B's anchor on point P of
+// A's rectangle, then shift by d along one axis. B is not parented or clipped
+// by A. Every container is resolved once, after its target, so chains work and
+// a shared target costs nothing extra. A tie that cannot be applied (missing
+// target, or a loop in the file) falls back to that container's own canvas
+// arithmetic and is reported in `errors`; nothing is rewritten.
+let _sceneRects = {};
+let _sceneErrors = {};
+
+function _sceneRect(c) {
+    if (!c || c.id == null) return null;
+    return _sceneRects[String(c.id)] || null;
+}
+
+function _containerSize(c, canvasW, canvasH) {
+    let w = _resolveLength(c.width, canvasW);
+    let h = _resolveLength(c.height, canvasH);
+    if (w == null && c.min_width != null) w = _resolveLength(c.min_width, canvasW);
+    if (h == null && c.min_height != null) h = _resolveLength(c.min_height, canvasH);
+    if (w == null) w = canvasW;
+    if (h == null) h = canvasH;
+    if (c.position && (c.position.canvas || c.position.edge)) {
+        // A pinned box is placed by the size it is painted at.
+        const minW = _resolveLength(c.min_width, canvasW);
+        const minH = _resolveLength(c.min_height, canvasH);
+        const maxW = _resolveLength(c.max_width, canvasW);
+        const maxH = _resolveLength(c.max_height, canvasH);
+        if (minW != null && w < minW) w = minW;
+        if (minH != null && h < minH) h = minH;
+        if (maxW != null && w > maxW) w = maxW;
+        if (maxH != null && h > maxH) h = maxH;
+    }
+    return { w: w, h: h };
+}
+
+function _tieEdge(position) {
+    if (!position || (position.mode || "canvas") !== "edge") return null;
+    const edge = position.edge;
+    if (!edge || typeof edge !== "object") return null;
+    if (String(edge.target || "canvas") === "canvas") return null;
+    return edge;
+}
+
+function _tieDistance(edge, extent) {
+    const raw = edge.d != null ? edge.d : 0;
+    if (typeof raw !== "number") {
+        const resolved = _resolveLength(raw, extent);
+        return resolved == null ? 0 : resolved;
+    }
+    return (edge.unit || "px") === "percent" ? extent * raw / 100 : raw;
+}
+
+function _tiePosition(edge, target, width, height) {
+    const af = _pointFraction(edge.anchor || "top_left");
+    const tf = _pointFraction(edge.targetPoint || edge.anchor || "top_left");
+    const pointX = target.left + tf[0] * target.width;
+    const pointY = target.top + tf[1] * target.height;
+    const axis = edge.axis || "x";
+    const extent = axis === "x" ? target.width : target.height;
+    const shift = _tieDistance(edge, extent);
+    return { left: pointX - af[0] * width + (axis === "x" ? shift : 0),
+             top: pointY - af[1] * height + (axis === "y" ? shift : 0),
+             width: width, height: height };
+}
+
+function _resolveScene(containers, canvasW, canvasH) {
+    const rects = {};
+    const errors = {};
+    const byId = {};
+    (containers || []).forEach(c => {
+        if (c && typeof c === "object") byId[String(c.id)] = c;
+    });
+    const ids = Object.keys(byId);
+    const sizes = {};
+    const ties = {};
+    ids.forEach(id => {
+        sizes[id] = _containerSize(byId[id], canvasW, canvasH);
+        ties[id] = _tieEdge(byId[id].position);
+    });
+    ids.forEach(id => {
+        const edge = ties[id];
+        if (edge && !byId[String(edge.target)]) {
+            errors[id] = "Target container not found";
+        }
+    });
+    ids.forEach(id => {
+        if (errors[id] || !ties[id]) return;
+        const seen = [];
+        let node = id;
+        while (node != null && byId[node] && seen.indexOf(node) < 0
+               && !errors[node] && ties[node]) {
+            seen.push(node);
+            node = String(ties[node].target);
+        }
+        if (node != null && seen.indexOf(node) >= 0) {
+            seen.slice(seen.indexOf(node)).forEach(m => {
+                if (ties[m] && !errors[m]) errors[m] = "Tie would create a loop";
+            });
+        }
+    });
+    const resolve = id => {
+        if (rects[id]) return rects[id];
+        const size = sizes[id];
+        const edge = ties[id];
+        let rect;
+        if (edge && !errors[id]) {
+            const tied = _tiePosition(edge, resolve(String(edge.target)),
+                                      size.w, size.h);
+            // Only the origin: the paint code keeps its own size handling, so
+            // an `auto` box still autosizes (docs/theme_file_reference.md).
+            rect = {left: tied.left, top: tied.top};
+        } else {
+            const p = _computePosition(byId[id].position, size.w, size.h,
+                                       canvasW, canvasH);
+            rect = {left: p.left, top: p.top};
+        }
+        rects[id] = rect;
+        return rect;
+    };
+    ids.forEach(resolve);
+    return { rects: rects, errors: errors };
 }
 
 function _isNewContainers(ct) {
@@ -828,6 +1011,19 @@ function applyTheme(theme, slideFormat) {
     } else if (theme.containers && typeof theme.containers === "object" && _isNewContainers(theme.containers)) {
         containers = Object.values(theme.containers).filter(c => c && typeof c === "object" && c.visible !== false);
     }
+    // The scene pass needs every container, hidden ones included: a tie to a
+    // hidden container still has geometry (only painting is skipped).
+    let allContainers = [];
+    if (Array.isArray(theme.containers)) {
+        allContainers = theme.containers.filter(c => c && typeof c === "object");
+    } else if (theme.containers && typeof theme.containers === "object") {
+        allContainers = Object.values(theme.containers).filter(c => c && typeof c === "object");
+    }
+    const scene = _resolveScene(allContainers,
+                                (theme.canvas && theme.canvas.width) || 1920,
+                                (theme.canvas && theme.canvas.height) || 1080);
+    _sceneRects = scene.rects;
+    _sceneErrors = scene.errors;
     _currentContainers = containers;
 
     const cont = themeContainer(theme);
@@ -897,9 +1093,21 @@ function applyTheme(theme, slideFormat) {
         if (h == null && c.min_height != null) h = _resolveLength(c.min_height, canvasH);
         if (w == null) w = canvasW;
         if (h == null) h = canvasH;
+        if (c.position && (c.position.canvas || c.position.edge)) {
+            // A pinned box is placed by the size it is painted at.
+            const minW = _resolveLength(c.min_width, canvasW);
+            const minH = _resolveLength(c.min_height, canvasH);
+            const maxW = _resolveLength(c.max_width, canvasW);
+            const maxH = _resolveLength(c.max_height, canvasH);
+            if (minW != null && w < minW) w = minW;
+            if (minH != null && h < minH) h = minH;
+            if (maxW != null && w > maxW) w = maxW;
+            if (maxH != null && h > maxH) h = maxH;
+        }
 
         if (c.position) {
-            const p = _computePosition(c.position, w, h, canvasW, canvasH);
+            const p = _sceneRect(c)
+                || _computePosition(c.position, w, h, canvasW, canvasH);
             container.style.position = "absolute";
             container.style.left = p.left + "px";
             container.style.top = p.top + "px";
@@ -1837,8 +2045,20 @@ function _renderMultiContainers(data) {
         if (h == null && c.min_height != null) h = _resolveLength(c.min_height, canvasH);
         if (w == null) w = canvasW;
         if (h == null) h = canvasH;
+        if (c.position && (c.position.canvas || c.position.edge)) {
+            // A pinned box is placed by the size it is painted at.
+            const minW = _resolveLength(c.min_width, canvasW);
+            const minH = _resolveLength(c.min_height, canvasH);
+            const maxW = _resolveLength(c.max_width, canvasW);
+            const maxH = _resolveLength(c.max_height, canvasH);
+            if (minW != null && w < minW) w = minW;
+            if (minH != null && h < minH) h = minH;
+            if (maxW != null && w > maxW) w = maxW;
+            if (maxH != null && h > maxH) h = maxH;
+        }
 
-        const pos = _computePosition(c.position, w, h, canvasW, canvasH);
+        const pos = _sceneRect(c)
+            || _computePosition(c.position, w, h, canvasW, canvasH);
         el.style.position = "absolute";
         el.style.left = pos.left + "px";
         el.style.top = pos.top + "px";

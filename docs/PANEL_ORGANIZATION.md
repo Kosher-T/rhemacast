@@ -49,6 +49,8 @@ decision 6.
 | `border_shadow` | Subparameter of Border | The shadow of the border layer's shape; meaningless without that shape. |
 | `visible`, `layer`, `opacity` | Parameters | Each stands on its own. |
 | `overflow`, `box_shadow`, `backdrop_filter` | Parameters | Independent effects. `box_shadow` shadows the container rectangle. |
+| `position.mode` | Parameter | Which placement model the container uses; it stands alone. |
+| `position.canvas` / `position.edge` | Parameters under Position | Two answers to the same question (where does the pin go), so they are two rows of one heading rather than two headings. Only the active mode's rows are shown; both payloads stay stored. |
 | `container id` | **Parameter** (Identity) | The container's one name; edited through the selector's Rename. |
 | `label` | Not a control | It only repeated the id; the field is kept in the document, the row is gone (§3). |
 
@@ -187,6 +189,12 @@ Size          Width                            [parameter, chevron, inline]
               └ Min                            [subparameter, default collapsed]
               └ Max                            [subparameter]
               Overflow                         [parameter, stacked]
+Position      Mode                             [parameter, stacked: Canvas / Edge]
+              Align                            [parameter, inline: 3×3 pin grid]
+              Point                            [parameter, stacked: the nine points]
+              Edge                             [parameter, stacked, edge mode only]
+              X / Y                            [parameters, inline; X or Y is the
+                                                edge distance in edge mode]
 Fill          Container bg                     [parameter, stacked paint]
 Border        Border (style)                   [parameter, chevron, stacked,
                                                 default expanded]
@@ -210,6 +218,23 @@ and a per-side "Radius" that wrote `border.radius`, while the container's
 screen. Both are gone (round 3b); a stored `border.radius` is preserved
 untouched and is simply no longer editable there.
 
+**Position (round 4).** The heading holds one pin per container: a point of the
+container's own box, placed on the canvas. Nine points, so resizing grows the
+box around the pin instead of moving it. Two modes — **Canvas** (pin on an
+aligned canvas point or a free x/y) and **Edge** (a distance in from one canvas
+edge) — and both payloads stay in the file so switching back restores them. The
+canvas edges are the single source of the arithmetic
+(`container_geometry.resolve_origin` and `_modelPosition` in both JS
+renderers); the panel only seeds and displays it. A container with no payload
+keeps the legacy anchor arithmetic and is never rewritten on load; its
+rectangle is shown as a top-left pin and the first edit stores the model.
+
+Only the active mode's rows are shown. The 3×3 grid is **dormant** (no
+selection) whenever the pin is free: editing X, Y, the point, or dragging on
+the canvas clears the alignment, and clicking a cell is what sets it again.
+While aligned, X and Y show the derived canvas point and follow a canvas
+resize.
+
 ### Old → new names
 
 Renaming happened only where nesting made the old name redundant. Nothing else
@@ -225,6 +250,7 @@ changed.
 | Max height | **Max** | Size ▸ Height ▸ subparameter |
 | **Label** | **removed** (row only) | Identity; the stored `label` field survives — see decision 4 |
 | Radius | **Radius**, moved | From the Shape heading to Border ▸ subparameter, after Pad |
+| — | **Position** heading | New in round 4, between Size and Fill (`position.mode` / `canvas` / `edge`) |
 | Corner radius (in the Border popup) | **removed** | Duplicate of Radius; it wrote `border.radius`, which the container's `border_radius` overrides — see decision 1 |
 | Container bg, Layer, Visible, Opacity, Overflow, Shadow, Backdrop, Border | unchanged | — |
 | — | **Border shadow** | New Border ▸ subparameter (`border_shadow`) |
@@ -345,6 +371,41 @@ paints, `border_shadow` only while it does not (decision 7).
   and the renderer share one rule: absent, `none`, `transparent`, and a colour
   with alpha 0 all count as no paint.
 
+**8. Position is a pin, and the panel edits exactly one pin.** *Resolved
+(round 4): nine pin points, two modes, one resolver.*
+
+A container had an anchor plus offsets whose meaning changed per keyword: with
+`center` the offsets were measured from the box's centre, with `top_right` from
+its right edge, and `fill` overrode the size entirely. There was no way to say
+"keep this corner where it is" that survived a resize, which is what the 1920×
+1080 clipping bug was really about — position and size disagreeing.
+
+The model is a pin: pick one of nine points of the box, then say where on the
+canvas that point goes. Resizing grows the box around the pin, so a centred
+container stays centred and a flush one stays flush, by construction.
+
+- **Storage is additive.** `position.mode` / `canvas` / `edge` join the legacy
+  `anchor`/`x`/`y`, which are never removed, so no format bump is needed and an
+  older renderer still reads the file. Both mode payloads stay in the file;
+  only `mode` decides what renders.
+- **Legacy files are not rewritten.** With no payload the old anchor
+  arithmetic still runs (a legacy centred panel keeps tracking a resize). The
+  panel shows that rectangle as a top-left pin and stores the model on the
+  first position edit.
+- **One resolver.** `container_geometry.resolve_origin` for the Designer and
+  the canvas, `_modelPosition` in `display/display.js` and in the mirror in
+  `ui/widgets/display_view.py` for the renderers; one case table in
+  `tests/test_theme_designer_position.py` runs through all three.
+- **No clamping anywhere.** Negative and off-canvas pins are valid positions;
+  the operator can hang a panel half off the canvas on purpose.
+- **One edit, one change.** Every edit, including the mode switch, writes the
+  whole `position` object at one path (the same "one undo" rule as decision 4).
+- **Nothing is disabled.** X, Y and the pin point stay live while the grid is
+  aligned; they simply detach the alignment (decision 6).
+- **The workspace follows.** A container with the model shows the pin in its
+  X/Y fields and is moved by the canvas drag through the same writer; selecting
+  Fill in the workspace anchor drops the model so the legacy stretch applies.
+
 The strip's **+** opens a validated one-field dialog. The typed name becomes the
 label; `container_id_from_name` derives the id (lowercase; runs of unsupported
 characters become one `-`; leading/trailing `-`/`_` stripped; a `c-` prefix when
@@ -462,12 +523,18 @@ A refined panel is done when every line is true.
       cannot apply is disabled with a reason the operator can read, and that
       reason matches what the renderer actually does.
 - [ ] **Hidden rows keep their value.** A row hidden by a state rule (the two
-      shadows) round-trips its stored value untouched, and the renderer paints
-      only what the visible row describes.
+      shadows, the inactive position mode) round-trips its stored value
+      untouched, and the renderer paints only what the visible row describes.
+- [ ] **Position is one pin.** The panel shows only the active mode's rows, the
+      grid goes dormant the moment the pin is free, X/Y keep showing the
+      derived point while aligned, a mode switch does not jump on its tied
+      axis, and every position edit is one document revision. A legacy
+      container renders through the old arithmetic until it is edited.
 - [ ] **Renames are documented.** The old → new table matches the finished
       labels, and no control was renamed beyond dropping redundancy.
-- [ ] **Suites are green:** `tests/test_theme_designer_panel_tiers.py`,
+- [ ] **Suites are green:**       `tests/test_theme_designer_panel_tiers.py`,
       `test_theme_designer_panel_layout.py`,
+      `test_theme_designer_position.py`,
       `test_theme_designer_number_fields.py`,
       `test_theme_designer_columns.py`,
       `test_theme_designer_discrepancy_fixes.py`,

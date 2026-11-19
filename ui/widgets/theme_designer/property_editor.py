@@ -27,14 +27,15 @@ from core.theme_shared import load_family
 from ui import tokens
 from ui.scrollbars import reserve_scrollbar_lane
 from ui.theme_kit import (
-    BackdropField, BlockTabBar, BorderField, ChipSelect, ChoiceOption,
-    ColorField, CompactDropdown, FourSideField, IconButton, InlineMessage,
-    NumberField, PaintField, ParamGroup, PropertyRow, PropertySection,
-    SegmentedToggle, ShadowField, SplitEditor, Switch, TextInput,
-    panel_state,
+    AnchorPicker, BackdropField, BlockTabBar, BorderField, ChipSelect,
+    ChoiceOption, ColorField, CompactDropdown, FourSideField, IconButton,
+    InlineMessage, NumberField, PaintField, ParamGroup, PropertyRow,
+    PropertySection, SegmentedToggle, ShadowField, SplitEditor, Switch,
+    TextInput, panel_state,
 )
 from ui.theme_kit.paint_field import paint_mode
 from ui.theme_kit.panel_layout import PANEL_PAD
+from ui.widgets.theme_designer import container_geometry as geometry
 from ui.widgets.theme_designer.animation_panel import definitions_for
 from ui.widgets.theme_designer.document import ThemeDocument
 
@@ -100,6 +101,38 @@ def _size_number(value: float) -> Any:
     """A pixel size as the document stores it: int when whole."""
     number = float(value)
     return int(number) if number.is_integer() else number
+
+
+def _clean_number(value: Any) -> Any:
+    """A position coordinate rounded once, the way the canvas displays it."""
+    try:
+        number = round(float(value or 0.0), 2)
+    except (TypeError, ValueError):
+        number = 0.0
+    return int(number) if float(number).is_integer() else number
+
+
+def _distance_parts(text: Any) -> tuple[Any, str]:
+    """Split a distance field into the stored number and its unit."""
+    raw = str(text or "").strip()
+    if raw.endswith("%"):
+        number, unit = raw[:-1], "percent"
+    elif raw.endswith("px"):
+        number, unit = raw[:-2], "px"
+    else:
+        number, unit = raw, "px"
+    try:
+        return _clean_number(float(number)), unit
+    except (TypeError, ValueError):
+        return 0, "px"
+
+
+def _distance_text(edge: dict) -> str:
+    """The distance field's text: the stored number with its unit."""
+    suffix = "%" if str(edge.get("unit") or "px") == "percent" else "px"
+    value = edge.get("d")
+    number = float(value) if isinstance(value, (int, float)) else 0.0
+    return f"{number:g}{suffix}"
 
 
 def _widget_value(widget: Any) -> Any:
@@ -183,6 +216,10 @@ CONTAINER_LAYOUT = [
         {"path": ("overflow",), "label": "Overflow", "kind": "enum",
          "options": schema.OVERFLOWS, "chips": True},
     ]},
+    # Position is a compound control (mode switch, pin grid, pin fields), so it
+    # builds its own rows instead of naming one spec per key. Same tier rules:
+    # inline controls sit in the shared value column, wide ones span the row.
+    {"group": "Position", "state_key": "position", "builder": "position"},
     {"group": "Fill", "state_key": "fill", "rows": [
         {"path": ("container_background",), "label": "Container bg",
          "kind": "paint", "full": True},
@@ -223,7 +260,7 @@ def _flatten_layout(layout: list[dict]) -> list[dict]:
     """Every spec in a tiered layout, parents before their subparameters."""
     flat: list[dict] = []
     for entry in layout:
-        for spec in entry["rows"]:
+        for spec in entry.get("rows") or []:
             flat.append(spec)
             flat.extend(spec.get("sub") or [])
     return flat
@@ -738,6 +775,8 @@ class ThemePropertyEditor(QWidget):
         #: Shadow row → which of the two it is. Exactly one is visible at a
         #: time, following the container background (docs §3, decision 3).
         self._shadow_rows: dict[str, PropertyRow] = {}
+        #: The Position section's controls; None when that page is not mounted.
+        self._position: Optional[dict] = None
         #: Container size leaves → field and row, for the Min/Max/Width rules.
         self._size_fields: dict[str, NumberField] = {}
         self._size_rows: dict[str, PropertyRow] = {}
@@ -836,7 +875,9 @@ class ThemePropertyEditor(QWidget):
                                              default=entry.get("expanded",
                                                                True)))
             section.expanded_changed.connect(self._on_group_toggled)
-            for spec in entry["rows"]:
+            if entry.get("builder") == "position":
+                self._add_position_rows(section, prefix)
+            for spec in entry.get("rows") or []:
                 self._add_container_item(section, spec, prefix)
             self._layout.addWidget(section)
 
@@ -949,6 +990,403 @@ class ThemePropertyEditor(QWidget):
         if role:
             self._shadow_rows[role] = row
 
+    # ── Position (pin model) ────────────────────────────────────────────────
+    # One pin per container: a point of its own box, placed on the canvas. The
+    # rules are in docs/PANEL_ORGANIZATION.md §3; the arithmetic lives in
+    # container_geometry (Python) and _modelPosition (both JS renderers).
+    _POINT_LABELS = (
+        ("top_left", "Top left"), ("top", "Top"), ("top_right", "Top right"),
+        ("left", "Left"), ("center", "Center"), ("right", "Right"),
+        ("bottom_left", "Bottom left"), ("bottom", "Bottom"),
+        ("bottom_right", "Bottom right"),
+    )
+    _EDGE_LABELS = (("top", "Top"), ("bottom", "Bottom"),
+                    ("left", "Left"), ("right", "Right"))
+
+    def _add_position_rows(self, section: PropertySection,
+                           prefix: tuple) -> None:
+        """Mode switch, 3×3 align grid, pin point, pin coordinates.
+
+        The section writes ``position.mode``/``canvas``/``edge`` as one object,
+        so every edit — including a mode switch — is a single change. A legacy
+        file has no payload: its live rectangle is shown as a top-left pin and
+        the first edit freezes that pin into the document.
+        """
+        mode = SegmentedToggle([ChoiceOption("canvas", "Canvas"),
+                                ChoiceOption("edge", "Edge")], "canvas")
+        grid = AnchorPicker("top_left", allow_fill=False, dormant=True,
+                            accessible_name="Align position")
+        point = CompactDropdown(
+            [ChoiceOption(value, label) for value, label in self._POINT_LABELS],
+            "top_left", variant="field")
+        edge = CompactDropdown(
+            [ChoiceOption(value, label) for value, label in self._EDGE_LABELS],
+            "left", variant="field")
+        low, high = schema.POSITION_LIMITS
+        x_field = NumberField(0, minimum=low, maximum=high, step=1,
+                              label="Pin x")
+        y_field = NumberField(0, minimum=low, maximum=high, step=1,
+                              label="Pin y")
+        distance = NumberField(
+            0, minimum=low, maximum=high, step=1, units=["px", "%"],
+            unit_ranges=schema.offset_limits(self._canvas_extents()[0]),
+            label="Distance")
+        # Tie rows (round 5): the target is the canvas or another container;
+        # `targetPoint` is the point on the target, `axis` the way d is spent.
+        tie = CompactDropdown(
+            [ChoiceOption(schema.POSITION_TARGET_DEFAULT, "Canvas")],
+            schema.POSITION_TARGET_DEFAULT, variant="field")
+        target_point = CompactDropdown(
+            [ChoiceOption(value, label) for value, label in self._POINT_LABELS],
+            "top_left", variant="field")
+        axis = SegmentedToggle([ChoiceOption("x", "X"), ChoiceOption("y", "Y")],
+                               "x")
+        marker = self._note_label("")
+
+        rows: dict[str, PropertyRow] = {}
+
+        def add(label: str, control: QWidget, *, full: bool = False,
+                key: str) -> None:
+            row = PropertyRow(label, control, label_width=76,
+                              full_width=full)
+            # Keep the empty chevron gutter so labels share one left edge.
+            row.set_disclosure(False, reserve=True)
+            section.add_row(row)
+            if not full:
+                self._page_rows.append(row)
+            rows[key] = row
+
+        add("Mode", mode, full=True, key="mode")
+        # A note, not a control: it has no row chrome and never takes width
+        # from the fields (docs/PANEL_ORGANIZATION.md §2).
+        section.add_widget(marker)
+        add("Tie to", tie, full=True, key="tie")
+        add("Align", grid, key="align")
+        add("Point", point, full=True, key="point")
+        add("Edge", edge, full=True, key="edge")
+        add("X", x_field, key="x")
+        add("Y", y_field, key="y")
+        add("Target point", target_point, full=True, key="target_point")
+        add("Direction", axis, key="direction")
+        add("Distance", distance, key="distance")
+
+        self._position = {"mode": mode, "grid": grid, "point": point,
+                          "edge": edge, "x": x_field, "y": y_field,
+                          "distance": distance, "tie": tie,
+                          "target_point": target_point, "axis": axis,
+                          "marker": marker, "rows": rows}
+        mode.changed.connect(self._on_position_mode)
+        grid.changed.connect(self._on_position_align)
+        point.changed.connect(self._on_position_point)
+        edge.changed.connect(self._on_position_edge)
+        tie.changed.connect(self._on_position_tie)
+        target_point.changed.connect(self._on_position_target_point)
+        axis.changed.connect(self._on_position_axis)
+        x_field.changed.connect(lambda value: self._on_position_xy("x", value))
+        y_field.changed.connect(lambda value: self._on_position_xy("y", value))
+        distance.changed.connect(self._on_position_distance)
+        for field in (x_field, y_field, distance):
+            field.preview.connect(self._preview_position)
+        self._sync_position()
+
+    def _canvas_extents(self) -> tuple[float, float]:
+        return (schema.canvas_axis(self._doc, "width"),
+                schema.canvas_axis(self._doc, "height"))
+
+    def _position_payload(self) -> dict:
+        container = self._get(self._prefix())
+        position = (container.get("position")
+                    if isinstance(container, dict) else None)
+        return dict(position) if isinstance(position, dict) else {}
+
+    def _position_state(self) -> dict:
+        """Active mode, both payloads, the live rectangle, for the controls.
+
+        Legacy positions have no payload: they are presented as a top-left pin
+        at the rectangle they render today. Nothing is stored until an edit.
+        """
+        container = self._get(self._prefix())
+        if not isinstance(container, dict):
+            container = {}
+        position = container.get("position")
+        position = position if isinstance(position, dict) else {}
+        canvas_size = self._canvas_extents()
+        containers = [c for c in self._containers() if isinstance(c, dict)]
+        container_id = str(container.get("id", ""))
+        errors: dict = {}
+        scene = (geometry.resolve_scene(containers, canvas_size, errors=errors)
+                 if containers else {})
+        rect = (scene.get(container_id)
+                or geometry.container_rect(container, canvas_size))
+        model = geometry.position_model(position)
+        if model is not None:
+            canvas = dict(model.get("canvas") or {})
+            edge = dict(model.get("edge") or {})
+            mode = str(model.get("mode") or "canvas")
+        else:
+            canvas = {"aligned": None, "anchor": "top_left",
+                      "x": _clean_number(rect["x"]),
+                      "y": _clean_number(rect["y"])}
+            edge = {"anchor": "top_left", "edge": "left",
+                    "d": _clean_number(rect["x"]), "unit": "px",
+                    "target": schema.POSITION_TARGET_DEFAULT}
+            mode = "canvas"
+        canvas.setdefault("aligned", None)
+        canvas.setdefault("anchor", "top_left")
+        canvas.setdefault("x", 0)
+        canvas.setdefault("y", 0)
+        edge.setdefault("anchor", "top_left")
+        edge.setdefault("edge", "left")
+        edge.setdefault("d", 0)
+        edge.setdefault("unit", "px")
+        edge.setdefault("target", schema.POSITION_TARGET_DEFAULT)
+        target = str(edge.get("target") or schema.POSITION_TARGET_DEFAULT)
+        tied = mode == "edge" and target != schema.POSITION_TARGET_DEFAULT
+        return {"mode": mode, "canvas": canvas, "edge": edge, "rect": rect,
+                "width": float(rect["width"]),
+                "height": float(rect["height"]),
+                "id": container_id, "containers": containers, "scene": scene,
+                "count": len(containers), "target": target, "tied": tied,
+                "targetPoint": (edge.get("targetPoint")
+                                or edge.get("anchor") or "top_left"),
+                "axis": str(edge.get("axis") or "x"),
+                "tie_error": errors.get(container_id, "")}
+
+    def _write_position(self, *, canvas: Optional[dict] = None,
+                        edge: Optional[dict] = None,
+                        mode: Optional[str] = None) -> None:
+        """Write the whole position object: one path, one change."""
+        position = self._position_payload()
+        position["mode"] = mode or str(position.get("mode") or "canvas")
+        if canvas is not None:
+            position["canvas"] = dict(canvas)
+        if edge is not None:
+            position["edge"] = dict(edge)
+        self._write(self._prefix() + ("position",), position)
+        self._after_edit("position")
+
+    def _sync_position(self) -> None:
+        ui = self._position
+        if ui is None:
+            return
+        state = self._position_state()
+        canvas, edge = state["canvas"], state["edge"]
+        mode = state["mode"]
+        aligned = canvas.get("aligned")
+        ui["mode"].set_value(mode)
+        ui["grid"].set_value(aligned if aligned in geometry.FRACTIONS else "")
+        ui["point"].set_value((aligned or canvas.get("anchor")
+                               or edge.get("anchor") or "top_left"))
+        ui["edge"].set_value(str(edge.get("edge") or "left"))
+        if aligned in geometry.FRACTIONS:
+            # An aligned pin is derived from the canvas, so the fields show
+            # where it sits now and follow a canvas resize (docs §3).
+            ax, ay = geometry.fractions(aligned)
+            width_total, height_total = self._canvas_extents()
+            shown_x, shown_y = ax * width_total, ay * height_total
+        else:
+            shown_x, shown_y = canvas.get("x"), canvas.get("y")
+        ui["x"].set_value(_clean_number(shown_x))
+        ui["y"].set_value(_clean_number(shown_y))
+        ui["distance"].set_value(_distance_text(edge))
+        rows = ui["rows"]
+        on_canvas = mode == "canvas"
+        rows["align"].setVisible(on_canvas)
+        rows["x"].setVisible(on_canvas)
+        rows["y"].setVisible(on_canvas)
+        rows["edge"].setVisible(not on_canvas)
+        rows["distance"].setVisible(not on_canvas)
+        pinned = str(edge.get("edge") or "left")
+        tied = bool(state["tied"])
+        options = [ChoiceOption(schema.POSITION_TARGET_DEFAULT, "Canvas")]
+        for other in state["containers"]:
+            other_id = str(other.get("id", ""))
+            if not other_id:
+                continue
+            # Also greyed, never hidden: the loop reason is the user's answer
+            # to "why is this one not offered".
+            options.append(ChoiceOption(
+                other_id, other_id,
+                disabled_reason=geometry.tie_cycle_reason(
+                    state["containers"], state["id"], other_id)))
+        target = state["target"]
+        if target != schema.POSITION_TARGET_DEFAULT \
+                and target not in [option.value for option in options]:
+            # A dangling target stays visible so the marker has a subject.
+            options.append(ChoiceOption(target, target,
+                                        disabled_reason="no such container"))
+        ui["tie"].set_options(options, value=target)
+        ui["target_point"].set_value(str(state["targetPoint"]))
+        ui["axis"].set_value(str(state["axis"]))
+        ui["marker"].setText(
+            "Tie not applied: " + state["tie_error"] if state["tie_error"]
+            else "")
+        ui["marker"].setVisible(bool(state["tie_error"]))
+        rows["tie"].setVisible(not on_canvas and state["count"] > 1)
+        rows["point"].set_label("My point" if tied else "Point")
+        rows["target_point"].setVisible(tied)
+        rows["direction"].setVisible(tied)
+        rows["edge"].setVisible(not on_canvas and not tied)
+        rows["distance"].set_label(
+            "d" if tied else ("X" if pinned in ("left", "right") else "Y"))
+
+    def _on_position_mode(self, mode: str) -> None:
+        """Switch modes without moving the pin.
+
+        Both payloads stay in the document, so switching back restores what
+        the other mode held. The new mode is seeded from the rendered pin, so
+        canvas → edge keeps x and edge → canvas keeps both axes.
+        """
+        if self._loading or self._position is None:
+            return
+        state = self._position_state()
+        if mode == state["mode"]:
+            return
+        canvas = dict(state["canvas"])
+        edge = dict(state["edge"])
+        anchor = (canvas.get("anchor") if mode == "edge"
+                  else edge.get("anchor")) or "top_left"
+        ax, ay = geometry.fractions(anchor)
+        pin_x = float(state["rect"]["x"]) + ax * state["width"]
+        pin_y = float(state["rect"]["y"]) + ay * state["height"]
+        if mode == "edge":
+            if str(edge.get("target") or schema.POSITION_TARGET_DEFAULT) \
+                    != schema.POSITION_TARGET_DEFAULT:
+                # A stored tie still owns the placement; switching back to
+                # Edge restores it instead of reseeding from the canvas pin.
+                self._write_position(edge=edge, mode="edge")
+                return
+            edge.update({"anchor": anchor, "edge": "left",
+                         "d": _clean_number(pin_x), "unit": "px",
+                         "target": schema.POSITION_TARGET_DEFAULT})
+        else:
+            canvas.update({"aligned": None, "anchor": anchor,
+                           "x": _clean_number(pin_x),
+                           "y": _clean_number(pin_y)})
+        self._write_position(canvas=canvas, edge=edge, mode=mode)
+
+    def _on_position_align(self, point: str) -> None:
+        """A grid cell pins that point of the box to that canvas point."""
+        if self._loading:
+            return
+        width_total, height_total = self._canvas_extents()
+        ax, ay = geometry.fractions(point)
+        canvas = dict(self._position_state()["canvas"])
+        canvas.update({"aligned": point, "anchor": point,
+                       "x": _clean_number(ax * width_total),
+                       "y": _clean_number(ay * height_total)})
+        self._write_position(canvas=canvas, mode="canvas")
+
+    def _on_position_point(self, point: str) -> None:
+        """Choosing the pin sets the anchor and frees it from the grid."""
+        if self._loading:
+            return
+        state = self._position_state()
+        if state["mode"] == "edge":
+            edge = dict(state["edge"])
+            edge["anchor"] = point
+            self._write_position(edge=edge, mode="edge")
+            return
+        canvas = dict(state["canvas"])
+        canvas.update({"anchor": point, "aligned": None})
+        self._write_position(canvas=canvas, mode="canvas")
+
+    def _on_position_xy(self, axis: str, value: Any) -> None:
+        """Editing a coordinate moves the pin and detaches the grid."""
+        if self._loading:
+            return
+        canvas = dict(self._position_state()["canvas"])
+        canvas[axis] = _clean_number(value)
+        canvas["aligned"] = None
+        self._write_position(canvas=canvas, mode="canvas")
+
+    def _on_position_tie(self, target: str) -> None:
+        """Point the tie at the canvas or another container.
+
+        Canvas → container seeds the tie so the box does not jump along x: the
+        anchor stays, the target point takes the same name, the axis is x, and
+        d closes the gap to that point. The y position may move. Container →
+        canvas keeps the stored canvas ``edge`` payload, so switching back
+        restores it.
+        """
+        if self._loading or self._position is None:
+            return
+        state = self._position_state()
+        target = str(target or schema.POSITION_TARGET_DEFAULT)
+        if target == state["target"]:
+            return
+        edge = dict(state["edge"])
+        if target == schema.POSITION_TARGET_DEFAULT:
+            edge["target"] = schema.POSITION_TARGET_DEFAULT
+            self._write_position(edge=edge, mode="edge")
+            return
+        if geometry.tie_cycle_reason(state["containers"], state["id"], target):
+            self._sync_position()
+            return
+        target_rect = state["scene"].get(target)
+        if target_rect is None:
+            self._sync_position()
+            return
+        anchor = str(edge.get("anchor") or "top_left")
+        ax, _ay = geometry.fractions(anchor)
+        pin_x = float(state["rect"]["x"]) + ax * state["width"]
+        tx, _ty = geometry.fractions(anchor)
+        point_x = float(target_rect["x"]) + tx * float(target_rect["width"])
+        edge.update({"target": target, "targetPoint": anchor, "axis": "x",
+                     "anchor": anchor, "d": _clean_number(pin_x - point_x),
+                     "unit": "px"})
+        self._write_position(edge=edge, mode="edge")
+
+    def _on_position_target_point(self, point: str) -> None:
+        if self._loading or self._position is None:
+            return
+        edge = dict(self._position_state()["edge"])
+        edge["targetPoint"] = str(point or "top_left")
+        self._write_position(edge=edge, mode="edge")
+
+    def _on_position_axis(self, axis: str) -> None:
+        if self._loading or self._position is None:
+            return
+        edge = dict(self._position_state()["edge"])
+        edge["axis"] = "y" if str(axis) == "y" else "x"
+        self._write_position(edge=edge, mode="edge")
+
+    def _on_position_edge(self, edge_name: str) -> None:
+        if self._loading:
+            return
+        edge = dict(self._position_state()["edge"])
+        edge["edge"] = str(edge_name or "left")
+        self._write_position(edge=edge, mode="edge")
+
+    def _on_position_distance(self, *_args) -> None:
+        if self._loading or self._position is None:
+            return
+        edge = dict(self._position_state()["edge"])
+        number, unit = _distance_parts(self._position["distance"].value())
+        edge["d"], edge["unit"] = number, unit
+        self._write_position(edge=edge, mode="edge")
+
+    def _preview_position(self, *_args) -> None:
+        """Follow a drag without committing it (document preview only)."""
+        ui = self._position
+        if ui is None or self._loading or self._document is None:
+            return
+        state = self._position_state()
+        canvas = dict(state["canvas"])
+        edge = dict(state["edge"])
+        if str(ui["mode"].value() or "canvas") == "edge":
+            number, unit = _distance_parts(ui["distance"].value())
+            edge["d"], edge["unit"] = number, unit
+        else:
+            canvas["x"] = _clean_number(ui["x"].numeric_value())
+            canvas["y"] = _clean_number(ui["y"].numeric_value())
+            canvas["aligned"] = None
+        position = self._position_payload()
+        position.update({"mode": str(ui["mode"].value() or "canvas"),
+                         "canvas": canvas, "edge": edge})
+        self._document.preview(self._prefix() + ("position",), position,
+                               source=self)
+
     def _refresh_container_shadow_state(self, background: Any = _UNSET) -> None:
         """Show the shadow of what is actually visible (docs §3, decision 3).
 
@@ -1058,6 +1496,11 @@ class ThemePropertyEditor(QWidget):
         else:
             specs = block_specs(self._block)
         paths: list[tuple] = []
+        if self._page() == "container":
+            # The Position section builds its rows itself; its three keys are
+            # still part of what this page edits.
+            paths.extend(prefix + ("position", key)
+                         for key in ("mode", "canvas", "edge"))
         for spec in specs:
             if spec["kind"] == "note" or "path" not in spec:
                 continue
@@ -1431,4 +1874,5 @@ class ThemePropertyEditor(QWidget):
         self._note.setText(message)
         self._refresh_container_shadow_state()
         self._refresh_size_markers()
+        self._sync_position()
         self.theme_changed.emit(self.get_theme())

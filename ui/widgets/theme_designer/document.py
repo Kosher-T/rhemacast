@@ -58,6 +58,8 @@ class ThemeDocument(QObject):
     changed = pyqtSignal(object, object)
     previewed = pyqtSignal(object, object)
     replaced = pyqtSignal(object)
+    #: A one-line message the Designer should surface (notice bar).
+    noticed = pyqtSignal(str)
 
     def __init__(self, theme: Optional[dict] = None, parent=None):
         super().__init__(parent)
@@ -253,27 +255,84 @@ class ThemeDocument(QObject):
                    if isinstance(c, dict)), default=0)
         duplicate["layer"] = min(100, top + 10)
         containers.append(duplicate)
-        rect = geometry.container_rect(duplicate, self._canvas_size())
+        rect = geometry.container_rect(duplicate, self._canvas_size(),
+                                       containers)
         rect["x"] += 24
         rect["y"] += 24
-        geometry.apply_rect(duplicate, rect, self._canvas_size())
+        geometry.apply_rect(duplicate, rect, self._canvas_size(), containers)
         self._emit_containers(source)
         return duplicate["id"]
 
     def delete_container(self, container_id: str, *, source=None
                          ) -> Optional[str]:
+        """Remove one container, freezing anyone tied to it where it stands.
+
+        A tie is not a parent, so deleting the target cannot delete the boxes
+        that leaned on it. Each one keeps the position it renders at right now:
+        mode `canvas`, its own pin point, `aligned` null, and the tie severed
+        (`edge.target` back to `canvas`). One revision holds the delete and
+        every conversion.
+        """
         containers = self._containers_mutable()
         if len(containers) <= 1:
             return None
         index = self.container_index(container_id)
         if index < 0:
             return None
+        dependents = self.tied_containers(container_id)
+        scene = geometry.resolve_scene(containers, self._canvas_size())
+        for dependent in dependents:
+            self._freeze_tied_position(dependent, scene)
         del containers[index]
         remaining = [str(c.get("id", "")) for c in containers
                      if isinstance(c, dict)]
         selected = remaining[min(index, len(remaining) - 1)]
         self._emit_containers(source)
+        if dependents:
+            count = len(dependents)
+            plural = "container was" if count == 1 else "containers were"
+            self.noticed.emit(
+                f"{count} {plural} tied to {container_id} and now keep "
+                "their current position")
         return selected
+
+    def tied_containers(self, target_id: str) -> list[dict]:
+        """Containers whose active tie points at ``target_id``."""
+        found = []
+        for container in self.containers():
+            if not isinstance(container, dict):
+                continue
+            edge = geometry.tie_edge(container.get("position"))
+            if edge is not None and str(edge.get("target")) == str(target_id):
+                found.append(container)
+        return found
+
+    def tie_reason(self, container_id: str, target_id: str) -> str:
+        """Why ``container_id`` cannot tie to ``target_id`` ("" when it can)."""
+        return geometry.tie_cycle_reason(self.containers(), container_id,
+                                         target_id)
+
+    def _freeze_tied_position(self, container: dict,
+                              scene: dict[str, dict]) -> None:
+        """Turn a tied container into a free canvas pin at its rect."""
+        rect = scene.get(str(container.get("id", "")))
+        position = container.get("position")
+        if rect is None or not isinstance(position, dict):
+            return
+        edge = geometry.tie_edge(position)
+        anchor = (edge or {}).get("anchor") or "top_left"
+        ax, ay = geometry.fractions(anchor)
+        canvas = dict(position.get("canvas") or {})
+        canvas.update({"aligned": None, "anchor": anchor,
+                       "x": geometry._clean(rect["x"] + ax * rect["width"]),
+                       "y": geometry._clean(rect["y"] + ay * rect["height"])})
+        position["mode"] = "canvas"
+        position["canvas"] = canvas
+        if isinstance(position.get("edge"), dict):
+            # The tie is gone: keep the canvas-edge payload as the fallback
+            # the operator returns to, but stop pointing at a deleted id.
+            position["edge"] = {**position["edge"],
+                                "target": schema.POSITION_TARGET_DEFAULT}
 
     def reorder_containers(self, ids: Iterable[str], *, source=None) -> bool:
         order = [str(value) for value in ids]
@@ -300,7 +359,8 @@ class ThemeDocument(QObject):
         if container is None:
             return False
         before = copy.deepcopy(container)
-        geometry.apply_rect(container, rect, self._canvas_size())
+        geometry.apply_rect(container, rect, self._canvas_size(),
+                            self.containers())
         if container == before:
             return False
         index = self.container_index(container_id)
@@ -344,6 +404,11 @@ class ThemeDocument(QObject):
 
         def walk(node) -> None:
             if isinstance(node, dict):
+                # A position tie names its target with `edge.target`; rewriting
+                # it here keeps the rename and its references one step.
+                edge = node.get("edge")
+                if isinstance(edge, dict) and str(edge.get("target")) == old:
+                    edge["target"] = new
                 for key, value in node.items():
                     if key in _REFERENCE_KEYS and str(value) == old:
                         node[key] = new
@@ -359,7 +424,39 @@ class ThemeDocument(QObject):
         self._revision += 1
         self.changed.emit((("containers",),), source)
 
+    def _tie_loop(self, path: Path, value: Any) -> bool:
+        """True when writing this value would close a tie loop.
+
+        A tie may only point at a container that does not (directly or through
+        a chain) depend on the one being written. Every write funnels through
+        here — panel edits, undo/redo, paste, scripted changes — so the guard
+        cannot be skipped by a path that bypasses the dropdown.
+        """
+        if len(path) < 3 or path[0] != "containers":
+            return False
+        index = path[1]
+        if not isinstance(index, int):
+            return False
+        containers = self.containers()
+        if not 0 <= index < len(containers):
+            return False
+        source = str((containers[index] or {}).get("id", ""))
+        target = None
+        if tuple(path[2:]) == ("position", "edge", "target") \
+                and isinstance(value, str):
+            target = value
+        elif tuple(path[2:]) == ("position",) and isinstance(value, dict):
+            edge = value.get("edge")
+            if isinstance(edge, dict):
+                target = edge.get("target")
+        if not target:
+            return False
+        return bool(geometry.tie_cycle_reason(containers, source,
+                                              str(target)))
+
     def _set(self, path: Path, value: Any) -> bool:
+        if self._tie_loop(path, value):
+            return False
         if value is None and self.get(path, _MISSING) is _MISSING:
             # Deleting an absent leaf is a no-op; do not create empty parents.
             return False

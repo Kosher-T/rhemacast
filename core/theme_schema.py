@@ -67,6 +67,19 @@ ANCHORS = (
     "top_left", "top_right", "bottom_left", "bottom_right",
     "center", "left", "right", "top", "bottom", "fill",
 )
+
+#: The nine pin points, row-major. A container can anchor any of these points
+#: of its own box to a point of the canvas (docs/theme_file_reference.md §5.3).
+#: They are the legacy anchor names minus ``fill``, which stretches instead.
+POSITION_POINTS = (
+    "top_left", "top", "top_right",
+    "left", "center", "right",
+    "bottom_left", "bottom", "bottom_right",
+)
+POSITION_MODES = ("canvas", "edge")
+POSITION_EDGES = ("top", "bottom", "left", "right")
+POSITION_UNITS = ("px", "percent")
+POSITION_TARGET_DEFAULT = "canvas"
 #: Hard limits the Designer fields must use; the validator below reads them too.
 MAX_CONTAINERS = 16
 POSITION_LIMITS = (-10000.0, 10000.0)
@@ -1380,6 +1393,79 @@ def _validate_canvas(raw: Any, *, report: ThemeReport) -> dict:
     }
 
 
+def _validate_canvas_position(raw: Any, *, path: str,
+                              report: ThemeReport) -> dict:
+    """The ``canvas`` mode payload: a pin point plus where the pin goes."""
+    if not isinstance(raw, dict):
+        report.warn(path, "canvas position must be an object",
+                    type(raw).__name__)
+        raw = {}
+    aligned = raw.get("aligned")
+    if aligned is not None and aligned not in POSITION_POINTS:
+        report.warn(f"{path}.aligned", "unknown align point", aligned,
+                    "ignored")
+        aligned = None
+    out: dict = {
+        "aligned": aligned,
+        "anchor": coerce_enum(raw.get("anchor", "top_left"), POSITION_POINTS,
+                              "top_left", path=f"{path}.anchor",
+                              report=report),
+    }
+    for axis in ("x", "y"):
+        out[axis] = coerce_number(
+            raw.get(axis, 0), 0, POSITION_LIMITS[0], POSITION_LIMITS[1],
+            path=f"{path}.{axis}", report=report, label=axis)
+    extra = set(raw) - {"aligned", "anchor", "x", "y"}
+    if extra:
+        report.note(path, "ignoring unknown canvas position keys",
+                    sorted(extra))
+    return out
+
+
+def _validate_edge_position(raw: Any, *, path: str,
+                            report: ThemeReport) -> dict:
+    """The ``edge`` mode payload: a distance in from one canvas edge.
+
+    ``target`` is reserved for a later prompt that ties a container to another
+    container's edge; only ``canvas`` is meaningful today, any other string is
+    preserved so a newer file survives a round trip here.
+    """
+    if not isinstance(raw, dict):
+        report.warn(path, "edge position must be an object",
+                    type(raw).__name__)
+        raw = {}
+    out: dict = {
+        "anchor": coerce_enum(raw.get("anchor", "top_left"), POSITION_POINTS,
+                              "top_left", path=f"{path}.anchor",
+                              report=report),
+        "edge": coerce_enum(raw.get("edge", "left"), POSITION_EDGES, "left",
+                            path=f"{path}.edge", report=report),
+        "d": coerce_number(raw.get("d", 0), 0, POSITION_LIMITS[0],
+                           POSITION_LIMITS[1], path=f"{path}.d",
+                           report=report, label="d"),
+        "unit": coerce_enum(raw.get("unit", "px"), POSITION_UNITS, "px",
+                            path=f"{path}.unit", report=report),
+        "target": clean_text(raw.get("target"), 64, path=f"{path}.target",
+                             report=report,
+                             default=POSITION_TARGET_DEFAULT),
+    }
+    # Both tie fields are only written when a container is the target, so a
+    # canvas-targeted edge keeps the exact payload it always had (round 5).
+    if raw.get("targetPoint") is not None:
+        out["targetPoint"] = coerce_enum(
+            raw.get("targetPoint"), POSITION_POINTS, "top_left",
+            path=f"{path}.targetPoint", report=report)
+    if raw.get("axis") is not None:
+        out["axis"] = coerce_enum(raw.get("axis"), ("x", "y"), "x",
+                                  path=f"{path}.axis", report=report)
+    extra = set(raw) - {"anchor", "edge", "d", "unit", "target",
+                        "targetPoint", "axis"}
+    if extra:
+        report.note(path, "ignoring unknown edge position keys",
+                    sorted(extra))
+    return out
+
+
 def _validate_position(raw: Any, *, path: str, report: ThemeReport) -> dict:
     if raw is None:
         raw = {}
@@ -1409,7 +1495,29 @@ def _validate_position(raw: Any, *, path: str, report: ThemeReport) -> dict:
                 raw[axis], 0, path=f"{path}.{axis}", report=report,
                 minimum=POSITION_LIMITS[0], maximum=POSITION_LIMITS[1],
                 percent=True, label=axis)
-    extra = set(raw) - {"anchor", "x", "y"} - set(CORNER_KEYS)
+    # The pin model is additive: a file that never used it keeps rendering from
+    # the legacy anchor/offset keys above, untouched (round 4).
+    canvas_raw = raw.get("canvas")
+    edge_raw = raw.get("edge")
+    if isinstance(canvas_raw, dict) or isinstance(edge_raw, dict) \
+            or "mode" in raw:
+        out["mode"] = coerce_enum(raw.get("mode", "canvas"), POSITION_MODES,
+                                  "canvas", path=f"{path}.mode",
+                                  report=report)
+        if isinstance(canvas_raw, dict):
+            out["canvas"] = _validate_canvas_position(
+                canvas_raw, path=f"{path}.canvas", report=report)
+        elif canvas_raw is not None:
+            report.warn(f"{path}.canvas", "canvas position must be an object",
+                        type(canvas_raw).__name__, "ignored")
+        if isinstance(edge_raw, dict):
+            out["edge"] = _validate_edge_position(
+                edge_raw, path=f"{path}.edge", report=report)
+        elif edge_raw is not None:
+            report.warn(f"{path}.edge", "edge position must be an object",
+                        type(edge_raw).__name__, "ignored")
+    extra = set(raw) - {"anchor", "x", "y", "mode", "canvas", "edge"} \
+        - set(CORNER_KEYS)
     if extra:
         report.note(path, "ignoring unknown position keys", sorted(extra))
     return out

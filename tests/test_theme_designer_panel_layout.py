@@ -122,7 +122,9 @@ def _tier_columns(editor):
     subs = _sub_rows(editor)
     columns: dict[int, set[int]] = {2: set(), 3: set()}
     for row in _rows(editor):
-        if row._full_width:
+        # Position swaps its canvas rows for its edge rows; a hidden row has
+        # no geometry to measure.
+        if row._full_width or not row.isVisibleTo(editor):
             continue
         tier = 3 if id(row) in subs else 2
         columns[tier].add(_x(editor, row.control()))
@@ -165,9 +167,10 @@ def test_the_measured_columns_match_the_formula(qapp):
     assert heading_x == {label_x(1)}, "heading text must start on the grid"
 
     subs = _sub_rows(editor)
-    parameter_x = {_x(editor, row._label) for row in _rows(editor)
+    visible = [row for row in _rows(editor) if row.isVisibleTo(editor)]
+    parameter_x = {_x(editor, row._label) for row in visible
                    if not row._full_width and id(row) not in subs}
-    sub_x = {_x(editor, row._label) for row in _rows(editor)
+    sub_x = {_x(editor, row._label) for row in visible
              if not row._full_width and id(row) in subs}
     assert parameter_x == {label_x(2)}
     assert sub_x == {label_x(3)}
@@ -203,7 +206,8 @@ def test_the_stacked_set_is_the_wide_controls(qapp):
     stacked = {row.label() for row in _rows(editor) if row._full_width}
     # Dropdowns, paint boxes and compound editors need the whole width.
     assert stacked == {"Container", "Overflow", "Container bg", "Border",
-                       "Fill", "Shadow", "Border shadow", "Backdrop"}
+                       "Fill", "Shadow", "Border shadow", "Backdrop",
+                       "Mode", "Tie to", "Point", "Edge", "Target point"}
     editor.close()
 
 
