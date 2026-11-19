@@ -102,19 +102,33 @@ class ContainerWorkspace(QWidget):
                                        label_width=62)
         fields.addWidget(self._anchor_row)
 
-        low, high = schema.POSITION_LIMITS
-        self.x_field = NumberField(0, minimum=low, maximum=high,
-                             units=["px", "%"], label="X offset")
-        self.y_field = NumberField(0, minimum=low, maximum=high,
-                             units=["px", "%"], label="Y offset")
+        width_total, height_total = self._canvas()
+
+        def _convert(axis: str):
+            return lambda value, old, new: schema.convert_length(
+                value, old, new,
+                self._canvas()[0 if axis == "width" else 1])
+
+        # Bounds come from the schema helpers, never from this widget; the
+        # pixel maxima are re-read from the live canvas in `_sync_fields`.
+        self.x_field = NumberField(
+            0, units=["px", "%"],
+            unit_ranges=schema.offset_limits(width_total),
+            unit_converter=_convert("width"), label="X offset")
+        self.y_field = NumberField(
+            0, units=["px", "%"],
+            unit_ranges=schema.offset_limits(height_total),
+            unit_converter=_convert("height"), label="Y offset")
         self.width_field = NumberField(
-            "auto", minimum=0, maximum=schema.CONTAINER_MAX_WIDTH,
-            units=["px", "%"], keywords=("auto",), placeholder="auto",
-            label="Width")
+            "auto", units=["px", "%"], keywords=("auto",),
+            unit_ranges=schema.size_limits(width_total),
+            placeholder="auto",
+            unit_converter=_convert("width"), label="Width")
         self.height_field = NumberField(
-            "auto", minimum=0, maximum=schema.CONTAINER_MAX_HEIGHT,
-            units=["px", "%"], keywords=("auto",), placeholder="auto",
-            label="Height")
+            "auto", units=["px", "%"], keywords=("auto",),
+            unit_ranges=schema.size_limits(height_total),
+            placeholder="auto",
+            unit_converter=_convert("height"), label="Height")
         self.x_field.changed.connect(lambda value: self._write("position.x", value))
         self.y_field.changed.connect(lambda value: self._write("position.y", value))
         self.width_field.changed.connect(lambda value: self._write("width", value))
@@ -127,8 +141,9 @@ class ContainerWorkspace(QWidget):
             fields.addWidget(row)
             self._offset_rows.append(row)
 
-        self.layer_field = NumberField(0, minimum=0, maximum=100, integer=True,
-                                 step=1, label="Layer")
+        self.layer_field = NumberField(
+            0, integer=True, unit_ranges=schema.limits_for("layer"),
+            label="Layer")
         self.layer_field.changed.connect(lambda value: self._write("layer", value))
         fields.addWidget(PropertyRow("Layer", self.layer_field, label_width=62))
 
@@ -293,6 +308,12 @@ class ContainerWorkspace(QWidget):
         enabled = container is not None
         self._syncing = True
         try:
+            # px limits follow the live canvas; % is always 0–100.
+            width_total, height_total = self._canvas()
+            self.x_field.set_unit_ranges(schema.offset_limits(width_total))
+            self.y_field.set_unit_ranges(schema.offset_limits(height_total))
+            self.width_field.set_unit_ranges(schema.size_limits(width_total))
+            self.height_field.set_unit_ranges(schema.size_limits(height_total))
             for widget in (self.anchor_field, self.x_field, self.y_field, self.width_field,
                            self.height_field, self.layer_field, self.visible_switch):
                 widget.setEnabled(enabled)

@@ -81,7 +81,9 @@ matrix**; do not maintain a second hand-written list here.
 Each container has:
 - Position (x, y offsets from canvas anchor)
 - Dimensions (width, height — **fixed, never flex**)
-- Background, border, border-radius, backdrop-filter, box-shadow
+- Container background (the full rectangle, square corners) and border fill
+  (inside the border shape), border, border padding, border-radius,
+  backdrop-filter, box-shadow
 - Padding (content inset via `body.padding`)
 
 ### Transform Controls
@@ -96,6 +98,24 @@ Containers are directly manipulable in the preview viewport:
 All transform controls appear when a container is **selected/focused**.
 
 **Value editing**: Every property editable via numeric inputs in the properties panel. Changes sync bidirectionally with the visual controls.
+
+### Numeric Field Contract
+
+Every numeric control in the Designer — Canvas, Container, Blocks, the right-panel Geometry panel and the animation forms — is the same `ui.theme_kit.NumberField` widget. It never carries its own range: bounds and steps come from `core/theme_schema.py`.
+
+**Ranges.** `schema.FIELD_LIMITS` holds `(minimum, maximum, step)` per unit for canvas-independent parameters (`layer`, `border_radius`, `opacity`, `size`, `weight`, `line_height`, letter/word spacing, block padding and margins, the border/shadow layer editors). Canvas-dependent lengths are computed from the live canvas instead: `schema.size_limits(total)` gives `px: 0…canvas` and `%: 0…100`, `schema.offset_limits(total)` gives `px: −10000…10000` and `%: −100…100`. Changing the canvas dimensions re-applies those bounds to the open fields.
+
+**Interaction rules.**
+- Dragging stops exactly at the bound — no wrap, no overshoot.
+- Typed or pasted values clamp when committed (Enter or focus loss), never mid-keystroke.
+- Arrow keys, wheel and Shift/Alt coarse/fine steps all clamp the same way.
+- Hitting a bound tints the field border for a moment; the tooltip always states the active range in the active unit.
+- `min_width`/`min_height` and their `max_*` siblings cross-limit each other: the lower field cannot pass the upper one and vice versa. The comparison converts between the two fields' units through the live canvas. Clearing the max (nullable) releases that constraint.
+- Switching px ↔ % converts through the canvas so the rendered size is unchanged, then clamps. A `0px` ↔ `0%` switch renders identically and does not mark the theme dirty.
+
+**Units.** A parameter with one authored mode shows its unit as plain, non-interactive text where a dropdown would sit (no chevron, no hover state). A dropdown appears only when there is a real choice — `px`/`%` for lengths, `px`/`em` for typography, or a keyword such as `auto` alongside real units.
+
+**Loading.** A stored value outside the current bounds is displayed as authored: loading never clamps, never rewrites the document and never sets the dirty flag. The first user edit applies the bound.
 
 ### Container Capabilities by Element
 
@@ -402,7 +422,7 @@ Status key:
 
 | Key | Status | Where / note |
 |---|---|---|
-| `id` | preserve-only | Shown read-only; generated for add/duplicate. Renaming is not supported. |
+| `id` | preserve-only | Permanent container key; not shown as a field. Auto-generated for new containers. Renaming is not supported. |
 | `label` | editable | Container page. |
 | `kind` | preserve-only | Authoring metadata; the renderer does not filter by it, so the control is hidden and the value is kept. |
 | `layer` | editable | Container page and workspace. |
@@ -414,9 +434,11 @@ Status key:
 | `max_width` | editable | Container page, nullable. |
 | `min_height` | editable | Container page. |
 | `max_height` | editable | Container page, nullable. |
-| `background` | editable | Container page, paint field. |
+| `container_background` | editable | Container page, paint field. Fills the whole assigned rectangle with square corners, painted under the border fill. |
+| `background` | editable | Container page, paint field ("Border fill"). Painted inside the border shape, following `border_radius` and `border_padding`. |
 | `border` | editable | Container page, border editor (none / structured / shared reference). |
-| `border_radius` | editable | Container page, nullable length; wins over `border.radius`. |
+| `border_padding` | editable | Container page, px length 0–400 (default 0). Gap between the container edge and the border's outer edge; never changes the container's size. |
+| `border_radius` | editable | Container page, nullable length; wins over `border.radius`. Rounds the border shape only, never the container rectangle. |
 | `box_shadow` | editable | Container page, shadow editor (layers, shared reference). |
 | `backdrop_filter` | editable | Container page, free-text field. The function list and ranges are raw CSS grammar; there is no per-function UI. |
 | `opacity` | editable | Container page. |

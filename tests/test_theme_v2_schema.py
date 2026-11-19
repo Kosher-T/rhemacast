@@ -50,8 +50,10 @@ def test_minimal_theme_fills_documented_defaults():
     assert container["min_height"] == 0
     assert container["max_width"] is None
     assert container["max_height"] is None
+    assert container["container_background"] == "transparent"
     assert container["background"] == "transparent"
     assert container["border"] == "none"
+    assert container["border_padding"] == 0
     assert container["border_radius"] is None
     assert container["box_shadow"] == "none"
     assert container["backdrop_filter"] == "none"

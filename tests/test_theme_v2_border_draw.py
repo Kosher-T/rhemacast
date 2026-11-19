@@ -28,10 +28,14 @@ window.addEventListener("error", function (e) {
 window.__snap = function (label) {
   const el = document.getElementById("rc-cont-main")
     || document.getElementById("container");
-  const svg = el ? el.querySelector(".rc-border-draw") : null;
+  // The ring is painted on the container's border layer, not on the
+  // container itself (docs/theme_file_reference.md §5.0). Older paths with
+  // no layer draw on the element, so fall back to it.
+  const ring = el ? (el.querySelector(".rc-border-layer") || el) : null;
+  const svg = ring ? ring.querySelector(".rc-border-draw") : null;
   const path = svg ? svg.querySelector("path") : null;
   const anims = path && path.getAnimations ? path.getAnimations() : [];
-  const cs = el ? getComputedStyle(el) : null;
+  const cs = ring ? getComputedStyle(ring) : null;
   const pcs = path ? getComputedStyle(path) : null;
   window.__log.push({
     label: label, t: +performance.now().toFixed(0),
@@ -46,8 +50,8 @@ window.__snap = function (label) {
     anims: anims.length,
     state: anims.length ? anims[0].playState : "",
     border: cs ? cs.borderTopColor : "",
-    width: el ? el.clientWidth : 0,
-    height: el ? el.clientHeight : 0,
+    width: ring ? ring.clientWidth : 0,
+    height: ring ? ring.clientHeight : 0,
   });
 };
 window.__payload = function (p) {

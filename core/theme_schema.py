@@ -72,6 +72,86 @@ MAX_CONTAINERS = 16
 POSITION_LIMITS = (-10000.0, 10000.0)
 CONTAINER_MAX_WIDTH = 7680.0
 CONTAINER_MAX_HEIGHT = 4320.0
+
+#: One unit's ``(minimum, maximum, step)``. ``None`` means unbounded.
+FieldLimit = tuple[Optional[float], Optional[float], float]
+
+#: Canvas-independent ranges for numeric Designer fields, keyed by the spec's
+#: leaf name. The fields and the validator are meant to share these numbers;
+#: a widget never invents a range of its own. Canvas-dependent lengths come
+#: from :func:`size_limits` / :func:`offset_limits` instead.
+FIELD_LIMITS: dict[str, dict[str, FieldLimit]] = {
+    # container page
+    "layer": {"": (0, 100, 1)},
+    "border_radius": {"px": (0, 400, 1)},
+    "border_padding": {"px": (0, 400, 1)},
+    "opacity": {"": (0.0, 1.0, 0.05)},
+    # block pages
+    "size": {"px": (1, 400, 1), "em": (1, 400, 1)},
+    "min_size": {"px": (1, 400, 1)},
+    "max_size": {"px": (1, 400, 1)},
+    "weight": {"": (100, 900, 100)},
+    "line_height": {"": (0.5, 3.0, 0.05)},
+    "letter_spacing": {"px": (-20, 40, 1), "em": (-20, 40, 1)},
+    "word_spacing": {"px": (-20, 40, 1), "em": (-20, 40, 1)},
+    "max_lines": {"": (1, 20, 1)},
+    "gap": {"px": (0, 200, 1)},
+    "margin_left": {"px": (-400, 400, 1), "em": (-400, 400, 1)},
+    "margin_right": {"px": (0, 40, 1), "em": (0, 40, 1)},
+    # nested numeric editors (border/shadow), same numbers as the validator
+    "border_width": {"": (0, 40, 1)},
+    "shadow_x": {"": (-500, 500, 1)},
+    "shadow_y": {"": (-500, 500, 1)},
+    "shadow_blur": {"": (0, 500, 1)},
+    "shadow_spread": {"": (-500, 500, 1)},
+}
+#: Padding/margin *side* fields (``FourSideField``) carry their bounds in the
+#: spec that declares them, so they are not repeated here.
+
+
+def canvas_axis(theme: Any, axis: str) -> float:
+    """Live canvas width/height for *axis*, with the 1920×1080 fallback."""
+    fallback = 1920.0 if axis == "width" else 1080.0
+    canvas = theme.get("canvas") if isinstance(theme, dict) else None
+    if not isinstance(canvas, dict):
+        return fallback
+    try:
+        value = float(canvas.get(axis))
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
+
+
+def size_limits(axis_total: float) -> dict[str, FieldLimit]:
+    """Container width/height: px up to the live canvas, percent 0–100."""
+    total = float(axis_total) if axis_total else 0.0
+    return {"px": (0.0, total, 1.0), "%": (0.0, 100.0, 1.0)}
+
+
+def offset_limits(axis_total: float) -> dict[str, FieldLimit]:
+    """X/Y offsets: schema pixels, or −100…100 percent of the canvas."""
+    return {"px": (POSITION_LIMITS[0], POSITION_LIMITS[1], 1.0),
+            "%": (-100.0, 100.0, 1.0)}
+
+
+def convert_length(value: float, old_unit: str, new_unit: str,
+                   axis_total: float) -> Optional[float]:
+    """Convert px ↔ % against the live canvas; unrelated pairs keep the number."""
+    if old_unit == new_unit:
+        return float(value)
+    total = float(axis_total or 0.0)
+    if old_unit == "px" and new_unit == "%":
+        return float(value) / total * 100.0 if total > 0 else None
+    if old_unit == "%" and new_unit == "px":
+        return float(value) / 100.0 * total
+    return float(value)
+
+
+def limits_for(name: str) -> Optional[dict[str, FieldLimit]]:
+    """Ranges for a canvas-independent field, or ``None`` when it has none."""
+    return FIELD_LIMITS.get(str(name))
+
+
 #: Blocks whose animation may carry `split` (see theme_file_reference §4.1).
 SPLIT_BLOCKS = ("text", "reference", "title", "translation")
 CORNER_KEYS = ("top_left", "top_right", "bottom_left", "bottom_right")
@@ -1577,8 +1657,8 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
                                 auto=True, label="height"),
         "min_width": coerce_length(raw.get("min_width", 0), 0,
                                    path=f"{path}.min_width", report=report,
-                                   minimum=0, maximum=7680, percent=True,
-                                   label="min_width"),
+                                   minimum=0, maximum=CONTAINER_MAX_WIDTH,
+                                   percent=True, label="min_width"),
         "max_width": (None if raw.get("max_width") is None else
                       coerce_length(raw.get("max_width"), None,
                                     path=f"{path}.max_width", report=report,
@@ -1586,18 +1666,25 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
                                     percent=True, label="max_width")),
         "min_height": coerce_length(raw.get("min_height", 0), 0,
                                     path=f"{path}.min_height", report=report,
-                                    minimum=0, maximum=4320, percent=True,
-                                    label="min_height"),
+                                    minimum=0, maximum=CONTAINER_MAX_HEIGHT,
+                                    percent=True, label="min_height"),
         "max_height": (None if raw.get("max_height") is None else
                        coerce_length(raw.get("max_height"), None,
                                      path=f"{path}.max_height", report=report,
                                      minimum=0, maximum=CONTAINER_MAX_HEIGHT,
                                      percent=True, label="max_height")),
+        "container_background": _coerce_paint(
+            raw.get("container_background", "transparent"), "transparent",
+            path=f"{path}.container_background", report=report),
         "background": _coerce_paint(raw.get("background", "transparent"),
                                     "transparent", path=f"{path}.background",
                                     report=report),
         "border": _coerce_border(raw.get("border", "none"), "none",
                                  path=f"{path}.border", report=report),
+        "border_padding": coerce_length(
+            raw.get("border_padding", 0), 0,
+            path=f"{path}.border_padding", report=report,
+            minimum=0, maximum=400, label="border_padding"),
         "border_radius": (None if raw.get("border_radius") is None else
                           coerce_length(raw.get("border_radius"), 0,
                                         path=f"{path}.border_radius",
@@ -1638,7 +1725,8 @@ def _validate_container(raw: Any, index: int, *, theme_kind: str,
     known = {
         "id", "label", "kind", "layer", "visible", "position", "width",
         "height", "min_width", "max_width", "min_height", "max_height",
-        "background", "border", "border_radius", "box_shadow",
+        "container_background", "background", "border", "border_padding",
+        "border_radius", "box_shadow",
         "backdrop_filter", "opacity", "overflow", "animation", "blocks",
         "display", "flex_direction", "justify_content", "align_items",
     }
@@ -2056,8 +2144,10 @@ def _safe_theme() -> dict:
             "max_width": 1800,
             "min_height": 0,
             "max_height": None,
+            "container_background": "transparent",
             "background": "transparent",
             "border": "none",
+            "border_padding": 0,
             "border_radius": 0,
             "box_shadow": "none",
             "backdrop_filter": "none",

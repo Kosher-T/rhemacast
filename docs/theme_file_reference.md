@@ -284,10 +284,11 @@ still runs its keyframes per unit.
 #### `border.draw`
 
 Draws the container border as one rounded SVG path, revealed by animating
-`stroke-dashoffset`. The overlay is pointer-transparent and sits inside the
-container padding box, so it changes neither layout nor hit testing. The
-static border is hidden with a transparent border colour while the overlay
-owns the ring and restored when the draw finishes or is cancelled.
+`stroke-dashoffset`. The overlay is pointer-transparent and is drawn on the
+container's border layer, inside the ring's own box (`border_padding`
+included), so it changes neither layout nor hit testing. The static border is
+hidden with a transparent border colour while the overlay owns the ring and
+restored when the draw finishes or is cancelled.
 
 | Property | Type | Default | Rules |
 |---|---|---|---|
@@ -318,8 +319,10 @@ border visible. A container with no border width skips the track.
 | `max_width` | length / null | `null` | px or `%`, 0–7680. |
 | `min_height` | length | `0` | px or `%`, 0–4320. |
 | `max_height` | length / null | `null` | px or `%`, 0–4320. |
-| `background` | paint | `transparent` | Color, gradient, `transparent`, or `none`. `@palette` expands. |
+| `container_background` | paint | `transparent` | Fills the whole assigned rectangle, square corners, painted first. Color, gradient, `transparent`, or `none`. `@palette` expands. |
+| `background` | paint | `transparent` | The **border fill**: painted inside the border shape, following `border_radius` and inset by `border_padding`. Color, gradient, `transparent`, or `none`. `@palette` expands. |
 | `border` | string / object / shared | `"none"` | See §5.2. |
+| `border_padding` | length | `0` | px, 0–400. Gap between the container edge and the border's outer edge. Never changes the container's size. |
 | `border_radius` | length | `null` | px or `%`, 0–400. When set, it wins over `border.radius`. |
 | `box_shadow` | string / object / shared | `"none"` | See §5.3. |
 | `backdrop_filter` | string | `"none"` | `"none"`, `"off"`, or a validated function list; see §5.4. |
@@ -330,7 +333,30 @@ border visible. A container with no border width skips the track.
 
 Container `padding`, `display`, `flex_direction`, `justify_content`, and
 `align_items` are not v2 parameters. Padding belongs on `blocks.body`; the
-legacy flex keys are ignored with a warning.
+legacy flex keys are ignored with a warning. Content padding and
+`border_padding` are independent: padding moves the content, border padding
+moves the ring.
+
+### 5.0 Geometry contract
+
+`width` × `height` is absolute. The container is laid out with
+`box-sizing: border-box` and `margin: 0`, so the assigned rectangle is exactly
+the authored size at the anchor position — a `1920×1080` container at
+`top_left` covers the whole canvas, and a `600×120` panel at `bottom_right`
+with `x: 40, y: 40` occupies `x 1280–1880`, `y 920–1040` on a `1920×1080`
+canvas. Neither the border nor the radius can change that rectangle:
+
+- The **container background** (`container_background`) fills the rectangle
+  with square corners and is painted first.
+- The **border layer** draws the ring and the border fill (`background`).
+  Its outer edge sits `border_padding` inside the container edge, and the
+  border is drawn inward from there (`border-box`), so with `border_padding: 0`
+  the ring's outer edge *is* the container edge and nothing is clipped.
+  `border_radius` rounds only this outer edge; the container background still
+  shows in the corner gaps.
+- `box_shadow` and `backdrop_filter` stay on the container element itself, so
+  a shadow is not clipped by the container's own `overflow`. Consequence: with
+  a radius the shadow outline stays square while the ring is rounded.
 
 ### 5.1 `position`
 
@@ -601,10 +627,10 @@ Rules:
   there, the other family is checked; a cross-family hit warns.
 - Animation names have **no** cross-family fallback. Resolution order is local
   theme → shared animations → built-in.
-- `@name` expands in block `color`, canvas/container `background`,
-  `border.color`, `box_shadow.color`, the color component of `text_outline`,
-  and animation cursor colors. It is **not** expanded inside gradient strings or shadow
-  strings.
+- `@name` expands in block `color`, canvas/`container_background`/`background`
+  (container) paints, `border.color`, `box_shadow.color`, the color component
+  of `text_outline`, and animation cursor colors. It is **not** expanded inside
+  gradient strings or shadow strings.
 - Missing/broken shared files are treated as empty; unresolved references fall
   back to the field default with a warning.
 - Shared files are cached by mtime and invalidated by palette edits.

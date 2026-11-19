@@ -88,6 +88,10 @@ class FourSideField(QWidget):
                 0, minimum=minimum, maximum=maximum, step=step,
                 integer=integer, decimals=decimals, unit=unit,
                 units=units, keywords=keywords, nullable=nullable,
+                unit_ranges=({str(name): (minimum, maximum, step)
+                              for name in units}
+                             if units else
+                             {"": (minimum, maximum, step)}),
                 # At 240 px the side cells leave ~30 px of text beside the
                 # unit selector; "Not set" elides there, so use the short
                 # form (same reason as the keyframe track).

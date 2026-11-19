@@ -116,7 +116,6 @@ CANVAS_SPECS = [
 ]
 
 CONTAINER_SPECS = [
-    {"path": ("id",), "label": "ID", "kind": "text", "read_only": True},
     {"path": ("label",), "label": "Label", "kind": "text"},
     {"kind": "note",
      "text": "Kind is authoring metadata. Rendering uses Visible, not Kind."},
@@ -130,9 +129,13 @@ CONTAINER_SPECS = [
      "units": ["px", "%"]},
     {"path": ("max_height",), "label": "Max height", "kind": "length",
      "units": ["px", "%"], "nullable": True},
-    {"path": ("background",), "label": "Background", "kind": "paint",
+    {"path": ("container_background",), "label": "Container bg",
+     "kind": "paint", "full": True},
+    {"path": ("background",), "label": "Border fill", "kind": "paint",
      "full": True},
     {"path": ("border",), "label": "Border", "kind": "border", "full": True},
+    {"path": ("border_padding",), "label": "Border pad", "kind": "length",
+     "units": ["px"]},
     {"path": ("border_radius",), "label": "Radius", "kind": "length",
      "units": ["px"], "nullable": True},
     {"path": ("box_shadow",), "label": "Shadow", "kind": "shadow",
@@ -276,6 +279,8 @@ class ThemePropertyEditor(QWidget):
         self._palette = _palette_pairs()
         self._borders = _shared_names("borders")
         self._shadows = _shared_names("shadows")
+        #: Path → numeric control, for wiring sibling limits after a rebuild.
+        self._field_widgets: dict[tuple, QWidget] = {}
 
         root = QVBoxLayout(self)
         # 4 px side margins keep the 240 px panel clear of a horizontal
@@ -522,14 +527,16 @@ class ThemePropertyEditor(QWidget):
                 widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
+        self._field_widgets = {}
         page = self._page()
         if page == "canvas":
             self._add_specs(CANVAS_SPECS, ("canvas",))
             self._add_slide_options()
         elif page == "container":
             self._add_container_picker()
-            self._add_specs(CONTAINER_SPECS,
-                            ("containers", self._container_index))
+            prefix = ("containers", self._container_index)
+            self._add_specs(CONTAINER_SPECS, prefix)
+            self._link_container_limits(prefix)
         else:
             self._add_block_bar()
             prefix = ("containers", self._container_index, "blocks",
@@ -683,6 +690,36 @@ class ThemePropertyEditor(QWidget):
                 paths.append(prefix + tuple(spec["path"]))
         return paths
 
+    def _link_container_limits(self, prefix: tuple) -> None:
+        """Min ≤ Max, in whichever units the two fields currently show."""
+        for low_key, high_key, axis in (
+                ("min_width", "max_width", "width"),
+                ("min_height", "max_height", "height")):
+            low = self._field_widgets.get(prefix + (low_key,))
+            high = self._field_widgets.get(prefix + (high_key,))
+            if low is None or high is None:
+                continue
+            high_path = prefix + (high_key,)
+            low_path = prefix + (low_key,)
+            low.set_limit_providers(maximum=(
+                lambda unit, path=high_path, ax=axis:
+                self._sibling_limit(path, ax, unit)))
+            high.set_limit_providers(minimum=(
+                lambda unit, path=low_path, ax=axis:
+                self._sibling_limit(path, ax, unit)))
+
+    def _sibling_limit(self, path: tuple, axis: str,
+                       unit: str) -> Optional[float]:
+        widget = self._field_widgets.get(path)
+        if widget is None:
+            return None
+        value = widget.numeric_value()
+        if value is None:
+            return None
+        total = schema.canvas_axis(self._doc, axis)
+        other = getattr(widget, "_unit", "")
+        return schema.convert_length(value, other, unit, total)
+
     def _add_specs(self, specs: list[dict], prefix: tuple) -> None:
         for spec in specs:
             if spec["kind"] == "note":
@@ -708,6 +745,8 @@ class ThemePropertyEditor(QWidget):
                               full_width=spec.get("full", False) or chips)
             self._layout.addWidget(row)
             self._bind(widget, path, spec)
+            if isinstance(widget, NumberField):
+                self._field_widgets[path] = widget
             if path == ("canvas", "background"):
                 # The reset glyph restores the schema default through the same
                 # document write every other background edit uses.
@@ -766,22 +805,51 @@ class ThemePropertyEditor(QWidget):
                 return float(value)
         return 0.0
 
+    @staticmethod
+    def _converter(total: float):
+        return lambda value, old, new: schema.convert_length(
+            value, old, new, total)
+
+    def _length_limits(self, leaf: str, units: list[str]):
+        """Per-mode ranges for a length field, canvas-aware for px/%."""
+        if "px" in units and "%" in units:
+            axis = "height" if "height" in leaf else "width"
+            total = schema.canvas_axis(self._doc, axis)
+            if leaf in ("width", "height") or leaf.startswith(
+                    ("min_", "max_")):
+                return schema.size_limits(total), self._converter(total)
+            return schema.offset_limits(total), self._converter(total)
+        ranges = schema.limits_for(leaf)
+        if ranges:
+            narrowed = {unit: ranges[unit] for unit in units
+                        if unit in ranges}
+            return (narrowed or ranges), None
+        return None, None
+
     def _make(self, spec: dict, initial: Any) -> Optional[QWidget]:
         kind = spec["kind"]
+        leaf = spec["path"][-1] if spec["path"] else ""
         if kind in ("int", "int_null"):
+            ranges = schema.limits_for(leaf)
             return NumberField(
                 "" if initial is None else initial,
                 integer=True, step=spec.get("step", 1),
                 nullable=(kind == "int_null"),
+                unit_ranges=ranges,
                 placeholder="Default")
         if kind == "float":
+            ranges = schema.limits_for(leaf)
             return NumberField(0.0 if initial is None else initial,
-                               step=spec.get("step", 0.1))
+                               step=spec.get("step", 0.1),
+                               unit_ranges=ranges)
         if kind in ("length", "length_null"):
+            units = list(spec.get("units", ["px", "em"]))
+            ranges, converter = self._length_limits(leaf, units)
             return NumberField(
-                _length_text(initial), units=spec.get("units", ["px", "em"]),
+                _length_text(initial), units=units,
                 nullable=True,
                 keywords=spec.get("keywords", ()),
+                unit_ranges=ranges, unit_converter=converter,
                 placeholder="Default" if kind == "length_null" else "Inherit")
         if kind == "bool":
             return Switch(bool(initial))
@@ -812,12 +880,7 @@ class ThemePropertyEditor(QWidget):
                                palette=self._palette, allow_shared=allow,
                                structured=True)
         if kind in ("text", "font"):
-            widget = TextInput(str(initial or ""))
-            if spec.get("read_only"):
-                setter = getattr(widget, "setReadOnly", None)
-                if callable(setter):
-                    setter(True)
-            return widget
+            return TextInput(str(initial or ""))
         return None
 
     def _bind(self, widget: QWidget, path: tuple, spec: dict) -> None:

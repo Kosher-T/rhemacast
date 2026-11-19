@@ -65,28 +65,71 @@ body, html {
     isolation: isolate;
 }
 
-/* Glassmorphism Container — defaults, overridden by theme via JS */
+/* Container — the assigned rectangle, nothing more.
+   `width`/`height` come from the theme and `box-sizing: border-box` (global
+   reset) plus `margin: 0` make them exact. This element paints the square
+   container background and owns the content padding; the border ring, the
+   border fill and the radius live on `.rc-border-layer` inside it. The old
+   rule's `min-width: 60%` / `max-width: 80%` silently resized authored
+   panels (a 1920x1080 container rendered 1536x1080) and pushed them off the
+   canvas. */
 #container, .rc-container {
-    max-width: var(--rc-max-width, 80%);
-    min-width: var(--rc-min-width, 60%);
     width: var(--rc-width, auto);
     height: var(--rc-height, auto);
+    margin: 0;
     padding: var(--rc-padding, 40px);
-    border-radius: var(--rc-border-radius, 24px);
-    background: var(--rc-container-bg, rgba(15, 23, 42, 0.6));
+    background: var(--rc-container-bg, transparent);
     backdrop-filter: var(--rc-backdrop-filter, blur(16px));
     -webkit-backdrop-filter: var(--rc-backdrop-filter, blur(16px));
-    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border: 0;
+    border-radius: 0;
     box-shadow: var(--rc-container-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset);
-    
+
     display: var(--rc-container-display, block);
     flex-direction: var(--rc-container-flex-direction, column);
     justify-content: var(--rc-container-justify-content, flex-start);
     align-items: var(--rc-container-align-items, stretch);
-    
+
+    position: relative;
+    /* Own stacking context so the border layer's negative z-index paints
+       above this element's background and below its content, instead of
+       falling behind the canvas. */
+    isolation: isolate;
     transition: none;
     opacity: 1;
     transform: translateY(0) scale(1);
+}
+
+/* Border layer — the border shape only.
+
+   A real child element rather than a pseudo-element: per-side borders, string
+   shorthands and the `border.draw` SVG overlay all write to it directly.
+   `inset` is set by the renderer to `border_padding` minus the content
+   padding (a layer's containing block is the container's padding box), so
+   with border padding 0 the ring's outer edge is exactly the container edge
+   and the border is drawn inside it — `border-box` keeps the ring from
+   changing the rectangle. */
+.rc-border-layer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    box-sizing: border-box;
+    z-index: -1;
+    pointer-events: none;
+    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border-radius: var(--rc-border-radius, 24px);
+    background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
+}
+
+/* Legacy v1 absolute panels (#ct-text/#ct-reference/#ct-translation) place
+   their text by canvas coordinates and have no layer of their own, so they
+   keep the ring and fill on the element itself. */
+#ct-text, #ct-reference, #ct-translation {
+    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border-radius: var(--rc-border-radius, 24px);
+    background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
 }
 
 #container.hidden, .rc-container.hidden {
@@ -199,6 +242,7 @@ body, html {
 <body>
 <div id="stage">
     <div id="container" class="hidden" aria-live="polite" aria-atomic="true" role="status">
+        <div class="rc-border-layer" aria-hidden="true"></div>
         <div id="verse-content">
             <h1 id="verse-text" aria-label="Verse text"></h1>
             <p id="verse-ref">
@@ -277,7 +321,8 @@ function connect() {
 function resetTheme() {
     const root = document.documentElement;
     const props = [
-        "--rc-container-bg", "--rc-container-border", "--rc-border-radius",
+        "--rc-container-bg", "--rc-border-fill", "--rc-container-border",
+        "--rc-border-radius",
         "--rc-container-shadow", "--rc-backdrop-filter", "--rc-padding",
         "--rc-max-width", "--rc-min-width", "--rc-width", "--rc-height",
         "--rc-container-display", "--rc-container-flex-direction",
@@ -324,6 +369,13 @@ function resetTheme() {
             container.style["border" + side + "Style"] = "";
             container.style["border" + side + "Color"] = "";
         });
+        // The ring and border fill live on the layer, so clearing only the
+        // container would leave the old theme's paint on screen.
+        const layer = _borderLayer(container);
+        if (layer) {
+            layer.removeAttribute("style");
+            layer.innerHTML = "";
+        }
     }
     const verseContent = document.getElementById("verse-content");
     if (verseContent && verseRef && verseText) {
@@ -363,7 +415,13 @@ function _applyBorder(el, border) {
     // §4.2.1: the base border is one shorthand and each authored side
     // overrides it. Re-setting the shorthand every time also clears any
     // longhands a previous theme wrote, so nothing leaks between containers.
-    if (!el || !el.style || border == null) return;
+    if (!el || !el.style) return;
+    if (border == null) {
+        // No authored border means no ring at all: the stylesheet default is
+        // a fallback for themes that never ran through applyTheme.
+        el.style.border = "none";
+        return;
+    }
     if (border === "none") {
         el.style.border = "none";
         return;
@@ -389,6 +447,97 @@ function _applyBorder(el, border) {
         el.style["border" + side + "Style"] = style;
         el.style["border" + side + "Color"] = color;
     });
+}
+
+// ─── Container paint layers ─────────────────────────────────────────────
+// A container paints two things, in order:
+//   1. its own background — the full assigned rectangle, square corners,
+//      painted first (`container_background`);
+//   2. a border layer — the border shape alone, inset by `border_padding`,
+//      carrying the border fill (`background`) and the radius.
+// The layer is a real child element, not a pseudo-element, so per-side
+// borders, string shorthands and the `border.draw` overlay can write to it
+// directly. `z-index: -1` inside an isolated stacking context paints it
+// above the container's own background and below the content.
+
+function _borderLayer(el) {
+    if (!el || typeof el.querySelector !== "function") return null;
+    const layer = el.querySelector(".rc-border-layer");
+    return layer && layer.parentElement === el ? layer : null;
+}
+
+function _ensureBorderLayer(el) {
+    let layer = _borderLayer(el);
+    if (layer) return layer;
+    if (!el || typeof document === "undefined"
+        || typeof document.createElement !== "function") return null;
+    layer = document.createElement("div");
+    layer.className = "rc-border-layer";
+    layer.setAttribute("aria-hidden", "true");
+    el.insertBefore(layer, el.firstChild || null);
+    return layer;
+}
+
+function _containerRadius(c, canvasW) {
+    let value = null;
+    if (c && c.border_radius != null) {
+        value = _resolveLength(c.border_radius, canvasW);
+    } else if (c && typeof c.border === "object" && c.border
+               && c.border.radius != null) {
+        value = c.border.radius;
+    }
+    if (value == null) return "0px";
+    return (typeof value === "number") ? (value + "px") : String(value);
+}
+
+function _paintLength(value, axis, fallback) {
+    if (value == null) return fallback;
+    const resolved = _resolveLength(value, axis);
+    return resolved == null ? fallback : (resolved + "px");
+}
+
+function _applyContainerPaint(el, c, canvasW) {
+    if (!el || !el.style || !c) return;
+    // 1. Outer fill: exactly the assigned rectangle, square corners. When
+    // the border shape is rounded, this is what shows in the corner gaps.
+    el.style.background = resolveBackground(c.container_background);
+    el.style.border = "0";
+    el.style.borderRadius = "0";
+    // Shadow and backdrop stay on the container: an element's own shadow is
+    // not clipped by its own overflow, a child's would be.
+    if (c.box_shadow && c.box_shadow !== "none") {
+        let bs = c.box_shadow;
+        if (typeof bs === "object" && bs) {
+            bs = (bs.inset ? "inset " : "") + (bs.x || 0) + "px " + (bs.y || 0)
+                + "px " + (bs.blur || 0) + "px " + (bs.spread || 0) + "px "
+                + (bs.color || "rgba(0,0,0,0.5)");
+        }
+        el.style.boxShadow = bs;
+    } else {
+        el.style.boxShadow = "none";
+    }
+    if (c.backdrop_filter && c.backdrop_filter !== "none") {
+        el.style.backdropFilter = c.backdrop_filter;
+    } else {
+        el.style.backdropFilter = "";
+    }
+
+    // 2. Border shape. An absolutely positioned child's containing block is
+    // the container's padding box, i.e. its inner border edge — and the
+    // container draws no border of its own, so the padding box IS the
+    // assigned rectangle and `border_padding` is the whole inset. Content
+    // padding does not move the layer: it sits inside the same box.
+    const layer = _ensureBorderLayer(el);
+    if (!layer) return;
+    const bp = _resolveLength(c.border_padding, canvasW);
+    const gap = (bp == null || bp < 0) ? 0 : bp;
+    layer.style.top = gap + "px";
+    layer.style.right = gap + "px";
+    layer.style.bottom = gap + "px";
+    layer.style.left = gap + "px";
+    _applyBorder(layer, c.border);
+    layer.style.background = resolveBackground(c.background);
+    layer.style.borderRadius = _containerRadius(c, canvasW);
 }
 
 function _computePosition(pos, width, height, canvasW, canvasH) {
@@ -564,7 +713,8 @@ function applyTheme(theme, slideFormat) {
     const canvasH = (theme.canvas && theme.canvas.height) || 1080;
 
     // Container
-    if (c.background)        root.style.setProperty("--rc-container-bg", c.background);
+    if (c.container_background) root.style.setProperty("--rc-container-bg", c.container_background);
+    if (c.background)        root.style.setProperty("--rc-border-fill", c.background);
     if (c.border) {
         let bVal = c.border;
         if (typeof bVal === "object" && bVal) {
@@ -575,8 +725,10 @@ function applyTheme(theme, slideFormat) {
         // to the stylesheet's 1px glass border.
         if (bVal) root.style.setProperty("--rc-container-border", bVal);
     }
-    // Per-side declarations cannot ride a single border custom property.
-    _applyBorder(container, c.border);
+    // Per-side declarations cannot ride a single border custom property, so
+    // the ring is painted by the container's border layer (see
+    // `_applyContainerPaint`). The variables stay for the legacy absolute
+    // `#ct-*` panels, which have no layer of their own.
     if (c.border_radius != null) {
         const br = _resolveLength(c.border_radius, canvasW);
         root.style.setProperty("--rc-border-radius", br != null ? (br + "px") : String(c.border_radius));
@@ -592,8 +744,12 @@ function applyTheme(theme, slideFormat) {
     }
     if (c.backdrop_filter)   root.style.setProperty("--rc-backdrop-filter", c.backdrop_filter);
     if (c.padding)           root.style.setProperty("--rc-padding", c.padding);
-    if (c.max_width != null) root.style.setProperty("--rc-max-width", typeof c.max_width === "number" ? (c.max_width + "px") : c.max_width);
-    if (c.min_width != null) root.style.setProperty("--rc-min-width", typeof c.min_width === "number" ? (c.min_width + "px") : c.min_width);
+    // The assigned rectangle is authoritative. The stylesheet used to cap a
+    // container at 80 % of the canvas and raise it to 60 %, which silently
+    // resized (and clipped) an authored 1920×1080 or a 600 px panel; min/max
+    // now come only from the theme.
+    container.style.minWidth = _paintLength(c.min_width, canvasW, "0px");
+    container.style.maxWidth = _paintLength(c.max_width, canvasW, "none");
     if (c.width != null)     root.style.setProperty("--rc-width", typeof c.width === "number" ? (c.width + "px") : c.width);
     if (c.height != null)    root.style.setProperty("--rc-height", typeof c.height === "number" ? (c.height + "px") : c.height);
     if (c.display)           root.style.setProperty("--rc-container-display", c.display);
@@ -665,6 +821,10 @@ function applyTheme(theme, slideFormat) {
     } else if (b.padding_bottom) {
         root.style.setProperty("--rc-padding-bottom", b.padding_bottom);
     }
+
+    // Both paints are applied last: the content padding above decides where
+    // the content sits inside the assigned rectangle.
+    _applyContainerPaint(container, c, canvasW);
 
     // Resolved v2 themes carry no `container.display`/flex keys (those were
     // v1-only): the content stack is the flex box (spec §4.4). Without this
@@ -1560,27 +1720,6 @@ function _renderMultiContainers(data) {
         if (c.layer != null) el.style.zIndex = c.layer;
         if (c.opacity != null) el.style.opacity = c.opacity;
         if (c.overflow) el.style.overflow = c.overflow;
-        if (c.background) el.style.background = c.background;
-        else el.style.background = "";
-        _applyBorder(el, c.border);
-        if (c.border_radius != null) {
-            el.style.borderRadius = _resolveLength(c.border_radius, canvasW) + "px";
-        } else if (typeof c.border === "object" && c.border && c.border.radius != null) {
-            el.style.borderRadius = c.border.radius + "px";
-        } else {
-            el.style.borderRadius = "";
-        }
-        if (c.box_shadow && c.box_shadow !== "none") {
-            let bs = c.box_shadow;
-            if (typeof bs === "object" && bs) {
-                bs = (bs.inset ? "inset " : "") + (bs.x || 0) + "px " + (bs.y || 0) + "px " + (bs.blur || 0) + "px " + (bs.spread || 0) + "px " + (bs.color || "rgba(0,0,0,0.5)");
-            }
-            el.style.boxShadow = bs;
-        } else {
-            el.style.boxShadow = "none";
-        }
-        if (c.backdrop_filter && c.backdrop_filter !== "none") el.style.backdropFilter = c.backdrop_filter;
-        else el.style.backdropFilter = "";
 
         const blocks = _getContainerBlocks(c);
         const b = blocks.body;
@@ -1595,7 +1734,11 @@ function _renderMultiContainers(data) {
         const pl = (b.padding_left != null ? b.padding_left : b.padding) || 0;
         el.style.padding = `${pt}px ${pr}px ${pb}px ${pl}px`;
 
+        // Rebuild from scratch: the border layer is recreated first and the
+        // blocks follow it, so every re-render starts from one known DOM.
         el.innerHTML = "";
+        _applyContainerPaint(el, c, canvasW);
+
         const t = _authoredBlock(c, "text");
         const r = _authoredBlock(c, "reference");
         const tr = _authoredBlock(c, "translation");
@@ -2405,13 +2548,17 @@ function _borderDrawTiming(el, track) {
 }
 
 function _playBorderDraw(el, track) {
-    const timing = _borderDrawTiming(el, track);
+    // Containers paint their ring on the border layer, so the overlay has to
+    // follow the border it is replacing: measuring the container itself would
+    // read `border: 0` and draw nothing.
+    const target = _borderLayer(el) || el;
+    const timing = _borderDrawTiming(target, track);
     if (!timing) return 0;
     const animate = timing.duration > 0 && timing.from !== timing.to;
     // A full static border needs no overlay. A partial draw does, even when
     // it has no duration: the final state is part of the border.
     if (animate || timing.to < 1) {
-        _applyBorderDrawOverlay(el, track, timing, animate);
+        _applyBorderDrawOverlay(target, track, timing, animate);
     }
     return timing.delay + timing.duration;
 }
@@ -4661,7 +4808,6 @@ if (document.fonts && document.fonts.ready) {
         } catch (e) {}
     });
 }
-
 </script>
 </body>
 </html>"""

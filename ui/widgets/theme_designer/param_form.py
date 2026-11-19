@@ -166,13 +166,17 @@ class ParamForm(QWidget):
             if kind == "length":
                 units = [unit or "px"]
                 unit = ""
+            active_unit = units[0] if units else (unit or "")
+            step = param.step or 1
             widget = NumberField(
                 value if value is not None else param.default,
                 minimum=param.minimum, maximum=param.maximum,
-                step=param.step or 1, integer=bool(
+                step=step, integer=bool(
                     param.step in (1, 50, 100) and float(
                         param.default or 0).is_integer()),
-                unit=unit, units=units)
+                unit=unit, units=units,
+                unit_ranges={active_unit: (param.minimum, param.maximum,
+                                           step)})
             _connect(widget, lambda *_: self._commit(param))
             return widget
         if kind == "enum":

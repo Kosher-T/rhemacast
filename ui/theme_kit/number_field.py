@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Optional
 
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent, QPoint, QRectF, QSize, Qt, QTimer, pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractButton, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget,
@@ -80,7 +82,8 @@ class _ValueEdit(QLineEdit):
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self.setFocus(Qt.FocusReason.MouseFocusReason)
-            self._owner._scrub_press(event.globalPosition().toPoint())
+            self._owner._scrub_press(event.globalPosition().toPoint(),
+                                     grabber=self)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -170,10 +173,27 @@ class NumberField(QWidget):
                  placeholder: str = "Not set",
                  unit_converter: Optional[
                      Callable[[float, str, str], float]] = None,
+                 unit_ranges: Optional[
+                     dict[str, tuple[Optional[float], Optional[float],
+                                     float]]] = None,
+                 minimum_provider: Optional[
+                     Callable[[str], Optional[float]]] = None,
+                 maximum_provider: Optional[
+                     Callable[[str], Optional[float]]] = None,
                  label: str = "", inline_label: str = "", parent=None):
         super().__init__(parent)
         self._minimum = minimum
         self._maximum = maximum
+        #: Per-unit ``(minimum, maximum, step)``. When present it wins over the
+        #: flat ``minimum``/``maximum``/``step`` for the active unit.
+        self._unit_ranges: dict[
+            str, tuple[Optional[float], Optional[float], float]] = {
+                str(unit_name): (rng[0], rng[1], float(rng[2]))
+                for unit_name, rng in (unit_ranges or {}).items()}
+        #: Dynamic bounds (for example "never above the Max field"). Providers
+        #: receive the active unit; ``None`` releases the constraint.
+        self._minimum_provider = minimum_provider
+        self._maximum_provider = maximum_provider
         self._step = float(step) if step else 1.0
         self._coarse = (float(coarse_step) if coarse_step is not None
                         else self._step * 10)
@@ -204,8 +224,14 @@ class NumberField(QWidget):
         self._scrub_start = QPoint()
         self._scrub_start_value: Any = None
         self._scrub_last_emitted: Any = None
+        self._scrub_grabber: Optional[QWidget] = None
         self._hover = False
         self._warning = ""
+        self._limit_hit = False
+        self._limit_timer = QTimer(self)
+        self._limit_timer.setSingleShot(True)
+        self._limit_timer.setInterval(220)
+        self._limit_timer.timeout.connect(self._clear_limit)
         self._accessible = label or self._inline_label_text
 
         layout = QHBoxLayout(self)
@@ -236,7 +262,21 @@ class NumberField(QWidget):
         layout.addWidget(self._suffix)
 
         self._unit_button: Optional[CompactDropdown] = None
-        if self._units or self._keywords:
+        self._unit_label: Optional[QLabel] = None
+        if len(self._units) == 1 and not self._keywords:
+            # A parameter with one mode has nothing to choose: show the unit as
+            # plain text where the dropdown would sit, with no chevron and no
+            # hover affordance.
+            self._unit_label = QLabel(self._units[0], self)
+            self._unit_label.setStyleSheet(
+                f"color: {tokens.TEXT_MUTED};"
+                f"font-size: {tokens.TYPE_CAPTION}px;"
+                f"padding-right: 6px;"
+                "background: transparent;")
+            self._unit_label.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            layout.addWidget(self._unit_label)
+        elif self._units or self._keywords:
             options = []
             options.extend(ChoiceOption(u, u) for u in self._units)
             options.extend(ChoiceOption(k, k, muted=True, group="Keywords")
@@ -291,6 +331,10 @@ class NumberField(QWidget):
                   maximum: Optional[float], *, emit: bool = True) -> None:
         self._minimum = minimum
         self._maximum = maximum
+        if self._unit_ranges:
+            self._unit_ranges = {
+                unit: (minimum, maximum, rng[2])
+                for unit, rng in self._unit_ranges.items()}
         if self._value is not None:
             clamped = self._clamp(self._value)
             if clamped != self._value:
@@ -306,6 +350,31 @@ class NumberField(QWidget):
         self._fine = (float(fine) if fine is not None
                       else max(step / 10.0, 0.001))
 
+    def set_unit_ranges(self, ranges: Optional[dict] = None, *,
+                        minimum: Optional[float] = None,
+                        maximum: Optional[float] = None) -> None:
+        """Replace the per-unit ranges without rewriting the visible value.
+
+        Loading a theme, or resizing the canvas, must not clamp an authored
+        value: the field keeps showing what the document stores and only the
+        next user edit applies the new bound.
+        """
+        self._unit_ranges = {
+            str(unit_name): (rng[0], rng[1], float(rng[2]))
+            for unit_name, rng in (ranges or {}).items()}
+        self._minimum = minimum
+        self._maximum = maximum
+        self.update()
+
+    def set_limit_providers(
+            self, *, minimum: Optional[
+                Callable[[str], Optional[float]]] = None,
+            maximum: Optional[
+                Callable[[str], Optional[float]]] = None) -> None:
+        """Attach dynamic bounds (a sibling field, a live canvas size)."""
+        self._minimum_provider = minimum
+        self._maximum_provider = maximum
+
     def set_units(self, units: Iterable[str], *,
                   keywords: Iterable[str] = ()) -> None:
         self._units = [str(u) for u in units]
@@ -316,6 +385,8 @@ class NumberField(QWidget):
                 + [ChoiceOption(k, k, muted=True, group="Keywords")
                    for k in self._keywords],
                 value=self._unit, emit=False)
+        if self._unit_label is not None:
+            self._unit_label.setText(self._units[0] if self._units else "")
         self._sync_display()
 
     def set_warning(self, text: str) -> None:
@@ -344,23 +415,76 @@ class NumberField(QWidget):
     def _tooltip_text(self) -> str:
         if self._warning:
             return self._warning
-        if self._minimum is None and self._maximum is None:
+        low, high, _step = self._active_limits()
+        if low is None and high is None:
             return self._accessible or "Any value"
         suffix = (self._unit if (self._units or self._fixed_unit)
                   else self._display_suffix)
-        low = "−∞" if self._minimum is None else format_number(
-            self._minimum, integer=self._integer, decimals=self._decimals)
-        high = "∞" if self._maximum is None else format_number(
-            self._maximum, integer=self._integer, decimals=self._decimals)
+        text_low = "−∞" if low is None else format_number(
+            low, integer=self._integer, decimals=self._decimals)
+        text_high = "∞" if high is None else format_number(
+            high, integer=self._integer, decimals=self._decimals)
         name = f"{self._accessible}: " if self._accessible else ""
-        return f"{name}{low} – {high}{suffix}"
+        return f"{name}{text_low} – {text_high}{suffix}"
+
+    def _active_limits(self) -> tuple[Optional[float], Optional[float],
+                                      Optional[float]]:
+        """The bounds and step for the unit on screen right now."""
+        low: Optional[float] = self._minimum
+        high: Optional[float] = self._maximum
+        step: Optional[float] = None
+        unit = self._unit
+        if unit in self._unit_ranges:
+            low, high, step = self._unit_ranges[unit]
+        if self._minimum_provider is not None:
+            try:
+                extra = self._minimum_provider(unit)
+            except Exception:
+                extra = None
+            if extra is not None:
+                low = extra if low is None else max(low, extra)
+        if self._maximum_provider is not None:
+            try:
+                extra = self._maximum_provider(unit)
+            except Exception:
+                extra = None
+            if extra is not None:
+                high = extra if high is None else min(high, extra)
+        return low, high, step
 
     def _clamp(self, value: float) -> float:
-        if self._minimum is not None:
-            value = max(self._minimum, value)
-        if self._maximum is not None:
-            value = min(self._maximum, value)
-        return float(round(value, 6))
+        low, high, _step = self._active_limits()
+        requested = float(value)
+        if low is not None:
+            value = max(low, value)
+        if high is not None:
+            value = min(high, value)
+        value = float(round(value, 6))
+        if value != requested:
+            self._flash_limit()
+        return value
+
+    def _flash_limit(self) -> None:
+        """Tint the border for a moment when an edit hits a bound."""
+        self._limit_hit = True
+        self._limit_timer.start()
+        self.update()
+
+    def _clear_limit(self) -> None:
+        self._limit_hit = False
+        self.update()
+
+    def _active_step(self) -> float:
+        _low, _high, step = self._active_limits()
+        return float(step) if step else self._step
+
+    def _coarse_step(self) -> float:
+        _low, _high, step = self._active_limits()
+        return step * 10 if step else self._coarse
+
+    def _fine_step(self) -> float:
+        _low, _high, step = self._active_limits()
+        return max(step / 10.0, 0.001) if step else self._fine
 
     def _coerce_commit(self, value: float) -> float:
         if self._integer:
@@ -457,6 +581,10 @@ class NumberField(QWidget):
     def _begin_typing(self) -> None:
         if self._typing:
             return
+        # A double-click opens the text editor from a press that already
+        # began a scrub: drop the scrub and its pointer grab first.
+        self._release_scrub_grab()
+        self._scrub_candidate = False
         self._typing = True
         self._typing_original = self.value()
         self._edit.setReadOnly(False)
@@ -485,6 +613,10 @@ class NumberField(QWidget):
                 self._adopt(before)
         else:
             self._adopt(text)
+        if self._value is not None:
+            clamped = self._clamp(self._value)
+            if clamped != self._value:
+                self._value = self._coerce_commit(clamped)
         self._sync_display()
         after = self.value()
         if after != before:
@@ -513,13 +645,14 @@ class NumberField(QWidget):
                  *, emit: bool = True) -> None:
         if self._keyword:
             return
+        low, _high, _step = self._active_limits()
         base = self._value if self._value is not None else (
-            self._minimum if self._minimum is not None else 0.0)
-        step = self._step
+            low if low is not None else 0.0)
+        step = self._active_step()
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            step = self._coarse
+            step = self._coarse_step()
         elif modifiers & Qt.KeyboardModifier.AltModifier:
-            step = self._fine
+            step = self._fine_step()
         new_value = self._clamp(base + direction * step)
         before = self.value()
         self._value = self._coerce_commit(new_value)
@@ -555,29 +688,60 @@ class NumberField(QWidget):
         if after != before:
             self.changed.emit(after)
 
-    def _scrub_press(self, global_pos: QPoint) -> None:
+    def _ensure_numeric_unit(self) -> None:
+        """Scrubbing a keyword must land on a real unit, not ``auto``."""
+        if self._unit in self._keywords:
+            self._unit = self._units[0] if self._units else ""
+            if self._unit_button is not None:
+                self._unit_button.set_value(self._unit, emit=False)
+
+    def _scrub_press(self, global_pos: QPoint,
+                     grabber: Optional[QWidget] = None) -> None:
         if self._keyword:
             # Scrubbing a keyword has no number to move; start from the last
             # numeric value so the control stays useful.
             self._keyword = ""
             self._value = self._last_number
+            self._ensure_numeric_unit()
             self._sync_display()
         self._scrub_candidate = True
         self._scrub_moved = False
         self._scrub_start = global_pos
-        self._scrub_start_value = self.value()
-        self._scrub_last_emitted = self._scrub_start_value
+        # Anchor on the numeric value, not on the display string: the value
+        # must be `start + travel * step` for the whole gesture. Using the
+        # rendered text here re-anchored every move and compounded travel.
+        self._scrub_start_value = self._value
+        self._scrub_last_emitted = self.value()
+        # Follow the pointer for the whole gesture, including the part that
+        # leaves the field: the value is driven by horizontal travel from
+        # this press point, never by where the pointer happens to be.
+        self._release_scrub_grab()
+        if grabber is not None:
+            grabber.grabMouse()
+            self._scrub_grabber = grabber
+
+    def _release_scrub_grab(self) -> None:
+        grabber = self._scrub_grabber
+        self._scrub_grabber = None
+        if grabber is None:
+            return
+        try:
+            grabber.releaseMouse()
+        except RuntimeError:
+            # The grabber can be gone if the panel was rebuilt mid-drag.
+            pass
 
     def begin_scrub(self) -> None:
         if self._keyword:
             self._keyword = ""
             self._value = self._last_number
+            self._ensure_numeric_unit()
             self._sync_display()
         self._scrub_candidate = True
         self._scrub_moved = False
         self._scrub_start = QPoint(0, 0)
-        self._scrub_start_value = self.value()
-        self._scrub_last_emitted = self._scrub_start_value
+        self._scrub_start_value = self._value
+        self._scrub_last_emitted = self.value()
 
     def _scrub_move(self, global_pos: QPoint,
                     modifiers=Qt.KeyboardModifier.NoModifier) -> None:
@@ -591,17 +755,19 @@ class NumberField(QWidget):
 
     def scrub_to(self, dx: int,
                  modifiers=Qt.KeyboardModifier.NoModifier) -> None:
+        if self._keyword:
+            self._ensure_numeric_unit()
         if self._scrub_start_value is None:
             base = self._value if self._value is not None else 0.0
         else:
             base = float(self._scrub_start_value
                          if not isinstance(self._scrub_start_value, str)
                          else (self._value or 0.0))
-        step = self._step
+        step = self._active_step()
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            step = self._coarse
+            step = self._coarse_step()
         elif modifiers & Qt.KeyboardModifier.AltModifier:
-            step = self._fine
+            step = self._fine_step()
         units = dx / 3.0
         value = self._clamp(base + round(units) * step)
         self._value = self._coerce_commit(value)
@@ -616,10 +782,11 @@ class NumberField(QWidget):
     def _scrub_release(self) -> None:
         was_candidate = self._scrub_candidate
         self._scrub_candidate = False
+        self._release_scrub_grab()
         if not was_candidate:
             return
         current = self.value()
-        if self._scrub_moved and current != self._scrub_start_value:
+        if self._scrub_moved and self._value != self._scrub_start_value:
             self.changed.emit(current)
         elif not self._scrub_moved:
             # A plain click on the field is a focus gesture.
@@ -627,10 +794,12 @@ class NumberField(QWidget):
 
     def end_scrub(self) -> None:
         if not self._scrub_candidate:
+            self._release_scrub_grab()
             return
         self._scrub_candidate = False
+        self._release_scrub_grab()
         current = self.value()
-        if current != self._scrub_start_value:
+        if self._value != self._scrub_start_value:
             self.changed.emit(current)
         elif not self._scrub_moved:
             self._edit.setFocus(Qt.FocusReason.MouseFocusReason)
@@ -649,6 +818,7 @@ class NumberField(QWidget):
     def _on_unit_changed(self, unit: str) -> None:
         before = self.value()
         old_unit = self._unit
+        old_value = self._value
         self._unit = unit
         if unit in self._keywords:
             if self._value is not None:
@@ -660,15 +830,52 @@ class NumberField(QWidget):
                 try:
                     converted = self._converter(
                         float(self._value), old_unit, unit)
-                    self._value = self._coerce_commit(converted)
+                    if converted is not None:
+                        self._value = self._coerce_commit(converted)
                 except Exception:
                     pass
+            if self._value is not None:
+                clamped = self._clamp(self._value)
+                if clamped != self._value:
+                    self._value = self._coerce_commit(clamped)
         self._sync_display()
         after = self.value()
-        if after != before:
-            self.changed.emit(after)
+        if after == before:
+            return
+        # 0px and 0% render the same: switching units must not, by itself,
+        # make the document dirty. The next real edit writes the new unit.
+        if (old_unit != unit and self._keyword == ""
+                and old_value == 0 and self._value == 0):
+            return
+        self.changed.emit(after)
 
     # ── painting ────────────────────────────────────────────────────────────
+    def mousePressEvent(self, event) -> None:
+        # The frame and the space around the text are part of the control:
+        # pressing anywhere starts the same scrub, anchored at the press.
+        if (event.button() == Qt.MouseButton.LeftButton
+                and not self._typing and self.isEnabled()):
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self._scrub_press(event.globalPosition().toPoint(), grabber=self)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._scrub_candidate:
+            self._scrub_move(event.globalPosition().toPoint(),
+                             event.modifiers())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._scrub_candidate:
+            self._scrub_release()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def enterEvent(self, event) -> None:
         self._hover = True
         self.update()
@@ -702,7 +909,8 @@ class NumberField(QWidget):
                 if event.button() == Qt.MouseButton.LeftButton:
                     if not self._typing:
                         self._edit.setFocus(Qt.FocusReason.MouseFocusReason)
-                        self._scrub_press(event.globalPosition().toPoint())
+                        self._scrub_press(
+                            event.globalPosition().toPoint(), grabber=self)
                         return True
             elif event.type() == QEvent.Type.MouseMove:
                 if self._scrub_candidate:
@@ -728,6 +936,8 @@ class NumberField(QWidget):
         painter.setBrush(QColor(surface))
         if not enabled:
             edge = tokens.BORDER_HAIRLINE
+        elif self._limit_hit:
+            edge = tokens.ACCENT_BORDER
         elif focused:
             edge = tokens.ACCENT
         elif self._warning:

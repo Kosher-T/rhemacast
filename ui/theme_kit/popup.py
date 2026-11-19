@@ -18,7 +18,7 @@ from PyQt6.QtCore import (
     QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, pyqtSignal,
 )
 from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from ui import tokens
 
@@ -89,6 +89,32 @@ class PopupSurface(QWidget):
         painter.end()
 
     # ── placement ───────────────────────────────────────────────────────────
+    def follow(self, widget: Optional[QWidget]) -> None:
+        """Adopt a transient parent before the surface is shown.
+
+        Wayland refuses to map a tooltip or popup without a transient parent
+        ("Failed to create popup. Ensure popup ... has a transientParent
+        set"). The kit tooltip is a long-lived singleton created before any
+        window exists, so the parent is adopted on every show. This sets the
+        platform window's transient parent; it does not reparent the widget,
+        so a settings dialog closing can never destroy the shared surface.
+        """
+        window = widget.window() if widget is not None else None
+        if window is None:
+            window = QApplication.activeWindow()
+        if window is None:
+            return
+        if window.windowHandle() is None:
+            window.winId()
+        parent = window.windowHandle()
+        if parent is None:
+            return
+        if self.windowHandle() is None:
+            self.winId()
+        handle = self.windowHandle()
+        if handle is not None and handle.transientParent() is not parent:
+            handle.setTransientParent(parent)
+
     @staticmethod
     def _screen_for(global_point: QPoint):
         screen = QGuiApplication.screenAt(global_point)
@@ -252,6 +278,7 @@ class TooltipManager(QObject):
         if not text:
             return
         self._popup.set_text(text, self._more)
+        self._popup.follow(widget)
         self._popup.show_at(QCursor.pos() + QPoint(10, 18), width=270,
                             max_height=180)
         self._popup.raise_()
@@ -294,6 +321,7 @@ class TooltipManager(QObject):
                 return True
             self._popup.set_text(
                 value, str(obj.property("_rc_kit_tooltip_more") or ""))
+            self._popup.follow(obj)
             self._popup.show_at(QCursor.pos() + QPoint(10, 18), width=270,
                                 max_height=180)
             return True

@@ -43,28 +43,71 @@ body, html {
     isolation: isolate;
 }
 
-/* Glassmorphism Container — defaults, overridden by theme via JS */
+/* Container — the assigned rectangle, nothing more.
+   `width`/`height` come from the theme and `box-sizing: border-box` (global
+   reset) plus `margin: 0` make them exact. This element paints the square
+   container background and owns the content padding; the border ring, the
+   border fill and the radius live on `.rc-border-layer` inside it. The old
+   rule's `min-width: 60%` / `max-width: 80%` silently resized authored
+   panels (a 1920x1080 container rendered 1536x1080) and pushed them off the
+   canvas. */
 #container, .rc-container {
-    max-width: var(--rc-max-width, 80%);
-    min-width: var(--rc-min-width, 60%);
     width: var(--rc-width, auto);
     height: var(--rc-height, auto);
+    margin: 0;
     padding: var(--rc-padding, 40px);
-    border-radius: var(--rc-border-radius, 24px);
-    background: var(--rc-container-bg, rgba(15, 23, 42, 0.6));
+    background: var(--rc-container-bg, transparent);
     backdrop-filter: var(--rc-backdrop-filter, blur(16px));
     -webkit-backdrop-filter: var(--rc-backdrop-filter, blur(16px));
-    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border: 0;
+    border-radius: 0;
     box-shadow: var(--rc-container-shadow, 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset);
-    
+
     display: var(--rc-container-display, block);
     flex-direction: var(--rc-container-flex-direction, column);
     justify-content: var(--rc-container-justify-content, flex-start);
     align-items: var(--rc-container-align-items, stretch);
-    
+
+    position: relative;
+    /* Own stacking context so the border layer's negative z-index paints
+       above this element's background and below its content, instead of
+       falling behind the canvas. */
+    isolation: isolate;
     transition: none;
     opacity: 1;
     transform: translateY(0) scale(1);
+}
+
+/* Border layer — the border shape only.
+
+   A real child element rather than a pseudo-element: per-side borders, string
+   shorthands and the `border.draw` SVG overlay all write to it directly.
+   `inset` is set by the renderer to `border_padding` minus the content
+   padding (a layer's containing block is the container's padding box), so
+   with border padding 0 the ring's outer edge is exactly the container edge
+   and the border is drawn inside it — `border-box` keeps the ring from
+   changing the rectangle. */
+.rc-border-layer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    box-sizing: border-box;
+    z-index: -1;
+    pointer-events: none;
+    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border-radius: var(--rc-border-radius, 24px);
+    background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
+}
+
+/* Legacy v1 absolute panels (#ct-text/#ct-reference/#ct-translation) place
+   their text by canvas coordinates and have no layer of their own, so they
+   keep the ring and fill on the element itself. */
+#ct-text, #ct-reference, #ct-translation {
+    border: var(--rc-container-border, 1px solid rgba(255, 255, 255, 0.1));
+    border-radius: var(--rc-border-radius, 24px);
+    background: var(--rc-border-fill, rgba(15, 23, 42, 0.6));
 }
 
 #container.hidden, .rc-container.hidden {
