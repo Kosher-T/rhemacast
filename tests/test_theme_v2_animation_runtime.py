@@ -1009,6 +1009,18 @@ window.__run = async function () {
 """
 
 
+#: A container paints its ring on the ``.rc-border-layer`` child, inset by
+#: ``border_padding`` (display.js §4.2.1): the container element itself draws
+#: no border. Per-side assertions have to read the element that owns the ring,
+#: or they see 0px everywhere and blame the renderer.
+BORDER_DRIVER = STRUCTURE_DRIVER.replace(
+    'const ct = document.getElementById("container");',
+    'const ct = document.querySelector(".rc-border-layer");').replace(
+    'el => Object.assign({id: el.id,',
+    'el => Object.assign({id: el.id,\n'
+    '                           border: box(el.querySelector(".rc-border-layer") || el),')
+
+
 def _resolve(name: str) -> dict:
     from core.theme_loader import resolve_theme
     _, theme = resolve_theme(name)
@@ -1090,7 +1102,7 @@ def test_v2_reference_frames_renders_authored_border_sides(renderer):
     previous container's border) while the schema still validates.
     """
     log = _drive(renderer, theme=_resolve("reference_frames"),
-                 driver=STRUCTURE_DRIVER)
+                 driver=BORDER_DRIVER)
     shown = log["shown"]
     assert shown["errors"] == []
     box = shown["container"]
@@ -1110,7 +1122,7 @@ def test_v2_multi_container_blocks_stay_in_their_container(renderer):
     gold frame.
     """
     log = _drive(renderer, theme=_resolve("fullscreen_split"),
-                 driver=STRUCTURE_DRIVER)
+                 driver=BORDER_DRIVER)
     shown = log["shown"]
     assert shown["errors"] == []
     assert shown["texts"] == 1
@@ -1120,8 +1132,8 @@ def test_v2_multi_container_blocks_stay_in_their_container(renderer):
     cite = containers["rc-cont-cite"]
     assert (verse["texts"], verse["refs"]) == (1, 0)
     assert (cite["texts"], cite["refs"]) == (0, 1)
-    assert verse["top"] == "2px"
-    assert cite["top"] == "1px"
+    assert verse["border"]["top"] == "2px"
+    assert cite["border"]["top"] == "1px"
 
 
 @pytest.mark.skipif(CHROME is None, reason="no Chrome/Chromium available")

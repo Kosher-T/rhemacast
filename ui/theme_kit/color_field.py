@@ -851,10 +851,11 @@ class _ColorPopover(PopupSurface):
     def closeEvent(self, event) -> None:
         if self._cancelled:
             self.cancelled.emit()
-        else:
-            text = self.editor.value()
-            if text != self._field._value:
-                self.committed.emit(text)
+        elif self.editor.value() != self._field.committed_value():
+            # A drag still in flight is flushed; an unchanged popover writes
+            # nothing. Comparing against ``_value`` would always match: the
+            # preview path advances it on every pointer move.
+            self.committed.emit(self.editor.value())
         super().closeEvent(event)
 
 
@@ -883,6 +884,9 @@ class ColorField(QWidget):
                  parent=None):
         super().__init__(parent)
         self._value = "" if value is None else str(value)
+        #: The value the store holds. ``_value`` also carries the in-flight
+        #: drag value, so it cannot answer "did this commit change anything?".
+        self._committed_value = self._value
         self._palette = list(palette)
         self._palette_map = dict(self._palette)
         self._keywords = [str(k) for k in keywords]
@@ -936,13 +940,16 @@ class ColorField(QWidget):
 
     def set_value(self, value: Any, *, emit: bool = False) -> None:
         text = "" if value is None else str(value)
-        if text == self._value:
-            self._sync()
-            return
+        changed = text != self._committed_value
         self._value = text
+        self._committed_value = text
         self._sync()
-        if emit:
+        if emit and changed:
             self.changed.emit(self.value())
+
+    def committed_value(self) -> str:
+        """The value the store holds, ignoring an un-released drag value."""
+        return self._committed_value
 
     def set_palette(self, palette: Iterable[tuple[str, str]]) -> None:
         self._palette = list(palette)
@@ -988,13 +995,16 @@ class ColorField(QWidget):
             # Not something the kit can paint. Keep the caller's text; the
             # caller is the validator and may show a warning.
             self._value = raw
+            self._committed_value = raw
             self._sync()
             self.changed.emit(raw)
             return
-        if normalised == self._value:
+        if normalised == self._committed_value:
+            self._value = normalised
             self._sync()
             return
         self._value = normalised
+        self._committed_value = normalised
         self._sync()
         self.changed.emit(normalised)
 
@@ -1002,6 +1012,7 @@ class ColorField(QWidget):
         if not self._nullable or not self._value:
             return
         self._value = ""
+        self._committed_value = ""
         self._sync()
         self.changed.emit(None)
 
@@ -1024,24 +1035,34 @@ class ColorField(QWidget):
 
     def _on_popover_preview(self, text: str) -> None:
         self._value = "" if text is None else str(text)
-        self._edit.setText(display_color_text(self._value,
-                                              self._palette_map))
-        self._swatch.set_value(self._value, self._palette_map)
-        self._clear.setVisible(self._nullable and bool(self._value))
+        self._sync()
         self.preview.emit(self.value())
 
     def _on_popover_committed(self, text: str) -> None:
+        """Commit a finished edit (release, click, keyword, hex Return).
+
+        The dedupe compares against what the *store* holds, not ``_value``:
+        the preview path advances ``_value`` continuously while dragging, so
+        comparing with it swallowed every commit — the swatch and text showed
+        the new colour while the theme kept the old one.
+        """
         text = "" if text is None else str(text)
-        if text == self._value:
-            return
         self._value = text
         self._sync()
+        if text == self._committed_value:
+            return
+        self._committed_value = text
         self.changed.emit(self.value())
 
     def _on_popover_cancelled(self) -> None:
+        previous = self._value
         self._value = getattr(self, "_open_value", self._value)
         self._sync()
-        self.preview.emit(self.value())
+        if self._committed_value != self._value:
+            self._committed_value = self._value
+            self.changed.emit(self.value())
+        elif self._value != previous:
+            self.preview.emit(self.value())
 
     def _on_popover_closed(self) -> None:
         popover = self._popover

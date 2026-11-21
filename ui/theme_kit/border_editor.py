@@ -464,10 +464,17 @@ class BorderEditor(QWidget):
 
         layout.addWidget(self.custom_host)
 
+        # Commits are routed by the row that produced them: a base field owns
+        # the base, the side row owns the selected side's override. Routing
+        # both through one handler materialised a side override from the
+        # seeded side fields on every base edit, which pinned that side to the
+        # old base values.
         for signal in (self.width_field.changed, self.style_dropdown.changed,
-                       self.color_field.changed, self.side_width.changed,
-                       self.side_style.changed, self.side_color.changed):
-            signal.connect(self._emit_commit)
+                       self.color_field.changed):
+            signal.connect(self._emit_base_commit)
+        for signal in (self.side_width.changed, self.side_style.changed,
+                       self.side_color.changed):
+            signal.connect(self._emit_side_commit)
         for signal in (self.width_field.preview, self.color_field.preview,
                        self.side_width.preview, self.side_color.preview):
             signal.connect(self._emit_preview)
@@ -476,6 +483,10 @@ class BorderEditor(QWidget):
 
     # ── public ──────────────────────────────────────────────────────────────
     def value(self) -> Any:
+        """The border these fields describe, with committed side overrides."""
+        return self._compose(self._side_specs)
+
+    def _compose(self, side_specs: dict[str, dict[str, Any]]) -> Any:
         mode = self.mode.value()
         if mode == "none":
             return "none"
@@ -484,7 +495,7 @@ class BorderEditor(QWidget):
             return {"shared": name} if name else "none"
         base = self._live_base()
         sides: dict[str, dict[str, Any]] = {}
-        for side, spec in self._side_specs.items():
+        for side, spec in side_specs.items():
             diff = {key: value for key, value in spec.items()
                     if base.get(key) != value}
             if diff:
@@ -492,6 +503,24 @@ class BorderEditor(QWidget):
         if sides:
             base["sides"] = sides
         return base
+
+    def _live_side_specs(self) -> dict[str, dict[str, Any]]:
+        """``_side_specs`` with the side being dragged folded in.
+
+        A drag updates the fields, not the model: ``_side_specs`` only learns
+        the override on release. Composing a preview from the model therefore
+        dropped the side edit the operator was looking at, so the preview pane
+        froze while the width or colour of one side dragged.
+        """
+        if not self._editing_side:
+            return self._side_specs
+        specs = dict(self._side_specs)
+        spec = self._selected_side_spec()
+        if spec:
+            specs[self._editing_side] = spec
+        else:
+            specs.pop(self._editing_side, None)
+        return specs
 
     def set_value(self, value: Any) -> None:
         self._updating = True
@@ -546,29 +575,40 @@ class BorderEditor(QWidget):
         }
 
     def _sync_fields(self) -> None:
+        """Write every field from the model (a freshly loaded value)."""
         base = self._base
         self.width_field.set_value(base["width"])
         self.style_dropdown.set_options(
             [ChoiceOption(style, style.title()) for style in self._styles],
             value=base["style"])
         self.color_field.set_value(base["color"])
-        side = self._editing_side
-        if side:
-            spec = self._side_specs.get(side)
-            if spec:
-                values = dict(base)
-                values.update({key: value for key, value in spec.items()
-                               if key in base})
-            else:
-                values = dict(base)
-            self.side_width.set_value(values["width"])
-            self.side_style.set_options(
-                [ChoiceOption(style, style.title())
-                 for style in self._styles],
-                value=values["style"])
-            self.side_color.set_value(values["color"])
+        self._sync_side_fields()
         overrides = self._override_set()
         self._refresh_side_chrome(overrides)
+
+    def _sync_side_fields(self) -> None:
+        """Seed the selected side's row from the base the operator sees.
+
+        Reading ``_base`` here reset the whole base row to the value the
+        popover opened with as soon as a side was clicked — the base fields
+        are edited live and only ``_live_base()`` knows what they hold. It
+        also seeded the side from stale numbers, so touching one property
+        wrote the others into the override.
+        """
+        side = self._editing_side
+        if not side:
+            return
+        live = self._live_base()
+        spec = self._side_specs.get(side)
+        values = dict(live)
+        if spec:
+            values.update({key: value for key, value in spec.items()
+                           if key in live})
+        self.side_width.set_value(values["width"])
+        self.side_style.set_options(
+            [ChoiceOption(style, style.title()) for style in self._styles],
+            value=values["style"])
+        self.side_color.set_value(values["color"])
 
     def _override_set(self) -> set[str]:
         base = self._live_base()
@@ -602,31 +642,39 @@ class BorderEditor(QWidget):
 
     # ── events ──────────────────────────────────────────────────────────────
     def _on_mode(self, mode: str) -> None:
-        """Open the chosen editor without committing.
+        """Switch the editor and commit the new source.
 
-        Choosing Custom used to commit, and the popover closes on commit — so
-        the operator never got to set the border they had just asked for.
-        The switch is a preview: the popover stays open, and the first field
-        edit is the commit.
+        The switch used to be a preview only, because a commit closed the
+        surface. That made "None" a lie: it painted, then the dismiss rewound
+        the value, so the border came back. A commit keeps the surface open
+        now, so the switch can commit like any other edit.
         """
         self._apply_mode()
         if self._updating:
             return
-        self.preview.emit(self.value())
+        self.changed.emit(self.value())
 
     def _on_side_selected(self, side: str) -> None:
         if self._updating:
             return
         self._editing_side = side
-        self._sync_fields()
+        self._sync_side_fields()
+        self._refresh_side_chrome(self._override_set())
 
     def _clear_side(self) -> None:
         if self._editing_side:
             self._side_specs.pop(self._editing_side, None)
-            self._sync_fields()
+            self._sync_side_fields()
+            self._refresh_side_chrome(self._override_set())
             self._emit_commit()
 
     def _selected_side_spec(self) -> dict[str, Any]:
+        """Only what the side row changes; anything else inherits the base.
+
+        The colour row is seeded with the base colour, so storing it
+        unconditionally made every side edit an unremovable colour override
+        and stopped later base-colour edits from reaching that side.
+        """
         base = self._live_base()
         full = {
             "width": _tidy(self.side_width.numeric_value() or 0),
@@ -634,9 +682,27 @@ class BorderEditor(QWidget):
             "color": self.side_color.value() or "currentColor",
         }
         return {key: value for key, value in full.items()
-                if key == "color" or base.get(key) != value}
+                if base.get(key) != value}
 
     def _emit_commit(self, *_args) -> None:
+        """A source-level pick (the shared dropdown) commits the whole value."""
+        if self._updating:
+            return
+        self.changed.emit(self.value())
+
+    def _emit_base_commit(self, *_args) -> None:
+        """A base field writes the base only; sides keep their overrides."""
+        if self._updating:
+            return
+        # The fields are the base now: ``_sync_fields`` and the side seed read
+        # this, so a stale model rewrote the row with the values the popover
+        # opened with (and seeded sides from numbers nobody had on screen).
+        self._base = self._live_base()
+        self._refresh_side_chrome(self._override_set())
+        self.changed.emit(self.value())
+
+    def _emit_side_commit(self, *_args) -> None:
+        """The side row owns the selected side's override, nothing else."""
         if self._updating:
             return
         if self._editing_side:
@@ -651,7 +717,7 @@ class BorderEditor(QWidget):
     def _emit_preview(self, *_args) -> None:
         if self._updating:
             return
-        self.preview.emit(self.value())
+        self.preview.emit(self._compose(self._live_side_specs()))
 
 
 # ─── Compact field ──────────────────────────────────────────────────────────
@@ -708,25 +774,44 @@ class _BorderPopover(PopupSurface):
                  allow_shared=True, parent=None):
         super().__init__(parent)
         self._open_value = value
-        #: A commit closes the surface; that close is not a cancel. Without
-        #: this flag ``closeEvent`` emitted ``cancelled`` right after the
-        #: commit, the field rewound to the value it opened with, and the row
-        #: showed "None" again even though the edit had landed.
+        #: A commit writes through but keeps the surface open, so the close
+        #: that follows is a dismissal, not a cancel. Without this flag
+        #: ``closeEvent`` emitted ``cancelled``, the field rewound to the value
+        #: it opened with, and the row showed "None" again even though the
+        #: edit had landed.
         self._committed = False
+        #: A mode switch is a preview, not a commit. Tracking it separately
+        #: keeps a preview made *after* a commit honest: dismissing that still
+        #: rewinds it, while dismissing committed fields does not.
+        self._preview_open = False
         self.editor = BorderEditor(
             value, shared_options=shared_options, palette=palette,
             allow_shared=allow_shared, parent=self)
         self.content.addWidget(self.editor)
         self.editor.changed.connect(self._on_committed)
-        self.editor.preview.connect(self.previewed)
+        self.editor.preview.connect(self._on_previewed)
+
+    def _on_previewed(self, value: Any) -> None:
+        self._preview_open = True
+        self.previewed.emit(value)
 
     def _on_committed(self, value: Any) -> None:
+        """Write the edit through and stay open.
+
+        The surface edits several values (width, style, colour, per-side
+        overrides). Closing on the first commit made the rest unreachable: the
+        operator had to reopen the popover once per field, and a colour edit
+        closed it before the style could be set. Every commit lands on the
+        document immediately; the surface closes when it is dismissed (click
+        away or Escape), which is the contract the colour, paint and shadow
+        popovers already follow.
+        """
         self._committed = True
+        self._preview_open = False
         self.committed.emit(value)
-        self.close()
 
     def closeEvent(self, event) -> None:
-        if self.isVisible() and not self._committed:
+        if self.isVisible() and (self._preview_open or not self._committed):
             self.cancelled.emit()
         super().closeEvent(event)
 

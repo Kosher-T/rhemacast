@@ -414,6 +414,59 @@ or collides with an existing id is refused with the reason inline and the dialog
 stays open. Programmatic `add_container()` keeps the old generated
 `containerN` behaviour.
 
+**9. A multi-field popover behaves like one editor.** *Resolved: the Border
+surface commits every field and stays open until it is dismissed.*
+
+`_BorderPopover._on_committed` emitted the value and then called `close()`, so
+the first committed field took the whole surface down: the width landed, and
+the style, the colour and every per-side override each needed a fresh visit.
+A border could never be finished in one pass, and a colour edit closed the
+popover before the style could be set.
+
+- **A commit writes through and keeps the surface open.** The popover closes
+  only when it is dismissed: click away, Esc, or a second click on its field.
+  That is the contract `ColorField`, `PaintField` and `ShadowField` already
+  followed, so the Border surface now matches them.
+- **Single-choice surfaces still close on the pick.** The dropdown, the easing
+  picker and the sample list end their gesture with the choice; there is
+  nothing left to edit.
+- **The mode switch commits.** It used to be a preview only, because a commit
+  closed the surface; that made "None" a lie — it painted, the dismiss rewound
+  it, and the border came back. A switch is now one more committed edit, and
+  switching to None leaves the container without a border.
+- **Cancel semantics are kept for in-flight values.** A drag that never
+  committed (scrub in progress, keystroke not yet applied) still rewinds on
+  dismissal. The surface tracks the preview separately (`_preview_open`) so
+  committed values are never rewound with it.
+- **A base edit owns the base, a side edit owns that side.** The base row
+  writes the base only, and the side row stores just the keys it changes
+  relative to the base the operator sees. Selecting a side no longer rewrites
+  the base row (or seeds the side row) from the value the popover opened with
+  — which had reset a border opened as "none" to 1px / Solid / currentColor
+  the moment a side was clicked. A base edit made while a side is selected no
+  longer bakes the seeded side values into `sides` either.
+- **A side edit previews live.** A scrub updates the fields, not the model, so
+  a preview composed from the committed `sides` dropped the side being
+  dragged and the renderer kept painting the old border until the release.
+  Previews fold the selected side's in-flight value in.
+- **The panel does not rebuild on commit.** `_after_edit` re-syncs fields and
+  the notice, never the row tree, so the field that owns the popover survives
+  the edit the popover just made.
+- **A commit is deduped against the store, never against the live value.**
+  The preview path advances `_value` on every pointer move, so
+  `ColorField._on_popover_committed` comparing with `_value` returned early
+  for the colour the drag had just previewed: the swatch and the hex text
+  showed the new colour while the theme kept the old one, and a per-side
+  colour never left the popover. It now tracks `_committed_value` (as
+  `PaintField` already did), so a release — or a close after a drag — writes
+  what the field shows, while an unchanged dismissal still writes nothing.
+- **Each row commits its own half of the value.** `BorderEditor` routed every
+  field through one handler that re-derived the side override, so a base edit
+  made while a side was selected froze the seeded side values (the old base
+  width, plus an always-present colour) into `sides`. Base fields now write
+  the base only; the side row owns the selected side and stores just the keys
+  it actually changes, so an untouched side keeps following the base.
+
 ---
 
 ## 4. Refining another panel
@@ -530,11 +583,15 @@ A refined panel is done when every line is true.
       derived point while aligned, a mode switch does not jump on its tied
       axis, and every position edit is one document revision. A legacy
       container renders through the old arithmetic until it is edited.
-- [ ] **Renames are documented.** The old → new table matches the finished
-      labels, and no control was renamed beyond dropping redundancy.
+- [ ] **A popover survives its own edits.** A multi-field surface (Border,
+      Shadow, Colour, Paint) stays open through every commit and closes only on
+      dismissal, and a mode switch made after an edit still rewinds when the
+      surface is dismissed (§3, decision 9).
 - [ ] **Suites are green:**       `tests/test_theme_designer_panel_tiers.py`,
       `test_theme_designer_panel_layout.py`,
       `test_theme_designer_position.py`,
+      `test_theme_kit_border_popover.py`,
+      `test_theme_designer_container_round3.py`,
       `test_theme_designer_number_fields.py`,
       `test_theme_designer_columns.py`,
       `test_theme_designer_discrepancy_fixes.py`,

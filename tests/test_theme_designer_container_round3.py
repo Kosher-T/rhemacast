@@ -257,12 +257,13 @@ def test_radius_mapping_old_to_new_has_no_stored_change(qapp):
 # ─── 1b. Border dropdown commits what was chosen ────────────────────────────
 
 def test_border_choice_commits_and_stays_in_the_dropdown(qapp):
-    """Choosing Custom keeps the popover open and the committed value sticks.
+    """Choosing Custom writes the border and keeps the surface open.
 
     Root cause: the popover emitted ``committed`` and then closed, and
     ``closeEvent`` emitted ``cancelled``, which rewound the field to the value
     it opened with and previewed that back into the document — the row showed
-    "None" again. The mode switch also committed (and so closed) on its own.
+    "None" again. The switch itself was a preview, so turning the border off
+    was undone by the dismiss as well.
     """
     field = BorderField("none")
     field.resize(180, 28)
@@ -274,18 +275,20 @@ def test_border_choice_commits_and_stays_in_the_dropdown(qapp):
     assert popover is not None
     # No event-loop turn while the popup is open: the offscreen platform
     # deactivates a Qt.Popup on the first pass, which is not this behaviour.
-    popover.editor.mode.set_value("custom")
-    assert popover.isVisible(), "choosing Custom closed the editor immediately"
-    assert seen == [], "a mode switch is not a commit"
+    popover.editor.mode.set_value("custom", emit=True)
+    assert seen, "choosing Custom did not commit a border"
+    committed = seen[-1]
+    assert isinstance(committed, dict), committed
+    assert field.value() == committed, "the field did not adopt the commit"
+    # The commit writes through and leaves the surface open for the rest of
+    # the fields; dismissing it afterwards must not be a cancel.
+    assert popover.isVisible() and popover._committed
 
     popover.editor.width_field.set_value("3", emit=True)
-    assert seen, "the chosen border was never committed"
-    committed = seen[-1]
-    assert isinstance(committed, dict) and committed["width"] == 3
-    assert field.value() == committed, "the field did not adopt the commit"
-    # The commit closes the popover; that close must not be a cancel.
-    assert not popover.isVisible() and popover._committed
-    assert field.value() == committed, "closing reverted the commit to None"
+    assert seen[-1]["width"] == 3, seen[-1]
+    assert popover.isVisible(), "the width edit closed the surface"
+    popover.close()
+    assert field.value() == seen[-1], "closing reverted the commit to None"
     assert "none" not in [value for value in seen]
     field.close()
     field.deleteLater()

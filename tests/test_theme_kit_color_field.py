@@ -266,6 +266,60 @@ def test_close_flushes_a_drag_that_never_released(app):
     assert commits == ["#00ff00"]
 
 
+def test_a_release_after_a_drag_commits_the_colour(app):
+    """The drag path advances the field's value; the release must still land.
+
+    Reported against the Theme Designer's border popover: picking a side
+    colour showed ``#ffffff`` in the field while the theme kept the old
+    colour, so the side kept painting black. ``_on_popover_committed``
+    compared with ``_value`` — which the preview had already advanced — and
+    returned early without emitting.
+    """
+    field = ColorField("currentColor")
+    commits, previews = [], []
+    field.changed.connect(commits.append)
+    field.preview.connect(previews.append)
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor.preview.emit("#ffffff")
+        assert previews == ["#ffffff"]
+        assert commits == []
+        popover.editor.committed.emit("#ffffff")      # pointer release
+        assert commits == ["#ffffff"], "the release was dropped as unchanged"
+        assert field.committed_value() == "#ffffff"
+    finally:
+        popover.close()
+
+
+def test_closing_after_a_drag_commits_it(app):
+    """A colour dragged and then clicked away is the colour the operator set."""
+    field = ColorField("#112233")
+    commits = []
+    field.changed.connect(commits.append)
+    field._open_popover()
+    popover = field._popover
+    popover.editor._emit("#00ff00", commit=False)   # a drag, never released
+    popover.close()
+    assert commits == ["#00ff00"]
+
+
+def test_escape_after_a_drag_writes_nothing(app):
+    field = ColorField("#112233")
+    commits = []
+    field.changed.connect(commits.append)
+    field._open_popover()
+    popover = field._popover
+    try:
+        popover.editor._emit("#ff0000", commit=False)
+        QTest.keyClick(popover, Qt.Key.Key_Escape)
+    finally:
+        popover.close()
+    assert commits == []
+    assert field.value() == "#112233"
+    assert field.committed_value() == "#112233"
+
+
 def test_a_commit_is_not_repeated_when_the_popover_then_closes(app):
     """The click that follows a release closes the popover without a second
     commit: the close compares against the stored value, which the release
