@@ -178,7 +178,7 @@ def format_gradient(spec: GradientSpec) -> str:
     else:
         head = f"{format_number(spec.angle, decimals=1)}deg"
     pieces = [head]
-    for stop in spec.stops:
+    for stop in _painted_order(spec.stops)[1]:
         if stop.at is None:
             pieces.append(stop.color)
         else:
@@ -214,11 +214,32 @@ def _resolved_positions(stops: list[GradientStop]) -> list[float]:
     return [float(max(0.0, min(100.0, value))) for value in positions]
 
 
+def _painted_order(stops: list[GradientStop]
+                   ) -> tuple[list[float], list[GradientStop]]:
+    """The stops in the order a renderer paints them, with their positions.
+
+    CSS clamps a stop that sits before its predecessor to that predecessor's
+    position ("stop positions ... are clamped to be greater than or equal to
+    the largest previous position", CSS Images 3 §3.4.1). Emitting the stops
+    in the order they were added therefore turns a gradient whose handles the
+    operator dragged past each other into a hard edge: the ramp in the editor
+    still interpolates (Qt sorts its own stops), so the popover shows a
+    gradient while the canvas, the preview and OBS show one flat colour up to
+    the clamp and then a sudden switch. Sorting by resolved position keeps the
+    emitted CSS, the painted preview and the colour a new stop is sampled from
+    all describing the same gradient the ramp shows.
+    """
+    positions = _resolved_positions(stops)
+    order = sorted(range(len(stops)), key=lambda index: positions[index])
+    return ([positions[index] for index in order],
+            [stops[index] for index in order])
+
+
 def paint_gradient(painter: QPainter, rect: QRectF, spec: GradientSpec,
                    palette: Optional[dict[str, str]] = None) -> None:
-    positions = _resolved_positions(spec.stops)
+    positions, stops = _painted_order(spec.stops)
     colors: list[QColor] = []
-    for stop in spec.stops:
+    for stop in stops:
         color = resolve_paint_color(stop.color, palette)
         colors.append(color if color is not None else QColor(0, 0, 0, 0))
     if not colors:
@@ -334,9 +355,9 @@ def _mix_color(left: QColor, right: QColor, ratio: float) -> QColor:
 def sample_gradient(spec: GradientSpec, position: float,
                     palette: Optional[dict[str, str]] = None) -> str:
     """Colour of *spec* at *position* (0–100), as a CSS colour string."""
-    positions = _resolved_positions(spec.stops)
+    positions, stops = _painted_order(spec.stops)
     colors = [resolve_paint_color(stop.color, palette) or QColor(0, 0, 0, 0)
-              for stop in spec.stops]
+              for stop in stops]
     if not colors:
         return "#ffffff"
     at = max(0.0, min(100.0, float(position)))
@@ -765,8 +786,10 @@ class GradientEditor(QWidget):
         color = sample_gradient(self._spec, at, self._palette)
         stop = GradientStop(at, color)
         self._spec.stops.append(stop)
-        self._spec.stops.sort(
-            key=lambda item: item.at if item.at is not None else 0.0)
+        # Model order follows paint order: the stop list, the ramp handles and
+        # the emitted CSS then agree, so a stop added after the handles were
+        # dragged past each other lands where the operator sees it.
+        self._spec.stops = _painted_order(self._spec.stops)[1]
         self._selected = self._spec.stops.index(stop)
         self._sync_controls()
         self._show_stop()
@@ -786,22 +809,16 @@ class GradientEditor(QWidget):
     def _add_stop(self) -> None:
         if len(self._spec.stops) >= self._max_stops:
             return
-        stops = self._spec.stops
-        # Insert at the widest gap so the new stop is always visible.
-        best_index = max(0, len(stops) - 1)
-        best_gap = -1.0
-        for index in range(len(stops) - 1):
-            left = stops[index].at if stops[index].at is not None else 0.0
-            right = stops[index + 1].at if (
-                stops[index + 1].at is not None) else 100.0
-            if right - left > best_gap:
-                best_gap = right - left
-                best_index = index + 1
-        left = stops[best_index - 1].at if stops[
-            best_index - 1].at is not None else 0.0
-        right = (stops[best_index].at
-                 if best_index < len(stops)
-                 and stops[best_index].at is not None else 100.0)
+        # Insert at the widest painted gap so the new stop is always visible,
+        # whatever order the handles were dragged into.
+        positions = _painted_order(self._spec.stops)[0]
+        if len(positions) < 2:
+            self._add_stop_at(100.0 if positions else 50.0)
+            return
+        left, right = max(
+            ((positions[index], positions[index + 1])
+             for index in range(len(positions) - 1)),
+            key=lambda pair: pair[1] - pair[0])
         self._add_stop_at((left + right) / 2)
 
     # ── controls ────────────────────────────────────────────────────────────

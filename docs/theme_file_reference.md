@@ -26,7 +26,13 @@ Theme Designer.
   (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), `rgb()/rgba()`, `hsl()/hsla()`,
   and `inherit` where noted. `@name` is a palette token.
 - A **paint** is a color, `transparent`, `none`, or a validated
-  `linear-gradient(...)` / `radial-gradient(...)`.
+  `linear-gradient(...)` / `radial-gradient(...)`. Gradient stops are stored
+  in **ascending position order**: a stop listed before an earlier one is
+  clamped to that earlier position by every renderer (CSS Images 3 §3.4.1), so
+  a descending pair paints as a hard edge. Two stops may share a position —
+  that is a deliberate hard stop, and the order they are listed in decides
+  which colour wins on each side. The Designer's gradient editor emits stops
+  sorted this way for that reason; hand-written files should follow.
 - A **length** is a number (px) or a string with an allowed unit.
 - Unknown keys are ignored and reported as notes; the resolved theme contains
   only documented properties.
